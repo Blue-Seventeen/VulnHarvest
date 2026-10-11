@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,39 +143,56 @@ func pgJSONText(v any) string {
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case json.Number:
-		// Expand exponents without float64; jsonb emits decimal notation.
-		s := string(x)
-		e := strings.IndexAny(s, "eE")
-		if e < 0 {
-			return s
-		}
-		exponent, err := strconv.Atoi(s[e+1:])
-		if err != nil || exponent > 131072 || exponent < -16383 {
-			return s
-		}
-		mantissa := s[:e]
-		negative := strings.HasPrefix(mantissa, "-")
-		mantissa = strings.TrimPrefix(mantissa, "-")
-		point := strings.IndexByte(mantissa, '.')
-		if point < 0 {
-			point = len(mantissa)
-		}
-		digits := strings.ReplaceAll(mantissa, ".", "")
-		point += exponent
-		if point <= 0 {
-			s = "0." + strings.Repeat("0", -point) + digits
-		} else if point >= len(digits) {
-			s = digits + strings.Repeat("0", point-len(digits))
-		} else {
-			s = digits[:point] + "." + digits[point:]
-		}
-		if negative {
-			s = "-" + s
-		}
-		return s
+		return pgJSONNumberText(x)
 	default:
 		return pgJSONString(v)
 	}
+}
+
+// jsonb numeric text expands exponents, removes integer leading zeroes and a
+// zero's sign, while retaining fractional scale. Rational equality keys have a
+// different purpose and must not replace this scale-preserving sorting text.
+func pgJSONNumberText(number json.Number) string {
+	text := string(number)
+	negative := strings.HasPrefix(text, "-")
+	mantissa := strings.TrimPrefix(text, "-")
+	exponent := 0
+	if e := strings.IndexAny(mantissa, "eE"); e >= 0 {
+		var err error
+		exponent, err = strconv.Atoi(mantissa[e+1:])
+		if err != nil || exponent > 131072 || exponent < -16383 {
+			return text
+		}
+		mantissa = mantissa[:e]
+	}
+	point := strings.IndexByte(mantissa, '.')
+	if point < 0 {
+		point = len(mantissa)
+	}
+	digits := strings.ReplaceAll(mantissa, ".", "")
+	zero := strings.Trim(digits, "0") == ""
+	point += exponent
+	var expanded string
+	if point <= 0 {
+		expanded = "0." + strings.Repeat("0", -point) + digits
+	} else if point >= len(digits) {
+		expanded = digits + strings.Repeat("0", point-len(digits))
+	} else {
+		expanded = digits[:point] + "." + digits[point:]
+	}
+	parts := strings.SplitN(expanded, ".", 2)
+	integer := strings.TrimLeft(parts[0], "0")
+	if integer == "" {
+		integer = "0"
+	}
+	result := integer
+	if len(parts) == 2 {
+		result += "." + parts[1]
+	}
+	if negative && !zero {
+		result = "-" + result
+	}
+	return result
 }
 
 func pgJSONString(v any) string {
@@ -246,6 +263,29 @@ func assetJSONSemanticKey(v any) string {
 	}
 }
 
+// PostgreSQL ->> returns nullable text, not a typed JSON identity: number 1
+// and string "1" share a key; null/missing share SQL NULL. Arrays and objects
+// use jsonb's canonical text. Encode the nullable pair to avoid ambiguity.
+func pgJSONTextKey(value any) *string {
+	if value == nil {
+		return nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		text = pgJSONText(value)
+	}
+	return &text
+}
+func pgParamGroupKey(value any) string {
+	var location, name any
+	if m, ok := value.(map[string]any); ok {
+		location = m["location"]
+		name = m["name"]
+	}
+	raw, _ := json.Marshal([]*string{pgJSONTextKey(location), pgJSONTextKey(name)})
+	return string(raw)
+}
+
 // Real JSON arrays in, real JSON arrays out. UseNumber avoids a float64 round
 // trip for task IDs and nested user-supplied auth/params objects.
 func sqliteAssetArrayMerge(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
@@ -264,12 +304,13 @@ func sqliteAssetArrayMerge(_ *sqlite.FunctionContext, args []driver.Value) (driv
 	byKey := map[string]int{}
 	for _, v := range all {
 		key := assetJSONSemanticKey(v)
+		if kind == "params" {
+			key = pgParamGroupKey(v)
+		}
 		if m, ok := v.(map[string]any); ok {
 			switch kind {
 			case "ports":
 				key = fmt.Sprint(m["port"])
-			case "params":
-				key = pgJSONText([]any{m["location"], m["name"]})
 			}
 		}
 		if index, ok := byKey[key]; ok {
@@ -298,12 +339,15 @@ func sqliteNetContains(_ *sqlite.FunctionContext, args []driver.Value) (driver.V
 	if args[0] == nil || args[1] == nil {
 		return false, nil
 	}
-	_, network, err := net.ParseCIDR(fmt.Sprint(args[0]))
+	network, err := netip.ParsePrefix(fmt.Sprint(args[0]))
 	if err != nil {
 		return false, nil
 	}
-	ip := net.ParseIP(fmt.Sprint(args[1]))
-	return ip != nil && network.Contains(ip), nil
+	ip, err := netip.ParseAddr(fmt.Sprint(args[1]))
+	if err != nil {
+		return false, nil
+	}
+	return network.Addr().BitLen() == ip.BitLen() && network.Contains(ip), nil
 }
 
 func sqliteNormalizeICP(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {

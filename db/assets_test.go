@@ -116,7 +116,7 @@ func TestUpsertIP(t *testing.T) {
 
 	// verify all 3 ports present
 	var cnt int
-	d.QueryRow(d.SQL(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id1).Scan(&cnt)
+	d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id1).Scan(&cnt)
 	if cnt != 3 {
 		t.Errorf("open_ports merge: want 3 ports, got %d", cnt)
 	}
@@ -172,7 +172,7 @@ func TestAppendIPPort(t *testing.T) {
 	}
 
 	var cnt int
-	d.QueryRow(d.SQL(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id).Scan(&cnt)
+	d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id).Scan(&cnt)
 	if cnt != 2 {
 		t.Errorf("AppendIPPort: want 2 ports, got %d", cnt)
 	}
@@ -315,7 +315,7 @@ func TestUpsertHTTPService(t *testing.T) {
 
 	// verify technology was stored
 	var techCnt int
-	d.QueryRow(d.SQL(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt)
+	d.QueryRow(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt)
 	if techCnt != 2 {
 		t.Errorf("technologies: want 2, got %d", techCnt)
 	}
@@ -333,7 +333,7 @@ func TestUpsertHTTPService(t *testing.T) {
 		t.Errorf("http service dedup failed: %d vs %d", id2, id1)
 	}
 
-	d.QueryRow(d.SQL(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt)
+	d.QueryRow(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt)
 	if techCnt != 4 {
 		t.Errorf("technologies merge: want 4, got %d", techCnt)
 	}
@@ -369,7 +369,7 @@ func TestUpsertHTTPServiceAuthAppend(t *testing.T) {
 
 	// auth should have 2 items now
 	var authCnt int
-	d.QueryRow(d.SQL(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt)
+	d.QueryRow(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt)
 	if authCnt != 2 {
 		t.Errorf("auth append: want 2, got %d", authCnt)
 	}
@@ -447,7 +447,7 @@ func TestUpsertOtherServiceAuthAppend(t *testing.T) {
 	}
 
 	var authCnt int
-	d.QueryRow(d.SQL(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt)
+	d.QueryRow(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt)
 	if authCnt != 2 {
 		t.Errorf("auth append: want 2, got %d", authCnt)
 	}

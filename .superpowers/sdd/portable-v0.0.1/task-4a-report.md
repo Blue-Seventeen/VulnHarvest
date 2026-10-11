@@ -73,3 +73,13 @@ go test ./db -run '^(TestPortableAssetContract|TestParseScopeLine|TestParseAutoS
 最终 JSONL、初次最终 run 的 `task-4a-final-suite-before-readseam.jsonl`、读池修复后但 explicit orphan修复前的 `task-4a-final-suite-before-explicit-orphan.jsonl`、中间 `task-4a-progress.jsonl` 和 OR RED 日志均只保留本工作树作复核证据，不额外stage生成日志。所有 SQLite文件由测试临时目录管理，测试库为本次专用 `vh_assets`，不修改其它库。
 
 本报告随本项提交；提交SHA由交接回复和 `git log -1` 给出，避免报告自引用SHA。提交信息：`feat(db): port asset and company scope contracts to sqlite`。
+
+## Fix Round 1 补充交接
+
+统一审查 `task-4a-review.md` 的 I1–I4 与 Minor 已按真实双库反例修复，详细报告 `task-4a-fix-1-report.md`。本补充保留初轮历史，但**取代初轮对无时区后缀仅属格式差异的判断**：裸UTC字符串会改变客户端的瞬间解释，SQLite资产last_seen及公司created_at/updated_at现在明确输出RFC3339 UTC `Z`，非UTC bind→API JSON字符串→带时区解析回同一瞬间的回归覆盖Get/GetByName/List。
+
+numeric canonical text现在去整数前导零/负零而保留fractional scale，覆盖指数、0/0.0、1.20e-2、大整数和精确小数及真实params merge；params身份按原PG `->>` nullable text提取，覆盖number/string/bool/array/object/null/missing两维key；公司matcher与declared-scope网络UDF均使用netip保留family，不Unmap，mapped IPv6不会匹配IPv4规则、可以匹配family6 mapped-prefix。PG身份、SQL与shared scope normalization本轮未改。六处嵌套d.SQL已压平。
+
+原calcCSegment对mapped UpsertIP另有前置CIDR限制，经PG只读确认并如实记录，协调者指示本轮不扩大修复；mapped回归采用合法直接seed资产/网络，未声称该旧UpsertIP全路径成功。聚焦新反例组GREEN 7.515s，0fail/skip；原契约+新反例的必要最终统一suite与gate结果见单独fix报告。
+
+Fix1最终统一suite **PASS 117.942s**：原SQLite55/PG54 case，新反例每库7组及9项numeric子测试（各16 case/subcase），总179 test pass事件，0fail/skip；`go vet ./db` 与 diffcheck均exit0。I1–I4无已知未解决项；stage只包含本轮6个Go文件及两份报告，未包含他人的verification。

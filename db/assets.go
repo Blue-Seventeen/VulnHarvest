@@ -1538,7 +1538,7 @@ const sqliteAssetSelectCols = `SELECT id, type, company_id, task_ids,
        COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
        COALESCE(favicon_mmh3,''), status_code, content_length,
        COALESCE(page_title,''), technologies, auth,
-       COALESCE(method,''), params, extra, CAST(last_seen AS TEXT)
+       COALESCE(method,''), params, extra, replace(CAST(last_seen AS TEXT), ' ', 'T') || 'Z'
 FROM assets`
 
 func (s *AssetStore) selectCols() string { return s.db.SQL(assetSelectCols, sqliteAssetSelectCols) }

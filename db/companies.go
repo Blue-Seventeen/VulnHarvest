@@ -179,7 +179,7 @@ func (s *CompanyStore) GetCompany(id int64) (*Company, error) {
 	err := s.db.QueryRow(s.db.SQL(`
 SELECT id, name, nkey, logo, created_at::text, updated_at::text
 FROM companies WHERE id = $1`, `
-SELECT id, name, nkey, logo, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+SELECT id, name, nkey, logo, replace(CAST(created_at AS TEXT), ' ', 'T') || 'Z', replace(CAST(updated_at AS TEXT), ' ', 'T') || 'Z'
 FROM companies WHERE id = $1`), id).Scan(
 		&c.ID, &c.Name, &c.NKey, &c.Logo, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -195,7 +195,7 @@ func (s *CompanyStore) GetCompanyByName(name string) (*Company, error) {
 	err := s.db.QueryRow(s.db.SQL(`
 SELECT id, name, nkey, logo, created_at::text, updated_at::text
 FROM companies WHERE nkey = $1`, `
-SELECT id, name, nkey, logo, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+SELECT id, name, nkey, logo, replace(CAST(created_at AS TEXT), ' ', 'T') || 'Z', replace(CAST(updated_at AS TEXT), ' ', 'T') || 'Z'
 FROM companies WHERE nkey = $1`), nkey).Scan(
 		&c.ID, &c.Name, &c.NKey, &c.Logo, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -272,7 +272,7 @@ FROM companies c
 LEFT JOIN assets a ON a.company_id = c.id
 GROUP BY c.id
 ORDER BY c.name`, `
-SELECT c.id, c.name, c.nkey, c.logo, CAST(c.created_at AS TEXT), CAST(c.updated_at AS TEXT),
+SELECT c.id, c.name, c.nkey, c.logo, replace(CAST(c.created_at AS TEXT), ' ', 'T') || 'Z', replace(CAST(c.updated_at AS TEXT), ' ', 'T') || 'Z',
        COUNT(DISTINCT a.id) AS asset_count
 FROM companies c
 LEFT JOIN assets a ON a.company_id = c.id

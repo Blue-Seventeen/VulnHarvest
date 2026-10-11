@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
 )
 
@@ -43,7 +44,7 @@ func (s *CompanyStore) upsertSQLiteCompany(name, logo string) (id int64, created
 type sqliteCompanyRule struct {
 	companyID           int64
 	kind, domain, value string
-	network             *net.IPNet
+	network             netip.Prefix
 	prefix              int
 }
 
@@ -61,11 +62,11 @@ func readSQLiteCompanyRules(q rowsQuerier) ([]sqliteCompanyRule, error) {
 			return nil, err
 		}
 		if network != "" {
-			_, r.network, err = net.ParseCIDR(network)
+			r.network, err = netip.ParsePrefix(network)
 			if err != nil {
 				return nil, err
 			}
-			r.prefix, _ = r.network.Mask.Size()
+			r.prefix = r.network.Bits()
 		}
 		rules = append(rules, r)
 	}
@@ -80,10 +81,10 @@ func matchSQLiteCompany(rules []sqliteCompanyRule, domain, ip string, icps ...st
 			return &id
 		}
 	}
-	address := net.ParseIP(ip)
+	address, _ := netip.ParseAddr(ip)
 	bestPrefix := -1
 	for _, r := range rules {
-		if r.network != nil && address != nil && r.network.Contains(address) && r.prefix > bestPrefix {
+		if r.network.IsValid() && address.IsValid() && r.network.Addr().BitLen() == address.BitLen() && r.network.Contains(address) && r.prefix > bestPrefix {
 			bestPrefix = r.prefix
 			id := r.companyID
 			chosen = &id
