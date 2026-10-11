@@ -6,12 +6,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Autumn-27/artex/sidequestion"
 )
 
 func archiveContractDB(t *testing.T) *DB {
@@ -69,8 +72,156 @@ func TestPortableArchiveEdgeContract(t *testing.T) {
 			t.Run("LegacyDefaults", testArchiveLegacyDefaults)
 			t.Run("ColdDeleteDependencies", testArchiveColdDeleteDependencies)
 			t.Run("StreamSequenceIntegrity", testArchiveStreamSequenceIntegrity)
+			t.Run("ConversationSideRawRecords", testArchiveConversationSideRawRecords)
 		})
 	}
+}
+
+func testArchiveConversationSideRawRecords(t *testing.T) {
+	d := archiveContractDB(t)
+	fixture := func(label string) (*Task, *Conversation, *sidequestion.Exchange) {
+		t.Helper()
+		task, err := d.CreateTask(label, "side raw relationship", nil, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node, err := d.Exploration(task.ExplorationID).AddNode(KindFact, map[string]any{"summary": label}, 1, "confirmed", "worker", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finding, err := d.AddFinding(task.ID, node, "TEST", label, SeverityLow, "summary", "evidence", "worker", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, conversation, _, err := d.CreateFindingRetest(t.Context(), finding, "retest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot := sidequestion.Snapshot{Parent: sidequestion.Parent{ConversationID: conversation.ID}, RunID: 1, Version: 1, CapturedAt: time.Now().UTC()}
+		if err = d.SaveSideSnapshot(t.Context(), snapshot); err != nil {
+			t.Fatal(err)
+		}
+		request, created, err := d.StartSideRequest(t.Context(), snapshot, "client-"+label, "实际旁路问题")
+		if err != nil || !created {
+			t.Fatalf("side request created=%v: %v", created, err)
+		}
+		if request.SessionKey != snapshot.Parent.Key() || request.ID == request.SessionKey {
+			t.Fatal("invalid generated request/session relationship")
+		}
+		return task, conversation, request
+	}
+	task, conversation, request := fixture("owned")
+	_, unrelatedConversation, unrelatedRequest := fixture("unrelated")
+	type rawRecord struct {
+		id                         int64
+		session, request, response string
+		owned                      bool
+	}
+	records := []rawRecord{
+		{session: "task-main", owned: true},
+		{session: "conv-" + strconv.FormatInt(conversation.ID, 10), owned: true},
+		{session: "exp0-btw-" + request.ID, owned: true},
+		{session: "exp0-btw-" + request.ID, owned: true}, // several recorder rows for one request
+		{session: "exp0-btw-" + unrelatedRequest.ID},
+		{session: "exp0-btw-" + request.ID + "-unrelated"}, // prefix matching must not broaden ownership
+		{session: "exp0-btw-" + request.SessionKey},        // session key is not the request ID
+		{session: "conv-" + strconv.FormatInt(unrelatedConversation.ID, 10)},
+	}
+	for i := range records {
+		record := &records[i]
+		record.request = strconv.Itoa(i) + strings.Repeat("原始 raw request\n\r\t", 2048)
+		record.response = strconv.Itoa(i) + strings.Repeat("原始 raw response\n", 2048)
+		var taskID string
+		if i == 0 {
+			taskID = strconv.FormatInt(task.ID, 10)
+		}
+		if err := d.InsertLLMRecord(&LLMRecord{TaskID: taskID, SessionID: record.session, RawRequest: record.request, RawResponse: record.response}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.QueryRow(`SELECT id FROM llm_records WHERE raw_request=$1`, record.request).Scan(&record.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertHot := func(ownedPresent bool) {
+		t.Helper()
+		var count int
+		if err := d.QueryRow(`SELECT count(*) FROM llm_records`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		expected := 4
+		if ownedPresent {
+			expected = 8
+		}
+		if count != expected {
+			t.Fatalf("hot record count=%d want=%d", count, expected)
+		}
+		for _, record := range records {
+			var session, rawRequest, rawResponse string
+			err := d.QueryRow(`SELECT session_id,raw_request,raw_response FROM llm_records WHERE id=$1`, record.id).Scan(&session, &rawRequest, &rawResponse)
+			if record.owned && !ownedPresent {
+				if !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("compact left owned raw ID=%d session=%s: %v", record.id, record.session, err)
+				}
+				continue
+			}
+			if err != nil || session != record.session || rawRequest != record.request || rawResponse != record.response || sha256.Sum256([]byte(rawRequest)) != sha256.Sum256([]byte(record.request)) || sha256.Sum256([]byte(rawResponse)) != sha256.Sum256([]byte(record.response)) {
+				t.Fatalf("raw bytes/hash changed ID=%d: %v", record.id, err)
+			}
+		}
+	}
+	assertHot(true)
+	job, snapshot, stream := archiveColdFixture(t, d, task)
+	if snapshot.DataCounts["llm_records"] != 4 || snapshot.DataCounts["side_question_requests"] != 1 {
+		t.Fatalf("owned raw count=%d side request count=%d; want 4/1", snapshot.DataCounts["llm_records"], snapshot.DataCounts["side_question_requests"])
+	}
+	decoder := json.NewDecoder(bytes.NewReader(stream))
+	decoder.UseNumber()
+	archived := map[int64]bool{}
+	for {
+		var row map[string]any
+		err := decoder.Decode(&row)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, ok := jsonInt64(row["id"])
+		if !ok {
+			t.Fatal("invalid raw row ID")
+		}
+		for _, record := range records {
+			if record.id == id {
+				if !record.owned || row["session_id"] != record.session || row["raw_request"] != record.request || row["raw_response"] != record.response {
+					t.Fatalf("stream raw identity/bytes changed ID=%d", id)
+				}
+			}
+		}
+		archived[id] = true
+	}
+	for _, record := range records {
+		if archived[record.id] != record.owned {
+			t.Fatalf("wrong streamed membership ID=%d session=%s", record.id, record.session)
+		}
+	}
+	assertHot(false)
+	if _, err := d.RestoreTaskArchiveWithLLMRecords(job.ID, snapshot, 0, bytes.NewReader(stream)); err != nil {
+		t.Fatal(err)
+	}
+	assertHot(true)
+	var sessionKey string
+	if err := d.QueryRow(`SELECT session_key FROM side_question_requests WHERE id=$1`, request.ID).Scan(&sessionKey); err != nil || sessionKey != request.SessionKey {
+		t.Fatalf("restored request relation %q: %v", sessionKey, err)
+	}
+	if restored, err := d.IsTaskArchiveRestored(job.ID); err != nil || !restored {
+		t.Fatalf("retry completion marker=%v: %v", restored, err)
+	}
+	// The server uses that committed marker to consume the package without replay.
+	// A direct accidental replay must reject atomically and leave all rows unchanged.
+	if _, err := d.RestoreTaskArchiveWithLLMRecords(job.ID, snapshot, 0, bytes.NewReader(stream)); err == nil {
+		t.Fatal("duplicate restore payload accepted")
+	}
+	assertHot(true)
 }
 
 func testArchiveStreamSequenceIntegrity(t *testing.T) {

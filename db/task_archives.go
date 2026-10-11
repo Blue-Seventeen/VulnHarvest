@@ -557,8 +557,16 @@ func archiveRetestNumericSessionsSQL() string {
 	return `SELECT 'conv-'||CAST(r.conversation_id AS TEXT) FROM finding_retests r JOIN findings f ON f.id=r.finding_id WHERE f.task_id=$1 AND r.conversation_id IS NOT NULL`
 }
 
-func archiveRetestSessionsSQL() string {
-	return `SELECT 'conv-'||CAST(r.conversation_id AS TEXT) FROM finding_retests r JOIN findings f ON f.id=r.finding_id WHERE CAST(f.task_id AS TEXT)=$1 AND r.conversation_id IS NOT NULL`
+// LLM records carry text task IDs. Both snapshot and compaction use this exact
+// session ownership relation; conversation side runs have no recorder task ID.
+// Select request IDs through their owning session, never an exp0 prefix match.
+func archiveTaskLLMSessionsSQL() string {
+	return `SELECT 'conv-'||CAST(r.conversation_id AS TEXT) FROM finding_retests r JOIN findings f ON f.id=r.finding_id WHERE CAST(f.task_id AS TEXT)=$1 AND r.conversation_id IS NOT NULL
+UNION SELECT 'exp0-btw-'||request.id FROM side_question_requests request
+JOIN side_question_sessions session ON session.session_key=request.session_key
+JOIN finding_retests retest ON retest.conversation_id=session.conversation_id
+JOIN findings finding ON finding.id=retest.finding_id
+WHERE CAST(finding.task_id AS TEXT)=$1`
 }
 
 // TaskArchiveConversationIDs identifies transcript paths before the file stage.
@@ -657,7 +665,7 @@ func (d *DB) snapshotTaskArchive(taskID int64, llmRecords io.Writer) (*TaskArchi
 		{"findings", `SELECT * FROM findings WHERE task_id=$1 ORDER BY id`, []any{taskID}},
 		{"finding_traffic_bindings", `SELECT b.* FROM finding_traffic_bindings b JOIN findings f ON f.id=b.finding_id WHERE f.task_id=$1 ORDER BY b.finding_id,b.position,b.id`, []any{taskID}},
 		{"traffic_evidence_snapshots", `SELECT s.* FROM traffic_evidence_snapshots s WHERE EXISTS(SELECT 1 FROM finding_traffic_bindings b JOIN findings f ON f.id=b.finding_id WHERE b.snapshot_id=s.id AND f.task_id=$1) ORDER BY s.id`, []any{taskID}},
-		{"llm_records", `SELECT * FROM llm_records WHERE COALESCE(task_id,'')=$1 OR session_id IN (` + archiveRetestSessionsSQL() + `) ORDER BY id`, []any{strconv.FormatInt(taskID, 10)}},
+		{"llm_records", `SELECT * FROM llm_records WHERE COALESCE(task_id,'')=$1 OR session_id IN (` + archiveTaskLLMSessionsSQL() + `) ORDER BY id`, []any{strconv.FormatInt(taskID, 10)}},
 		{"llm_usage", `SELECT * FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2 ORDER BY id`, []any{strconv.FormatInt(taskID, 10), expID}},
 		{"skill_usage", `SELECT * FROM skill_usage WHERE task_id=$1 OR exploration_id=$2 OR session_id IN (` + archiveRetestNumericSessionsSQL() + `) ORDER BY id`, []any{taskID, expID}},
 		{"tool_usage", `SELECT * FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 OR session_id IN (` + archiveRetestNumericSessionsSQL() + `) ORDER BY id`, []any{taskID, expID}},

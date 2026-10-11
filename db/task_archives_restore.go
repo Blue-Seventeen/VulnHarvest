@@ -72,7 +72,7 @@ WHERE relation.source_task_id=$1 LIMIT 1`, taskID).Scan(&dependent)
 	if _, err := tx.Exec(`DELETE FROM intercept_pending WHERE COALESCE(task_id,'')=$1 OR conversation_id IN (SELECT r.conversation_id FROM finding_retests r JOIN findings f ON f.id=r.finding_id WHERE CAST(f.task_id AS TEXT)=$1)`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1 OR session_id IN (`+archiveRetestSessionsSQL()+`)`, strconv.FormatInt(taskID, 10)); err != nil {
+	if _, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1 OR session_id IN (`+archiveTaskLLMSessionsSQL()+`)`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2`, strconv.FormatInt(taskID, 10), expID); err != nil {

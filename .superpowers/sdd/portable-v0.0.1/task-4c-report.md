@@ -107,3 +107,50 @@ Additional checks:
 `db/task_archives.go`, `db/task_archives_restore.go`, new `db/task_archives_sqlite.go`, new `db/task_archives_portable_test.go`, narrow `db/finding_retests.go` guard; `server/task_archives.go`, `server/task_archive_package.go`, `server/task_archive_package_test.go`, new `server/task_archives_portable_test.go`, `server/server.go`, `server/conversations.go`, `server/side_questions.go`, `server/finding_retests.go`, `server/chatupload.go`; this report.
 
 `implementation/verification.md` belongs to the controller and was neither edited nor staged by this implementer. No test raw logs or fixture credentials are committed.
+
+## Review fix round 1 — Important I1
+
+Base: `a5810da`. Scope is exclusively the confirmed missing conversation-side raw LLM session association from `task-4c-review.md`. Minor M1 (admission mutex held during JSON decode) and M2 (expected fault-injection log capture) remain deferred in the controller-owned `.superpowers/sdd/portable-v0.0.1/progress.md` ledger; they were not implemented or otherwise broadened into this fix.
+
+### Change
+
+`archiveTaskLLMSessionsSQL` replaces the previous main-conversation-only helper. Its code-owned SQL returns both the existing exact `conv-<conversationID>` session and exact `exp0-btw-<requestID>` sessions reached through:
+
+`task -> finding -> finding_retest -> conversation -> side_question_session -> side_question_request.id`.
+
+The snapshot and compact DELETE both call this one helper. The existing explicit recorder task-ID predicate remains intact. No prefix `LIKE`, arbitrary `exp0` enumeration, format/schema change, skill/tool selector expansion or restore redesign was added. It joins the request's stored `session_key` to the side-session row and constructs the recorder session from the generated request ID, not from the session key or client request ID.
+
+The new dual-store `ConversationSideRawRecords` edge contract creates real task/finding/retest/conversation rows, saves a real side snapshot and calls `StartSideRequest` to obtain the production UUID request ID. Its eight raw records include four owned records (task main, conversation main, and two raw recorder rows for the same side request) plus four unowned controls (another task's side request, a similar session prefix, the owned side session key used incorrectly as a request ID, and another conversation main). It asserts:
+
+- NDJSON count 4 and side-request count 1; exactly the owned record IDs/session strings and exact original request/response UTF-8 bytes enter the stream.
+- Compact leaves zero owned raw records and retains all four unrelated records with unchanged bytes and SHA-256 hashes.
+- Restore returns all eight records under their original IDs with exact request/response bytes and hashes and the original side request-to-session relationship.
+- `IsTaskArchiveRestored` reports the committed marker used by the server's existing cleanup retry path. An accidental direct replay rejects within its transaction; the eight raw records/hashes remain unchanged, so retries cannot double these records.
+
+### RED / GREEN
+
+Before changing production selectors:
+
+```powershell
+go test -json ./db -run 'TestPortableArchiveEdgeContract/(SQLite|PostgreSQL)/ConversationSideRawRecords' -count=1 -timeout=60s
+```
+
+RED: both SQLite and PostgreSQL failed with `owned raw count=2 side request count=1; want 4/1`. Package elapsed 4.410s, exit 1. The only missing rows were the two generated conversation-side request sessions; both main recorder selection paths remained covered. Log: `%TEMP%/artex-task4c-fix1-red.jsonl`.
+
+After the single shared-selector fix, the identical command passed both stores, 5 test pass events (including enclosures), 1 package PASS, 0 fail/skip; package elapsed 3.322s, exit 0. Log: `%TEMP%/artex-task4c-fix1-green.jsonl`.
+
+### Final focused verification
+
+```powershell
+go test -json ./db -run '^(TestPortableArchiveContract|TestPortableArchiveEdgeContract)/(SQLite|PostgreSQL)/(ConsistentReaderWriter|ScopeProfilesSideContext|CountsCASDelete|StreamSequenceIntegrity|ConversationSideRawRecords)?$' -count=1 -timeout=90s
+```
+
+Result: exit 0, 22 test pass events / 18 leaf tests, 1 DB package PASS, 0 failures, 0 skips, elapsed 17.735s. Go's slash-filter and optional empty third segment also selected all other existing `TestPortableArchiveEdgeContract` children; the actual coverage was the two-store main ArchiveContract and all eight EdgeContract children per store. No unrelated DB/server/full-project behavior suite was rerun. Raw results: `%TEMP%/artex-task4c-fix1-focused-gate.jsonl`.
+
+Relevant-package compilation: `go test -p 1 ./db ./evidence ./server -run '^$' -count=1 -timeout=90s` — exit 0; db 1.603s/evidence 1.524s/server 2.080s, no selected tests. `go vet ./db ./evidence ./server` — exit 0, no diagnostics. Explicit touched-file gofmt and `git diff --check` — clean.
+
+All PG tests and package TestMain above explicitly used the dedicated `127.0.0.1:27347/vh_archives` fixture; reset still checks `current_database() == 'vh_archives'` first. SQLite paths and package fixture files use `t.TempDir`. No previous instance, API keys or `G:/ARTEX-0.3.15` were read. The fix adds no network/model calls.
+
+Self-review: verified the same selector occurs at both snapshot/compact crossings and runs before compaction deletes its side-session/retest source rows; exact session construction uses the stored generated request ID. Both store contracts prove exclusion controls remain hot, count/bytes/hash stay exact and replay rollback preserves accounting. This resolves Important I1. Minor M1/M2 remain explicitly deferred for later ledger triage.
+
+Changed files for this fix: `db/task_archives.go`, `db/task_archives_restore.go`, `db/task_archives_portable_test.go`, and this appended report. `implementation/verification.md` and the controller ledger were neither edited nor staged.
