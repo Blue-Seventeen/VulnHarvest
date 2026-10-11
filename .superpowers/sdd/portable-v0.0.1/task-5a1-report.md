@@ -1,6 +1,6 @@
 # Task5a1 实施与验证报告
 
-最新 Fix1 源码为 `ffadaa4857eaf48cf6d85fec8aa2d50fce338eda`；本轮 I1/M1/M2 修复与 Windows gate/provenance 已完成，I1 的 Linux native race 复验由 controller 对该固定提交进行。下方原始失败证据与首轮结论保留为历史记录，不能以普通 Windows gate 声称 I1 已验收关闭。
+最新 Fix1 源码为 `93f4ddcb87aabe2bfa42480a737a4a2d8f91d919`；本轮 I1/M1/M2 修复、共享 transport 冷并发兼容修正与 Windows gate/provenance 已完成。自有 Linux1.27.2 最小 cold-start race 连续3次通过，controller 正对最新固定提交做完整 native race gate。下方初轮和 Fix1 中间提交的失败证据保留为历史记录，不能以普通 Windows 或最小 Linux gate 声称 I1 已最终验收关闭。
 
 **验收状态：native Windows 普通 gate 已通过，controller Linux race gate 未通过；Task5a1 尚不能标记最终验收完成。** 固定源码 `f416cc2` 存在已经证明的 attacker HTTP server 初始化与 h2 ServeConn 竞态，见下方独立验证补充。按 controller 指示暂不修改源码，将该问题并入完整 review 后统一 fix1。
 
@@ -136,3 +136,17 @@ git diff --cached --check
 Fix1 provenance 仍为 104 upstream、98 unchanged、6 changed、2 added、0 deleted。刷新 module-relative patch/manifest 的 patched/new SHA-256；baseline/license/docs/go.mod/go.sum/version 原字节不动。原 zip 应用刷新后的 git apply patch 得到 106 SDK 文件，全部与 native-tested source byte相等；fixed `ffadaa4` 的 Git archive 再经 verifier/archive 校验，106源文件也全部与 tested worktree相等。没有把 log/tests 修复当成未改 upstream，manifest按原baseline准确累计本项目变更。
 
 Fix1 self-review：确认 h2 路径没有再读取 Serve 会写的 BaseConfig；h2 Handler/context、max concurrent streams、socket/callback/WG gate与既有关闭所有权保留；日志降级同时受 closing 和 typed-cause 两条件约束，真实TLS/WS/capture fault仍可观察；测试logger只在串行case使用，hook事件等待真实error而非sleep竞态；来源陈述与已披露lock例外一致；仅本人 SDK/patch/manifest/PATCHES.md 暂存，controller 未提交文件保持原样。尚须 controller 固定修复 SHA Linux race GREEN 与完整复审通过，才能关闭 I1 和标记 Task5a1 验收完成。
+
+### Fix1 继续验证：Go1.27 共享 transport 冷并发
+
+Controller 对中间源码 `ffadaa4` 的 native Linux1.27.2 nested gate 没再出现 WARNING DATA RACE，旧 reserved h2/close+h2 通过，但新增 `TestColdStartConcurrentH2Capture` 的8共享transport请求全失败（unexpected EOF/captures=0）；完整原证据为 `linux-proxy-fix1-race.log`，没有覆盖。没有把 Windows1.26成功当作 Linux1.27成功，也没有拆分为独立client/transport、增加超时或sleep来弱化 fixture。
+
+按最早不确定阶段继续调查：只在 owned `task5a1-fix1-debug` Linux1.27.2 容器的 `/work/source` 临时副本加入一处 DialTLSContext trace；SDK source与host module-cache/download 均以 readonly 挂载，GOMODCACHE在容器 `/tmp/modulecache`，GOPROXY为只读file cache。Trace 证明同一 client address 和同一 upstream `*tls.Conn` pointer 被重复返回8次，随后上游socket关闭、请求context被取消。恢复 `BaseConfig: a.server` 的相同普通test仍 FAIL，排除了“移除BaseConfig默认配置造成协议退化”。记录 `task-5a1-fix1-validation/linux-coldstart-diagnostic.log` 与 `linux-coldstart-with-baseconfig.log`，诊断没有加入项目生产源码。
+
+版本边界解释：x/net v0.55.0/v0.58.0 在Go1.26走旧 `client_conn_pool`，按目标合并进行中的dial；Go1.27通过 `transport_wrap.go` 交给 net/http.Transport管理，多次并发dial合法。上游SDK把已握手的同一socket永久当作“新dial结果”返回，在Go1.27导致同一TLS流被多次ClientConn初始化/被冗余dial关闭。缺少本地 `golang:1.26.3-alpine` 镜像，没有下载新版本或换版本代替修复；Windows1.26与Linux1.27的构建分支、同socket trace及恢复BaseConfig对照共同构成根因证据。
+
+继续修复 `93f4ddc`：每个 tunnel 对其已握手 upstream TLS socket只调用一次 `NewClientConn`，令其 `ClientConn.RoundTrip` 承担多路请求，不再通过DialTLSContext反复归还同一个socket。`http2.ConfigureTransports` 先初始化兼容Go1.26/1.27的adapter，DisableCompression仍true；独立 h2 server配置和显式owned Context/Handler仍保留。一次临时零值Transport.NewClientConn尝试在Go1.27 wrapper发现未初始化t1的panic，已定位并使用公开ConfigureTransports纠正；该中间尝试未提交，不忽略其诊断。初始化失败明确关上下游并error日志，既有raw registry/callback/handler关闭与join边界不变。
+
+同一8请求shared transport fixture在owned Linux普通运行连续3次PASS，`-race` 连续3次PASS（1.359s，无WARNING）；最小命令 `go test -race -v ./proxy -run '^TestColdStartConcurrentH2Capture$' -count=3 -timeout=60s`，日志 `task-5a1-fix1-validation/linux-coldstart-singleconn-race.log`。该结果只证明最小回归；controller 对最新源码完整focused+原协议+traffic native race仍是关门条件。容器内gcc/musl仅用于自身测试，没有改宿主MinGW/PATH或cache。
+
+最终 Windows重新运行完全相同focused命令，lifecycle19top/33leaf/37events、原协议14/25/39、traffic44/47/48均0fail/0skip；nested proxy compile/vet及root full compile/vet全exit0。新日志为 `proxy-lifecycle-final.jsonl`、`proxy-upstream-final.jsonl`、`traffic-final.jsonl`、`root-compile-final.txt`、`summary-final.json`（在本轮忽略证据目录，不forceadd）。刷新patch/manifest仍104/98/6/2/0，latest固定Git archive经原zip+verifier以及实际git apply replay验证，106SDK原始byte完全等于native-tested worktree，见 `committed-provenance-final.txt`。Controller可对93f4ddc独立验收，无需测试未固定workingtree；随后报告commit仅文档。
