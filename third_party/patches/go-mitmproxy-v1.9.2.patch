@@ -1,0 +1,1392 @@
+--- a/proxy/attacker.go
++++ b/proxy/attacker.go
+@@ -8,6 +8,7 @@
+ 	"net"
+ 	"net/http"
+ 	"strings"
++	"sync"
+ 
+ 	"github.com/lqqyt2423/go-mitmproxy/cert"
+ 	"github.com/lqqyt2423/go-mitmproxy/internal/helper"
+@@ -16,18 +17,47 @@
+ )
+ 
+ type attackerListener struct {
+-	connChan chan net.Conn
+-}
+-
+-func (l *attackerListener) accept(conn net.Conn) {
+-	l.connChan <- conn
++	connChan  chan net.Conn
++	done      chan struct{}
++	closeOnce sync.Once
++}
++
++func (l *attackerListener) accept(conn net.Conn) error {
++	select {
++	case <-l.done:
++		conn.Close()
++		return net.ErrClosed
++	default:
++	}
++	select {
++	case <-l.done:
++		conn.Close()
++		return net.ErrClosed
++	case l.connChan <- conn:
++		return nil
++	}
+ }
+ 
+ func (l *attackerListener) Accept() (net.Conn, error) {
+-	c := <-l.connChan
+-	return c, nil
+-}
+-func (l *attackerListener) Close() error   { return nil }
++	select {
++	case <-l.done:
++		return nil, net.ErrClosed
++	default:
++	}
++	select {
++	case <-l.done:
++		return nil, net.ErrClosed
++	case c := <-l.connChan:
++		select {
++		case <-l.done:
++			c.Close()
++			return nil, net.ErrClosed
++		default:
++		}
++		return c, nil
++	}
++}
++func (l *attackerListener) Close() error   { l.closeOnce.Do(func() { close(l.done) }); return nil }
+ func (l *attackerListener) Addr() net.Addr { return nil }
+ 
+ type attackerConn struct {
+@@ -70,11 +100,13 @@
+ 		},
+ 		listener: &attackerListener{
+ 			connChan: make(chan net.Conn),
++			done:     make(chan struct{}),
+ 		},
+ 	}
+ 
+ 	a.server = &http.Server{
+-		Handler: a,
++		BaseContext: func(net.Listener) context.Context { return proxy.life.ctx },
++		Handler:     a,
+ 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+ 			return context.WithValue(ctx, connContextKey, c.(*attackerConn).connCtx)
+ 		},
+@@ -116,13 +148,26 @@
+ 			},
+ 		}
+ 
+-		ctx := context.WithValue(context.Background(), connContextKey, connCtx)
++		if !a.proxy.beginWork() {
++			clientTlsConn.Close()
++			return
++		}
++		ctx := context.WithValue(a.proxy.life.ctx, connContextKey, connCtx)
+ 		ctx, cancel := context.WithCancel(ctx)
++		done := make(chan struct{})
++		watchDone := make(chan struct{})
+ 		go func() {
+-			<-connCtx.ClientConn.Conn.(*wrapClientConn).closeChan
+-			cancel()
++			defer close(watchDone)
++			select {
++			case <-connCtx.ClientConn.Conn.(*wrapClientConn).closeChan:
++				cancel()
++			case <-done:
++			case <-ctx.Done():
++			}
+ 		}()
+ 		go func() {
++			defer a.proxy.life.work.Done()
++			defer func() { close(done); cancel(); clientTlsConn.Close(); <-watchDone }()
+ 			a.h2Server.ServeConn(clientTlsConn, &http2.ServeConnOpts{
+ 				Context:    ctx,
+ 				Handler:    a,
+@@ -139,6 +184,11 @@
+ }
+ 
+ func (a *attacker) ServeHTTP(res http.ResponseWriter, req *http.Request) {
++	if !a.proxy.beginWork() {
++		http.Error(res, "proxy closed", http.StatusServiceUnavailable)
++		return
++	}
++	defer a.proxy.life.work.Done()
+ 	if req.URL.Scheme == "" {
+ 		req.URL.Scheme = "https"
+ 	}
+@@ -217,6 +267,9 @@
+ 		for _, addon := range proxy.Addons {
+ 			addon.ServerConnected(connCtx)
+ 		}
++		if !proxy.trackServer(cw) {
++			return net.ErrClosed
++		}
+ 
+ 		return nil
+ 	}
+@@ -313,11 +366,16 @@
+ 	for _, addon := range connCtx.proxy.Addons {
+ 		addon.ServerConnected(connCtx)
+ 	}
++	if !proxy.trackServer(serverConn.Conn.(*wrapServerConn)) {
++		return nil, net.ErrClosed
++	}
+ 
+ 	return serverConn.Conn, nil
+ }
+ 
+ func (a *attacker) httpsTlsDial(ctx context.Context, cconn net.Conn, conn net.Conn) {
++	ctx, cancel := context.WithCancel(ctx)
++	defer cancel()
+ 	connCtx := cconn.(*wrapClientConn).connCtx
+ 	log := log.WithFields(log.Fields{
+ 		"in":   "Proxy.attacker.httpsTlsDial",
+@@ -325,11 +383,13 @@
+ 	})
+ 
+ 	var clientHello *tls.ClientHelloInfo
+-	clientHelloChan := make(chan *tls.ClientHelloInfo)
+-	serverTlsStateChan := make(chan *tls.ConnectionState)
++	clientHelloChan := make(chan *tls.ClientHelloInfo, 1)
++	serverTlsStateChan := make(chan *tls.ConnectionState, 1)
+ 	errChan1 := make(chan error, 1)
+ 	errChan2 := make(chan error, 1)
+ 	clientHandshakeDoneChan := make(chan struct{})
++	workerDone := make(chan struct{})
++	defer func() { cancel(); <-workerDone }()
+ 
+ 	clientTlsConn := tls.Server(cconn, &tls.Config{
+ 		SessionTicketsDisabled: true, // 设置此值为 true ，确保每次都会调用下面的 GetConfigForClient 方法
+@@ -339,6 +399,8 @@
+ 
+ 			// wait server handshake finish
+ 			select {
++			case <-ctx.Done():
++				return nil, ctx.Err()
+ 			case err := <-errChan2:
+ 				return nil, err
+ 			case serverTlsState := <-serverTlsStateChan:
+@@ -360,6 +422,7 @@
+ 		},
+ 	})
+ 	go func() {
++		defer close(workerDone)
+ 		if err := clientTlsConn.HandshakeContext(ctx); err != nil {
+ 			errChan1 <- err
+ 			return
+@@ -615,7 +678,7 @@
+ 	}
+ 
+ 	if proxyRes.Close {
+-		f.ConnContext.closeAfterResponse = true
++		f.ConnContext.closeAfterResponse.Store(true)
+ 	}
+ 
+ 	defer proxyRes.Body.Close()
+--- a/proxy/connection.go
++++ b/proxy/connection.go
+@@ -82,7 +82,7 @@
+ 	FlowCount  atomic.Uint32 `json:"-"`         // Number of HTTP requests made on the same connection
+ 
+ 	proxy              *Proxy
+-	closeAfterResponse bool                        // after http response, http server will close the connection
++	closeAfterResponse atomic.Bool                 // after http response, http server will close the connection
+ 	dialFn             func(context.Context) error // when begin request, if there no ServerConn, use this func to dial
+ }
+ 
+--- a/proxy/entry.go
++++ b/proxy/entry.go
+@@ -7,6 +7,7 @@
+ 	"net"
+ 	"net/http"
+ 	"sync"
++	"sync/atomic"
+ 
+ 	"github.com/lqqyt2423/go-mitmproxy/internal/helper"
+ 	log "github.com/sirupsen/logrus"
+@@ -25,9 +26,18 @@
+ 	}
+ 
+ 	proxy := l.proxy
++	if !proxy.beginWork() {
++		c.Close()
++		return nil, net.ErrClosed
++	}
++	defer proxy.life.work.Done()
+ 	wc := newWrapClientConn(c, proxy)
+ 	connCtx := newConnContext(wc, proxy)
+ 	wc.connCtx = connCtx
++	if !proxy.track(wc) {
++		c.Close()
++		return nil, net.ErrClosed
++	}
+ 
+ 	for _, addon := range proxy.Addons {
+ 		addon.ClientConnected(connCtx.ClientConn)
+@@ -47,6 +57,8 @@
+ 	closed    bool
+ 	closeErr  error
+ 	closeChan chan struct{}
++	upstream  []net.Conn  // protected by closeMu; never read mutable ConnContext on Close
++	tls       atomic.Bool // close callbacks do not race the CONNECT negotiation flag
+ }
+ 
+ func newWrapClientConn(c net.Conn, proxy *Proxy) *wrapClientConn {
+@@ -70,6 +82,16 @@
+ 	return c.r.Read(data)
+ }
+ 
++func (c *wrapClientConn) attachUpstream(conn net.Conn) bool {
++	c.closeMu.Lock()
++	defer c.closeMu.Unlock()
++	if c.closed {
++		return false
++	}
++	c.upstream = append(c.upstream, conn)
++	return true
++}
++
+ func (c *wrapClientConn) Close() error {
+ 	c.closeMu.Lock()
+ 	if c.closed {
+@@ -80,15 +102,18 @@
+ 
+ 	c.closed = true
+ 	c.closeErr = c.Conn.Close()
++	upstream := c.upstream
++	c.upstream = nil
+ 	c.closeMu.Unlock()
++	defer c.proxy.untrack(c)
+ 	close(c.closeChan)
+ 
+ 	for _, addon := range c.proxy.Addons {
+ 		addon.ClientDisconnected(c.connCtx.ClientConn)
+ 	}
+ 
+-	if c.connCtx.ServerConn != nil && c.connCtx.ServerConn.Conn != nil {
+-		c.connCtx.ServerConn.Conn.Close()
++	for _, conn := range upstream {
++		conn.Close()
+ 	}
+ 
+ 	return c.closeErr
+@@ -116,16 +141,23 @@
+ 	c.closed = true
+ 	c.closeErr = c.Conn.Close()
+ 	c.closeMu.Unlock()
++	defer c.proxy.untrack(c)
+ 
+ 	for _, addon := range c.proxy.Addons {
+ 		addon.ServerDisconnected(c.connCtx)
+ 	}
+-
+-	if !c.connCtx.ClientConn.Tls {
+-		c.connCtx.ClientConn.Conn.(*wrapClientConn).Conn.(*net.TCPConn).CloseRead()
++	if c.proxy.isClosing() {
++		return c.closeErr
++	}
++
++	client := c.connCtx.ClientConn.Conn.(*wrapClientConn)
++	if !client.tls.Load() {
++		if tcp, ok := client.Conn.(*net.TCPConn); ok {
++			tcp.CloseRead()
++		}
+ 	} else {
+ 		// if keep-alive connection close
+-		if !c.connCtx.closeAfterResponse {
++		if !c.connCtx.closeAfterResponse.Load() {
+ 			c.connCtx.ClientConn.Conn.Close()
+ 		}
+ 	}
+@@ -141,8 +173,9 @@
+ func newEntry(proxy *Proxy) *entry {
+ 	e := &entry{proxy: proxy}
+ 	e.server = &http.Server{
+-		Addr:    proxy.Opts.Addr,
+-		Handler: e,
++		BaseContext: func(net.Listener) context.Context { return proxy.life.ctx },
++		Addr:        proxy.Opts.Addr,
++		Handler:     e,
+ 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+ 			return context.WithValue(ctx, connContextKey, c.(*wrapClientConn).connCtx)
+ 		},
+@@ -150,17 +183,8 @@
+ 	return e
+ }
+ 
+-func (e *entry) start() error {
+-	addr := e.server.Addr
+-	if addr == "" {
+-		addr = ":http"
+-	}
+-	ln, err := net.Listen("tcp", addr)
+-	if err != nil {
+-		return err
+-	}
+-
+-	log.Infof("Proxy start listen at %v\n", e.server.Addr)
++func (e *entry) serve(ln net.Listener) error {
++	log.Infof("Proxy start listen at %v\n", ln.Addr())
+ 	pln := &wrapListener{
+ 		Listener: ln,
+ 		proxy:    e.proxy,
+@@ -178,6 +202,11 @@
+ 
+ func (e *entry) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+ 	proxy := e.proxy
++	if !proxy.beginWork() {
++		http.Error(res, "proxy closed", http.StatusServiceUnavailable)
++		return
++	}
++	defer proxy.life.work.Done()
+ 
+ 	log := log.WithFields(log.Fields{
+ 		"in":   "Proxy.entry.ServeHTTP",
+@@ -340,6 +369,7 @@
+ 	}
+ 
+ 	if helper.IsTls(peek) {
++		cconn.(*wrapClientConn).tls.Store(true)
+ 		f.ConnContext.ClientConn.Tls = true
+ 		proxy.attacker.httpsTlsDial(req.Context(), cconn, conn)
+ 		return
+@@ -392,6 +422,7 @@
+ 	}
+ 
+ 	if helper.IsTls(peek) {
++		cconn.(*wrapClientConn).tls.Store(true)
+ 		f.ConnContext.ClientConn.Tls = true
+ 		proxy.attacker.httpsLazyAttack(req.Context(), cconn, req)
+ 		return
+--- a/proxy/helper.go
++++ b/proxy/helper.go
+@@ -3,7 +3,6 @@
+ import (
+ 	"fmt"
+ 	"io"
+-	"net"
+ 	"net/http"
+ 	"strings"
+ 
+@@ -39,44 +38,26 @@
+ 
+ // 转发流量
+ func transfer(log *log.Entry, server, client io.ReadWriteCloser) {
+-	done := make(chan struct{})
+-	defer close(done)
+-
+-	errChan := make(chan error)
++	errChan := make(chan error, 2)
+ 	go func() {
+ 		_, err := io.Copy(server, client)
+ 		log.Debugln("client copy end", err)
+-		client.Close()
+-		select {
+-		case <-done:
+-			return
+-		case errChan <- err:
+-			return
+-		}
++		errChan <- err
+ 	}()
+ 	go func() {
+ 		_, err := io.Copy(client, server)
+ 		log.Debugln("server copy end", err)
+-		server.Close()
+-
+-		if clientConn, ok := client.(*wrapClientConn); ok {
+-			err := clientConn.Conn.(*net.TCPConn).CloseRead()
+-			log.Debugln("clientConn.Conn.(*net.TCPConn).CloseRead()", err)
+-		}
+-
+-		select {
+-		case <-done:
+-			return
+-		case errChan <- err:
+-			return
+-		}
++		errChan <- err
+ 	}()
+-
+-	for i := 0; i < 2; i++ {
+-		if err := <-errChan; err != nil {
+-			logErr(log, err)
+-			return // 如果有错误，直接返回
+-		}
++	err := <-errChan
++	server.Close()
++	client.Close()
++	second := <-errChan
++	if err != nil {
++		logErr(log, err)
++	}
++	if second != nil {
++		logErr(log, second)
+ 	}
+ }
+ 
+--- /dev/null
++++ b/proxy/lifecycle.go
+@@ -0,0 +1,179 @@
++package proxy
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/http"
++	"sync"
++)
++
++// All admissions and WaitGroup.Add calls use the same closing gate. The SDK
++// owns accepted sockets, outgoing sockets and internal work, not the caller's
++// goroutine running Serve. Addons must return; Close waits for their callbacks.
++type lifecycle struct {
++	mu               sync.Mutex
++	started, closing bool
++	listener         net.Listener
++	conns            map[net.Conn]struct{}
++	work             sync.WaitGroup
++	ctx              context.Context
++	cancel           context.CancelFunc
++	closeOnce        sync.Once
++	closeErr         error
++}
++
++func newLifecycle() *lifecycle {
++	ctx, cancel := context.WithCancel(context.Background())
++	return &lifecycle{ctx: ctx, cancel: cancel, conns: make(map[net.Conn]struct{})}
++}
++func (p *Proxy) beginWork() bool {
++	p.life.mu.Lock()
++	defer p.life.mu.Unlock()
++	if p.life.closing {
++		return false
++	}
++	p.life.work.Add(1)
++	return true
++}
++func (p *Proxy) track(c net.Conn) bool {
++	p.life.mu.Lock()
++	defer p.life.mu.Unlock()
++	if p.life.closing {
++		return false
++	}
++	if _, exists := p.life.conns[c]; exists {
++		return true
++	}
++	p.life.conns[c] = struct{}{}
++	if callbackConn(c) {
++		p.life.work.Add(1)
++	}
++	return true
++}
++func (p *Proxy) untrack(c net.Conn) {
++	p.life.mu.Lock()
++	if _, exists := p.life.conns[c]; exists {
++		delete(p.life.conns, c)
++		if callbackConn(c) {
++			p.life.work.Done()
++		}
++	}
++	p.life.mu.Unlock()
++}
++
++func callbackConn(c net.Conn) bool {
++	switch c.(type) {
++	case *wrapClientConn, *wrapServerConn:
++		return true
++	}
++	return false
++}
++
++func (p *Proxy) trackServer(c *wrapServerConn) bool {
++	if !p.track(c) {
++		c.Close()
++		return false
++	}
++	if !c.connCtx.ClientConn.Conn.(*wrapClientConn).attachUpstream(c) {
++		c.Close()
++		return false
++	}
++	return true
++}
++func (p *Proxy) isClosing() bool { p.life.mu.Lock(); defer p.life.mu.Unlock(); return p.life.closing }
++
++type ownedConn struct {
++	net.Conn
++	p    *Proxy
++	once sync.Once
++	err  error
++}
++
++func (c *ownedConn) Close() error {
++	c.once.Do(func() { c.err = c.Conn.Close(); c.p.untrack(c) })
++	return c.err
++}
++
++// Serve takes ownership of every non-nil listener, including rejected calls.
++// Exactly one Start or Serve is permitted. The raw listener is still wrapped
++// by wrapListener, preserving ConnContext and CONNECT/TLS interception.
++func (p *Proxy) Serve(ln net.Listener) error {
++	if ln == nil {
++		return errors.New("proxy: nil listener")
++	}
++	p.life.mu.Lock()
++	if p.life.started || p.life.closing {
++		p.life.mu.Unlock()
++		ln.Close()
++		return errors.New("proxy: already started or closed")
++	}
++	p.life.started = true
++	p.life.listener = ln
++	p.life.work.Add(1)
++	go func() { defer p.life.work.Done(); p.attacker.start() }()
++	p.life.mu.Unlock()
++	err := p.entry.serve(ln)
++	// Closing the retained raw listener may reach Accept before http.Server's
++	// inShutdown flag. Preserve the legacy Start/Serve shutdown sentinel.
++	if p.isClosing() && errors.Is(err, net.ErrClosed) {
++		err = http.ErrServerClosed
++	}
++	// A failed accept/Serve must not leave the internal attacker running.
++	closeErr := p.Close()
++	if closeErr == nil {
++		return err
++	}
++	return errors.Join(err, closeErr)
++}
++
++func (p *Proxy) stop(ctx context.Context) error {
++	p.life.closeOnce.Do(func() {
++		p.life.mu.Lock()
++		p.life.closing = true
++		ln := p.life.listener
++		conns := make([]net.Conn, 0, len(p.life.conns))
++		for c := range p.life.conns {
++			conns = append(conns, c)
++		}
++		p.life.mu.Unlock()
++		p.life.cancel()
++		if ln != nil {
++			ln.Close()
++		}
++		p.attacker.listener.Close()
++		// Close raw client sockets first: unblock reads without invoking addons
++		// while the registry lock is held. wrapClientConn.Close is idempotent.
++		for _, c := range conns {
++			if wc, ok := c.(*wrapClientConn); ok {
++				wc.Conn.Close()
++			} else if sc, ok := c.(*wrapServerConn); ok {
++				sc.Conn.Close()
++			} else {
++				c.Close()
++			}
++		}
++		entryErr := p.entry.server.Close()
++		attackerErr := p.attacker.server.Close()
++		for _, c := range conns {
++			if callbackConn(c) {
++				c.Close()
++			}
++		}
++		p.life.work.Wait()
++		p.attacker.client.CloseIdleConnections()
++		p.life.closeErr = errors.Join(entryErr, attackerErr)
++	})
++	// Even an expired Shutdown context force-stops AND joins. Thus return never
++	// means "cancellation requested, writers still running".
++	return errors.Join(ctx.Err(), p.life.closeErr)
++}
++
++// Close force-stops and joins all owned work. Concurrent calls wait for the
++// same completion. Calling it from an addon callback would deadlock.
++func (p *Proxy) Close() error { return p.stop(context.Background()) }
++
++// Shutdown stops and joins the same owners as Close. It does not drain an
++// indefinitely live CONNECT/WS stream. A canceled deadline is reported only
++// after force-close and joining the actual owners.
++func (p *Proxy) Shutdown(ctx context.Context) error { return p.stop(ctx) }
+--- /dev/null
++++ b/proxy/listener_lifecycle_test.go
+@@ -0,0 +1,640 @@
++package proxy
++
++import (
++	"bufio"
++	"context"
++	"crypto/tls"
++	"crypto/x509"
++	"errors"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/gorilla/websocket"
++	log "github.com/sirupsen/logrus"
++)
++
++type lifecycleAddon struct {
++	BaseAddon
++	responses atomic.Int32
++	starts    chan struct{}
++	ends      chan struct{}
++}
++
++func (a *lifecycleAddon) Response(f *Flow)       { a.responses.Add(1) }
++func (a *lifecycleAddon) WebSocketStart(f *Flow) { a.starts <- struct{}{} }
++func (a *lifecycleAddon) WebSocketEnd(f *Flow)   { a.ends <- struct{}{} }
++
++func lifecycleProxy(t *testing.T) *Proxy {
++	t.Helper()
++	p, err := NewProxy(&Options{Addr: "127.0.0.1:0", SslInsecure: true, CaRootPath: t.TempDir()})
++	if err != nil {
++		t.Fatal(err)
++	}
++	p.SetUpstreamProxy(func(*http.Request) (*url.URL, error) { return nil, nil })
++	t.Cleanup(func() { p.Close() })
++	return p
++}
++func reservedServe(t *testing.T, p *Proxy, ln net.Listener) <-chan error {
++	t.Helper()
++	s, ok := any(p).(interface{ Serve(net.Listener) error })
++	if !ok {
++		t.Fatal("Proxy lacks reserved listener Serve")
++	}
++	done := make(chan error, 1)
++	go func() { done <- s.Serve(ln) }()
++	return done
++}
++func loopback(t *testing.T) net.Listener {
++	t.Helper()
++	ln, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { ln.Close() })
++	return ln
++}
++func awaitLifecycle(t *testing.T, ch <-chan struct{}) {
++	t.Helper()
++	select {
++	case <-ch:
++	case <-time.After(5 * time.Second):
++		t.Fatal("owned work did not finish")
++	}
++}
++func awaitServe(t *testing.T, ch <-chan error) {
++	t.Helper()
++	select {
++	case err := <-ch:
++		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
++			t.Fatal(err)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("Serve did not exit")
++	}
++}
++
++func TestReservedListenerCapturesHTTPHTTPSAndH2(t *testing.T) {
++	for _, proto := range []string{"http", "https", "h2"} {
++		t.Run(proto, func(t *testing.T) {
++			target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprintf(w, "captured:%s", r.Proto) }))
++			if proto == "http" {
++				target.Start()
++			} else {
++				target.EnableHTTP2 = proto == "h2"
++				target.StartTLS()
++			}
++			defer target.Close()
++			p := lifecycleProxy(t)
++			addon := &lifecycleAddon{}
++			p.AddAddon(addon)
++			ln := loopback(t)
++			done := reservedServe(t, p, ln)
++			proxyURL, _ := url.Parse("http://" + ln.Addr().String())
++			pool := x509.NewCertPool()
++			ca := p.GetCertificate()
++			pool.AddCert(&ca)
++			tr := &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{RootCAs: pool}, ForceAttemptHTTP2: proto == "h2"}
++			defer tr.CloseIdleConnections()
++			client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
++			endpoint := strings.Replace(target.URL, "127.0.0.1", "localhost", 1)
++			res, err := client.Get(endpoint + "/capture")
++			if err != nil {
++				t.Fatal(err)
++			}
++			body, err := io.ReadAll(res.Body)
++			res.Body.Close()
++			if err != nil {
++				t.Fatal(err)
++			}
++			want := "captured:HTTP/1.1"
++			if proto == "h2" {
++				want = "captured:HTTP/2.0"
++			}
++			if string(body) != want {
++				t.Fatalf("body=%q want %q", body, want)
++			}
++			if addon.responses.Load() != 1 {
++				t.Fatalf("captured %d responses", addon.responses.Load())
++			}
++			if err := p.Close(); err != nil {
++				t.Fatal(err)
++			}
++			awaitServe(t, done)
++			if _, err := client.Get(endpoint); err == nil {
++				t.Fatal("request succeeded after Close")
++			}
++			if addon.responses.Load() != 1 {
++				t.Fatal("post-Close capture")
++			}
++		})
++	}
++}
++
++func TestCloseOwnsHijackedCONNECTAndTLSHandshake(t *testing.T) {
++	for _, tlsStart := range []bool{false, true} {
++		t.Run(fmt.Sprint(tlsStart), func(t *testing.T) {
++			p := lifecycleProxy(t)
++			p.AddAddon(NewUpstreamCertAddon(false))
++			ln := loopback(t)
++			done := reservedServe(t, p, ln)
++			c, err := net.Dial("tcp", ln.Addr().String())
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer c.Close()
++			fmt.Fprint(c, "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n")
++			// Lazy interception allows testing a stalled client without dialing a target.
++			_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
++			r, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"})
++			if err != nil || r.StatusCode != 200 {
++				t.Fatalf("CONNECT: %v %v", r, err)
++			}
++			if tlsStart {
++				c.Write([]byte{0x16, 0x03, 0x01, 0x00, 0x30})
++			}
++			closed := make(chan struct{})
++			go func() { p.Close(); close(closed) }()
++			awaitLifecycle(t, closed)
++			awaitServe(t, done)
++			if _, err := c.Read(make([]byte, 1)); err == nil {
++				t.Fatal("hijacked socket remains open")
++			}
++		})
++	}
++}
++
++func TestCloseWebSocketJoinsBothDirections(t *testing.T) {
++	u := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
++	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		c, err := u.Upgrade(w, r, nil)
++		if err != nil {
++			return
++		}
++		defer c.Close()
++		for {
++			k, b, e := c.ReadMessage()
++			if e != nil {
++				return
++			}
++			if c.WriteMessage(k, b) != nil {
++				return
++			}
++		}
++	}))
++	defer target.Close()
++	p := lifecycleProxy(t)
++	a := &lifecycleAddon{starts: make(chan struct{}, 1), ends: make(chan struct{}, 1)}
++	p.AddAddon(a)
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	pu, _ := url.Parse("http://" + ln.Addr().String())
++	pool := x509.NewCertPool()
++	ca := p.GetCertificate()
++	pool.AddCert(&ca)
++	d := websocket.Dialer{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}, HandshakeTimeout: 5 * time.Second}
++	c, _, err := d.Dial(strings.Replace("wss"+target.URL[5:], "127.0.0.1", "localhost", 1)+"/echo", nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer c.Close()
++	awaitLifecycle(t, a.starts)
++	if err := c.WriteMessage(websocket.TextMessage, []byte("echo")); err != nil {
++		t.Fatal(err)
++	}
++	_, b, err := c.ReadMessage()
++	if err != nil || string(b) != "echo" {
++		t.Fatalf("echo %q: %v", b, err)
++	}
++	if err := p.Close(); err != nil {
++		t.Fatal(err)
++	}
++	awaitServe(t, done)
++	select {
++	case <-a.ends:
++	default:
++		t.Fatal("Close returned before WebSocketEnd")
++	}
++}
++
++func TestListenerOwnershipRejectedAndRepeatedServe(t *testing.T) {
++	p := lifecycleProxy(t)
++	p.Close()
++	ln := loopback(t)
++	s, ok := any(p).(interface{ Serve(net.Listener) error })
++	if !ok {
++		t.Fatal("missing Serve")
++	}
++	if s.Serve(ln) == nil {
++		t.Fatal("Serve accepted closed proxy")
++	}
++	if _, err := ln.Accept(); !errors.Is(err, net.ErrClosed) {
++		t.Fatalf("rejected listener not closed: %v", err)
++	}
++	if s.Serve(nil) == nil {
++		t.Fatal("nil listener accepted")
++	}
++	p2 := lifecycleProxy(t)
++	first := loopback(t)
++	done := reservedServe(t, p2, first)
++	// A real request establishes that first Serve acquired ownership.
++	c, err := net.Dial("tcp", first.Addr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n")
++	c.SetReadDeadline(time.Now().Add(5 * time.Second))
++	if _, err := http.ReadResponse(bufio.NewReader(c), nil); err != nil {
++		t.Fatal(err)
++	}
++	c.Close()
++	second := loopback(t)
++	s2 := any(p2).(interface{ Serve(net.Listener) error })
++	if s2.Serve(second) == nil {
++		t.Fatal("second Serve accepted")
++	}
++	if _, err := second.Accept(); !errors.Is(err, net.ErrClosed) {
++		t.Fatal("second listener leaked")
++	}
++	var wg sync.WaitGroup
++	for i := 0; i < 8; i++ {
++		wg.Go(func() {
++			if err := p2.Close(); err != nil {
++				t.Error(err)
++			}
++		})
++	}
++	wg.Wait()
++	awaitServe(t, done)
++}
++
++func TestAttackerListenerCloseWakesAcceptAndPendingSend(t *testing.T) {
++	p := lifecycleProxy(t)
++	l := p.attacker.listener
++	accepted := make(chan struct{})
++	go func() { l.Accept(); close(accepted) }()
++	l.Close()
++	awaitLifecycle(t, accepted)
++	x, y := net.Pipe()
++	defer y.Close()
++	sent := make(chan struct{})
++	go func() { l.accept(x); close(sent) }()
++	awaitLifecycle(t, sent)
++	pending := lifecycleProxy(t).attacker.listener
++	x2, y2 := net.Pipe()
++	defer y2.Close()
++	pendingDone := make(chan struct{})
++	entered := make(chan struct{})
++	go func() { close(entered); pending.accept(x2); close(pendingDone) }()
++	awaitLifecycle(t, entered)
++	pending.Close()
++	awaitLifecycle(t, pendingDone)
++}
++
++func TestShutdownDeadlineStillJoinsSink(t *testing.T) {
++	p := lifecycleProxy(t)
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	c, err := net.Dial("tcp", ln.Addr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n")
++	c.SetReadDeadline(time.Now().Add(5 * time.Second))
++	if _, err := http.ReadResponse(bufio.NewReader(c), nil); err != nil {
++		t.Fatal(err)
++	}
++	c.Close()
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	if err := p.Shutdown(ctx); !errors.Is(err, context.Canceled) {
++		t.Fatalf("Shutdown error=%v", err)
++	}
++	awaitServe(t, done)
++}
++
++type blockedResponseAddon struct {
++	BaseAddon
++	entered, release chan struct{}
++	writes           atomic.Int32
++}
++
++func (a *blockedResponseAddon) Response(*Flow) { close(a.entered); <-a.release; a.writes.Add(1) }
++
++func TestCloseJoinsInFlightHTTPHTTPSAndH2Capture(t *testing.T) {
++	for _, proto := range []string{"http", "https", "h2"} {
++		t.Run(proto, func(t *testing.T) {
++			target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "in-flight capture") }))
++			if proto == "http" {
++				target.Start()
++			} else {
++				target.EnableHTTP2 = proto == "h2"
++				target.StartTLS()
++			}
++			defer target.Close()
++			p := lifecycleProxy(t)
++			a := &blockedResponseAddon{entered: make(chan struct{}), release: make(chan struct{})}
++			p.AddAddon(a)
++			ln := loopback(t)
++			done := reservedServe(t, p, ln)
++			pu, _ := url.Parse("http://" + ln.Addr().String())
++			pool := x509.NewCertPool()
++			ca := p.GetCertificate()
++			pool.AddCert(&ca)
++			tr := &http.Transport{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}, ForceAttemptHTTP2: proto == "h2"}
++			defer tr.CloseIdleConnections()
++			requestDone := make(chan struct{})
++			go func() {
++				defer close(requestDone)
++				c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
++				r, e := c.Get(strings.Replace(target.URL, "127.0.0.1", "localhost", 1))
++				if e == nil {
++					r.Body.Close()
++				}
++			}()
++			awaitLifecycle(t, a.entered)
++			closed := make(chan struct{})
++			go func() { p.Close(); close(closed) }()
++			select {
++			case <-closed:
++				t.Fatal("Close returned before capture callback")
++			case <-time.After(30 * time.Millisecond):
++			}
++			close(a.release)
++			awaitLifecycle(t, closed)
++			awaitLifecycle(t, requestDone)
++			awaitServe(t, done)
++			if a.writes.Load() != 1 {
++				t.Fatal("capture callback did not complete before Close")
++			}
++		})
++	}
++}
++
++func TestTransparentCONNECTTransfersHTTPAndCloses(t *testing.T) {
++	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "through CONNECT transfer") }))
++	defer target.Close()
++	p := lifecycleProxy(t)
++	p.SetShouldInterceptRule(func(*http.Request) bool { return false })
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	c, err := net.Dial("tcp", ln.Addr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer c.Close()
++	c.SetDeadline(time.Now().Add(5 * time.Second))
++	host := target.Listener.Addr().String()
++	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)
++	br := bufio.NewReader(c)
++	r, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
++	if err != nil || r.StatusCode != 200 {
++		t.Fatalf("CONNECT %v %v", r, err)
++	}
++	fmt.Fprintf(c, "GET /transfer HTTP/1.1\r\nHost: %s\r\n\r\n", host)
++	r, err = http.ReadResponse(br, &http.Request{Method: "GET"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	b, err := io.ReadAll(r.Body)
++	r.Body.Close()
++	if err != nil || string(b) != "through CONNECT transfer" {
++		t.Fatalf("body=%q err=%v", b, err)
++	}
++	if err := p.Close(); err != nil {
++		t.Fatal(err)
++	}
++	awaitServe(t, done)
++	if _, err := c.Read(make([]byte, 1)); err == nil {
++		t.Fatal("CONNECT still open")
++	}
++}
++
++func TestServeFailureAndStartBindFailureReleaseOwners(t *testing.T) {
++	p := lifecycleProxy(t)
++	ln := loopback(t)
++	ln.Close()
++	s, ok := any(p).(interface{ Serve(net.Listener) error })
++	if !ok {
++		t.Fatal("missing Serve")
++	}
++	if err := s.Serve(ln); !errors.Is(err, net.ErrClosed) {
++		t.Fatalf("closed listener: %v", err)
++	}
++	if err := p.Close(); err != nil {
++		t.Fatal(err)
++	}
++	p2 := lifecycleProxy(t)
++	busy := loopback(t)
++	p2.Opts.Addr = busy.Addr().String()
++	if p2.Start() == nil {
++		t.Fatal("occupied bind accepted")
++	}
++	p2.Close()
++}
++
++type disconnectBlockAddon struct {
++	BaseAddon
++	entered, release chan struct{}
++}
++
++func (a *disconnectBlockAddon) ServerDisconnected(*ConnContext) { close(a.entered); <-a.release }
++func TestCloseJoinsUpstreamDisconnectCallback(t *testing.T) {
++	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "disconnect capture") }))
++	defer target.Close()
++	p := lifecycleProxy(t)
++	a := &disconnectBlockAddon{entered: make(chan struct{}), release: make(chan struct{})}
++	p.AddAddon(a)
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	pu, _ := url.Parse("http://" + ln.Addr().String())
++	tr := &http.Transport{Proxy: http.ProxyURL(pu)}
++	defer tr.CloseIdleConnections()
++	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
++	r, err := c.Get(target.URL)
++	if err != nil {
++		t.Fatal(err)
++	}
++	io.Copy(io.Discard, r.Body)
++	r.Body.Close()
++	target.CloseClientConnections()
++	awaitLifecycle(t, a.entered)
++	closed := make(chan struct{})
++	go func() { p.Close(); close(closed) }()
++	select {
++	case <-closed:
++		close(a.release)
++		t.Fatal("Close returned before upstream callback completed")
++	case <-time.After(30 * time.Millisecond):
++	}
++	close(a.release)
++	awaitLifecycle(t, closed)
++	awaitServe(t, done)
++}
++
++func TestClientDisconnectClosesOwnedUpstream(t *testing.T) {
++	upstreamClosed := make(chan struct{}, 1)
++	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "owned upstream") }))
++	target.Config.ConnState = func(c net.Conn, s http.ConnState) {
++		if s == http.StateClosed {
++			upstreamClosed <- struct{}{}
++		}
++	}
++	target.Start()
++	defer target.Close()
++	p := lifecycleProxy(t)
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	pu, _ := url.Parse("http://" + ln.Addr().String())
++	tr := &http.Transport{Proxy: http.ProxyURL(pu)}
++	defer tr.CloseIdleConnections()
++	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
++	r, err := c.Get(target.URL)
++	if err != nil {
++		t.Fatal(err)
++	}
++	io.Copy(io.Discard, r.Body)
++	r.Body.Close()
++	tr.CloseIdleConnections()
++	select {
++	case <-upstreamClosed:
++	case <-time.After(300 * time.Millisecond):
++		t.Fatal("client disconnect leaked upstream keep-alive")
++	}
++	p.Close()
++	awaitServe(t, done)
++}
++
++func TestCloseInterruptsUpstreamTLSHandshake(t *testing.T) {
++	target := loopback(t)
++	handshakeEntered := make(chan struct{})
++	targetDone := make(chan struct{})
++	go func() {
++		defer close(targetDone)
++		c, e := target.Accept()
++		if e != nil {
++			return
++		}
++		defer c.Close()
++		if _, e = io.ReadFull(c, make([]byte, 1)); e != nil {
++			return
++		}
++		close(handshakeEntered)
++		io.Copy(io.Discard, c)
++	}()
++	p := lifecycleProxy(t)
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	c, err := net.Dial("tcp", ln.Addr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer c.Close()
++	c.SetDeadline(time.Now().Add(5 * time.Second))
++	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target.Addr(), target.Addr())
++	r, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"})
++	if err != nil || r.StatusCode != 200 {
++		t.Fatalf("CONNECT %v %v", r, err)
++	}
++	tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, ServerName: "localhost"})
++	clientDone := make(chan error, 1)
++	go func() { clientDone <- tc.Handshake() }()
++	awaitLifecycle(t, handshakeEntered)
++	if err := p.Close(); err != nil {
++		t.Fatal(err)
++	}
++	awaitServe(t, done)
++	awaitLifecycle(t, targetDone)
++	select {
++	case err := <-clientDone:
++		if err == nil {
++			t.Fatal("stalled TLS unexpectedly succeeded")
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("TLS worker remains")
++	}
++}
++
++type delayedReadConn struct {
++	net.Conn
++	readDone, release chan struct{}
++	once              sync.Once
++}
++
++func (c *delayedReadConn) Read(b []byte) (int, error) {
++	n, e := c.Conn.Read(b)
++	if e != nil {
++		c.once.Do(func() { close(c.readDone); <-c.release })
++	}
++	return n, e
++}
++func TestTransferWaitsBothCopyWorkersOnError(t *testing.T) {
++	s, remote := net.Pipe()
++	client, sender := net.Pipe()
++	defer sender.Close()
++	defer client.Close()
++	defer s.Close()
++	server := &delayedReadConn{Conn: s, readDone: make(chan struct{}), release: make(chan struct{})}
++	remote.Close()
++	done := make(chan struct{})
++	go func() { transfer(log.WithField("test", "join"), server, client); close(done) }()
++	go sender.Write([]byte("force write error"))
++	awaitLifecycle(t, server.readDone)
++	select {
++	case <-done:
++		close(server.release)
++		t.Fatal("transfer returned while second reader still running")
++	case <-time.After(30 * time.Millisecond):
++	}
++	close(server.release)
++	awaitLifecycle(t, done)
++}
++
++func TestConcurrentServeTransfersBothListenerOwnership(t *testing.T) {
++	p := lifecycleProxy(t)
++	listeners := []net.Listener{loopback(t), loopback(t)}
++	start := make(chan struct{})
++	results := make(chan error, 2)
++	for _, ln := range listeners {
++		go func() { <-start; results <- p.Serve(ln) }()
++	}
++	close(start)
++	served := 0
++	for _, ln := range listeners {
++		c, e := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
++		if e != nil {
++			continue
++		}
++		c.SetDeadline(time.Now().Add(5 * time.Second))
++		fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n")
++		_, e = http.ReadResponse(bufio.NewReader(c), nil)
++		c.Close()
++		if e == nil {
++			served++
++		}
++	}
++	if served != 1 {
++		t.Fatalf("concurrent Serve admitted %d listeners", served)
++	}
++	p.Close()
++	for range listeners {
++		select {
++		case <-results:
++		case <-time.After(5 * time.Second):
++			t.Fatal("Serve result not joined")
++		}
++	}
++	for _, ln := range listeners {
++		if _, e := ln.Accept(); !errors.Is(e, net.ErrClosed) {
++			t.Fatalf("listener not owned/closed: %v", e)
++		}
++	}
++}
+--- a/proxy/proxy.go
++++ b/proxy/proxy.go
+@@ -10,7 +10,6 @@
+ 
+ 	"github.com/lqqyt2423/go-mitmproxy/cert"
+ 	"github.com/lqqyt2423/go-mitmproxy/internal/helper"
+-	log "github.com/sirupsen/logrus"
+ )
+ 
+ type Options struct {
+@@ -25,6 +24,7 @@
+ }
+ 
+ type Proxy struct {
++	life    *lifecycle
+ 	Opts    *Options
+ 	Version string
+ 	Addons  []Addon
+@@ -46,6 +46,7 @@
+ 	}
+ 
+ 	proxy := &Proxy{
++		life:    newLifecycle(),
+ 		Opts:    opts,
+ 		Version: "1.9.2",
+ 		Addons:  make([]Addon, 0),
+@@ -69,20 +70,15 @@
+ }
+ 
+ func (proxy *Proxy) Start() error {
+-	go func() {
+-		if err := proxy.attacker.start(); err != nil {
+-			log.Error(err)
+-		}
+-	}()
+-	return proxy.entry.start()
+-}
+-
+-func (proxy *Proxy) Close() error {
+-	return proxy.entry.close()
+-}
+-
+-func (proxy *Proxy) Shutdown(ctx context.Context) error {
+-	return proxy.entry.shutdown(ctx)
++	addr := proxy.Opts.Addr
++	if addr == "" {
++		addr = ":http"
++	}
++	ln, err := net.Listen("tcp", addr)
++	if err != nil {
++		return err
++	}
++	return proxy.Serve(ln)
+ }
+ 
+ func (proxy *Proxy) GetCertificate() x509.Certificate {
+@@ -131,7 +127,15 @@
+ 	} else {
+ 		conn, err = (&net.Dialer{}).DialContext(ctx, "tcp", address)
+ 	}
+-	return conn, err
++	if err != nil {
++		return nil, err
++	}
++	owned := &ownedConn{Conn: conn, p: proxy}
++	if !proxy.track(owned) {
++		conn.Close()
++		return nil, net.ErrClosed
++	}
++	return owned, nil
+ }
+ 
+ func (proxy *Proxy) SetAuthProxy(fn func(res http.ResponseWriter, req *http.Request) (bool, error)) {
+--- a/proxy/websocket.go
++++ b/proxy/websocket.go
+@@ -7,6 +7,7 @@
+ 	"net/http"
+ 	"net/url"
+ 	"strings"
++	"sync"
+ 
+ 	"github.com/gorilla/websocket"
+ 	log "github.com/sirupsen/logrus"
+@@ -161,12 +162,13 @@
+ 	}()
+ 
+ 	errChan := make(chan error, 2)
++	var workers sync.WaitGroup
++	workers.Add(2)
+ 
+ 	// 客户端 -> 服务器
+ 	go func() {
++		defer workers.Done()
+ 		defer func() {
+-			// 优雅关闭服务器连接
+-			serverWS.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+ 			serverWS.Close()
+ 		}()
+ 
+@@ -197,9 +199,8 @@
+ 
+ 	// 服务器 -> 客户端
+ 	go func() {
++		defer workers.Done()
+ 		defer func() {
+-			// 优雅关闭客户端连接
+-			clientWS.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+ 			clientWS.Close()
+ 		}()
+ 
+@@ -230,6 +231,10 @@
+ 
+ 	// 等待任一方向出错或关闭
+ 	err := <-errChan
++	clientWS.Close()
++	serverWS.Close()
++	<-errChan
++	workers.Wait()
+ 	// 如果是正常关闭（nil），返回 nil
+ 	return err
+ }
+@@ -265,6 +270,10 @@
+ 	for _, addon := range connCtx.proxy.Addons {
+ 		addon.ServerConnected(connCtx)
+ 	}
++	if !h.proxy.trackServer(serverConn.Conn.(*wrapServerConn)) {
++		return net.ErrClosed
++	}
++	defer serverConn.Conn.Close()
+ 
+ 	// 步骤 4: 创建 Dialer，使用自定义 NetDial
+ 	dialer := &websocket.Dialer{

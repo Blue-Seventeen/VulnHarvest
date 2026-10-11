@@ -1,0 +1,591 @@
+{
+  "schemaVersion": 1,
+  "modules": [
+    {
+      "module": "github.com/lqqyt2423/go-mitmproxy",
+      "version": "v1.9.2",
+      "goDirective": "1.26",
+      "directory": "third_party/go-mitmproxy",
+      "goSum": "h1:+QTbDyUUaVRmEavPq0/eWzJ2K+K4JdL4ff91s/adnxk=",
+      "archiveSHA256": "0abd197455a47fc6045176cb29727959e51686de62d8bcd09be000236c3744d2",
+      "source": "Go module cache archive, offline zip-to-cache raw-byte comparison; no online SumDB claim",
+      "licenseEvidence": "MIT LICENSE, Copyright (c) 2020 liqiang; retained unchanged",
+      "patchID": "vulnharvest-portable-proxy-lifecycle-1",
+      "patchFile": "third_party/patches/go-mitmproxy-v1.9.2.patch",
+      "patchSHA256": "fa849e0f34a43de4f91b2ea81498a4b1ad6228bc69a8783388cf5c8b5f58abd6",
+      "upstreamFiles": [
+        {
+          "path": ".github/workflows/release.yml",
+          "size": 499,
+          "sha256": "08270942e4d50bf818d806f7934dbce735adbeb6015ca711a83721e61cf880a4"
+        },
+        {
+          "path": ".gitignore",
+          "size": 61,
+          "sha256": "944e943e7aacfc5177478b08d440ef8852b2acad584fa6efc5b31f03e7445cd0"
+        },
+        {
+          "path": ".goreleaser.yml",
+          "size": 701,
+          "sha256": "d8864182237d09e8e78d87ba996175c7d52af1c5f7b4e091adb9f5078a6be32a"
+        },
+        {
+          "path": "AGENTS.md",
+          "size": 548,
+          "sha256": "2edd0cb6ab93f82811e64130cea972d7fb3911875052580df4848f77e671ebf3"
+        },
+        {
+          "path": "LICENSE",
+          "size": 1064,
+          "sha256": "1d5e311691f3108308407de750d28e63799c863af9b4390343bfdecdb1c49796"
+        },
+        {
+          "path": "Makefile",
+          "size": 405,
+          "sha256": "d57030a97130701bb8e85c653cb534ff717639c7632638b0838961845a140bd6"
+        },
+        {
+          "path": "README.md",
+          "size": 7004,
+          "sha256": "823d936be9221bfcf594685f03757a1049ca36461d595afe470ae0b05c950c59"
+        },
+        {
+          "path": "README_CN.md",
+          "size": 6437,
+          "sha256": "3a577cc7dbc3cba6fc0718b513b47c35907bb53d01ea4140377fb432baa5ceb6"
+        },
+        {
+          "path": "addon/decoder.go",
+          "size": 239,
+          "sha256": "e6d2348c5dd7cdad3cdd687fc0054edd95da64286f48c006832e474f40f81fe9"
+        },
+        {
+          "path": "addon/dumper.go",
+          "size": 2369,
+          "sha256": "db36542652e22c88eb7bbcae65a22aeb13891a6e4e04896c760ed67267fa1ab3"
+        },
+        {
+          "path": "addon/maplocal.go",
+          "size": 2953,
+          "sha256": "48a9e163758b75540154170cea1c9498dcd56dee4e96082d06432e94041bee2e"
+        },
+        {
+          "path": "addon/mapremote.go",
+          "size": 3081,
+          "sha256": "b4431ab6256adce3d078a6795a2384461d7d4f3b5429dd10c0dcc7a13bdb257e"
+        },
+        {
+          "path": "addon/mapremote_test.go",
+          "size": 4731,
+          "sha256": "0dde7c7ba96f0ffcc29aa2e9f697a0ca57cb1aa2eb6327dba536036fcbd352e3"
+        },
+        {
+          "path": "assets/sponsor-me.jpeg",
+          "size": 109007,
+          "sha256": "7a549d8b9eea0c5940ff4588b8773d82897c0eedef386c53f060d99011e6813d"
+        },
+        {
+          "path": "assets/sqlman-cn.png",
+          "size": 547776,
+          "sha256": "2f53536dc2b7ace26411504bc611bee892b6ecb0746feb73d5f776c14d493b25"
+        },
+        {
+          "path": "assets/sqlman-en.png",
+          "size": 486650,
+          "sha256": "d345ffaefc1591b11ac44c0063539c086a303436e992f6ec6f0d9b9930082164"
+        },
+        {
+          "path": "assets/web-1.png",
+          "size": 270154,
+          "sha256": "a9454015d83ba83df5a9fe2a08b4c2108a6a441ab31e0c0daa6d8fd628bd9f0f"
+        },
+        {
+          "path": "assets/web-2.png",
+          "size": 284333,
+          "sha256": "c45e44e6c05fd05ce18de41d0bd4e78914d4fe34acacaaf16f2e61313453c3c5"
+        },
+        {
+          "path": "assets/web-3.png",
+          "size": 231466,
+          "sha256": "850ff159cd77ba9a0387ae62547be7bad61fc7300acaea737ba4a6b160a994ed"
+        },
+        {
+          "path": "assets/wx.jpg",
+          "size": 147985,
+          "sha256": "083ca9f14323c3e6012364ac095a6050f365d07f1a44b432fe9782f2fef090ec"
+        },
+        {
+          "path": "cert/ca.go",
+          "size": 162,
+          "sha256": "be69a310aaf58298667e2d6580d0b30231d9d1dcc46ea5c921a5d17fbf7c9013"
+        },
+        {
+          "path": "cert/self_sign_ca.go",
+          "size": 8103,
+          "sha256": "aca3a17ce9153025797944c3516c3f4e8e28d6a60dee1228df522234d2451139"
+        },
+        {
+          "path": "cert/self_sign_ca_test.go",
+          "size": 648,
+          "sha256": "2f76fb6af7e44dd093bb4b8d5b289111485b45f371859614bf96ed079b1c4f0b"
+        },
+        {
+          "path": "cmd/dummycert/main.go",
+          "size": 1322,
+          "sha256": "8f2481143175b86fb44b937536e65445cafeda363649d635839a7eb477d5808a"
+        },
+        {
+          "path": "cmd/go-mitmproxy/config.go",
+          "size": 3663,
+          "sha256": "526b72422a12a1776f8eb42b9c776f1363e25169b56e97842ec1ac2a59f8bd40"
+        },
+        {
+          "path": "cmd/go-mitmproxy/main.go",
+          "size": 3588,
+          "sha256": "de95bcde0717ae14525aedd49f647f89fdbb4e5af84263280840e905951e50af"
+        },
+        {
+          "path": "cmd/go-mitmproxy/utils.go",
+          "size": 1537,
+          "sha256": "f547350d385743b912d4e89e247371490e7f92af77696521f824a82611f764b1"
+        },
+        {
+          "path": "docs/web-filter-rules_CN.md",
+          "size": 2353,
+          "sha256": "bef3e043274bd747c6bf8efb78a7e1994c44964bd294a361523495b7312c98cd"
+        },
+        {
+          "path": "examples/change-html/main.go",
+          "size": 909,
+          "sha256": "4ed4a44a2b3e120187e6acc29bf1900bca418201b5cf964f2d115126a0546910"
+        },
+        {
+          "path": "examples/close-conn/main.go",
+          "size": 1816,
+          "sha256": "d43a18fd10406c3b79059d3f997bf434b3dfd5bc3f0815aa6d063a832da2daba"
+        },
+        {
+          "path": "examples/http-add-header/main.go",
+          "size": 530,
+          "sha256": "8402784eef53a23f138a75f27da16651bc4e1402982adea37eb733c80c6514e4"
+        },
+        {
+          "path": "examples/proxy-auth/main.go",
+          "size": 1594,
+          "sha256": "0586c52ae900d05fc6ed54d919aab5ec2379dd9c2542137ad24bbcfbed9c423b"
+        },
+        {
+          "path": "examples/rewrite-host/main.go",
+          "size": 800,
+          "sha256": "541cde476afd2a00e1be135c82ce065ac26a5c14967bc0ca8db925dabed4c086"
+        },
+        {
+          "path": "examples/trusted-ca/main.go",
+          "size": 1040,
+          "sha256": "07128f9e1f5e755c64271ff4ea7d95a3b68a2e64da76df94394d61994cdf885d"
+        },
+        {
+          "path": "examples/trusted-ca/trusted-ca.go",
+          "size": 1648,
+          "sha256": "92476eb0c80f3a6563426f11d620f31fa2cba3b1a78fd51a872fb91b29d36e2b"
+        },
+        {
+          "path": "go.mod",
+          "size": 584,
+          "sha256": "c32d593fa2a2ecbe6c556f43212cc1c53f24ded9a77969d08c3dc7e1428a4472"
+        },
+        {
+          "path": "go.sum",
+          "size": 3506,
+          "sha256": "ab40a14e7611b1b3818edb0f09d7e91b507e046ddd798a1757d5951ff59cbd16"
+        },
+        {
+          "path": "internal/helper/helper.go",
+          "size": 2340,
+          "sha256": "8bee9be2c731f666baabe03efdf79ec5d3fee2ca9a09a42fadda0a2071efe3d2"
+        },
+        {
+          "path": "internal/helper/host.go",
+          "size": 726,
+          "sha256": "e9e640134b12a3f858ce26697bd7682f6220616763aae8338354bc71d78b0544"
+        },
+        {
+          "path": "internal/helper/host_test.go",
+          "size": 2156,
+          "sha256": "d95a070ba5f4f0be93ca847be08e24c1a90d188351d545d998fb96dc86741ee1"
+        },
+        {
+          "path": "internal/helper/proxy.go",
+          "size": 2965,
+          "sha256": "8118da1595505638a82f16faf23e6291b80aecfb2864a76a36742c3bbedfcb67"
+        },
+        {
+          "path": "internal/helper/tls.go",
+          "size": 547,
+          "sha256": "7c5f395c108ddb808813d80ad43b20cbb6e5a506b36d4f9c25b7d61be47d1443"
+        },
+        {
+          "path": "proxy/addon.go",
+          "size": 7917,
+          "sha256": "d90ec8eb947ec0491b34fa8f201cb03a437a3488d15c7e8495190040f97269b1"
+        },
+        {
+          "path": "proxy/attacker.go",
+          "size": 16942,
+          "sha256": "9509f0c2dfbcb036d5e2f22192754964f56825b015bab819b46697dd314b6341"
+        },
+        {
+          "path": "proxy/attacker_http2_test.go",
+          "size": 4158,
+          "sha256": "07befd2102caf6f3e4c070049da7b0c9f559341950723799c4d46e018bb4210f"
+        },
+        {
+          "path": "proxy/connection.go",
+          "size": 2297,
+          "sha256": "2ca9f69638d8220d3f621398b3d81428c62a87eea7d0927abd6bc8483ba1777b"
+        },
+        {
+          "path": "proxy/connection_test.go",
+          "size": 5022,
+          "sha256": "c5b8c9a1e774540be111a18705a3c9cb4b7bab40fd7b7ed3834f216545cac325"
+        },
+        {
+          "path": "proxy/entry.go",
+          "size": 8847,
+          "sha256": "d1167cf19e3d206693e670b54f5e9e400af5622d7726bc6413eb486f8f121bb5"
+        },
+        {
+          "path": "proxy/flow.go",
+          "size": 4882,
+          "sha256": "b2397fa5fa2ec952eee476ea86bcfef7bbbd5843cb12311527ba9f89e43e3f07"
+        },
+        {
+          "path": "proxy/flowencoding.go",
+          "size": 2717,
+          "sha256": "3104eaf65d51768541a1c47ab541826273af9cbf9fa610057d508eaa3b4b4792"
+        },
+        {
+          "path": "proxy/helper.go",
+          "size": 1798,
+          "sha256": "5f6638341e6664b08707318e2f40b336ad365b4d39cc93e4d5e0f29f11670548"
+        },
+        {
+          "path": "proxy/instance_log_addon.go",
+          "size": 4816,
+          "sha256": "197cc2a74d2ea3e2e10872ffe7627a90a92e931320ead0c2a9db88cf0eaf40a9"
+        },
+        {
+          "path": "proxy/instance_logger.go",
+          "size": 3510,
+          "sha256": "1821f0acd012eb1856ee7a38ff11aab6c686939eb0ac0478262025c079cd67a2"
+        },
+        {
+          "path": "proxy/proxy.go",
+          "size": 3577,
+          "sha256": "6bdaae2118f4bd2b326eaf11ed1090b4b5eb6ffcf1d0fab22fe2ee60a5d7fb7f"
+        },
+        {
+          "path": "proxy/proxy_test.go",
+          "size": 20764,
+          "sha256": "36c608c181cf14ba04557ef2d5ee64b4134d3b3c80a96907c5bb190e62348e98"
+        },
+        {
+          "path": "proxy/sse.go",
+          "size": 4166,
+          "sha256": "9784faa1854017bad9d2b4e086911ce47cdef829f711044b03bb7aba9f63ff51"
+        },
+        {
+          "path": "proxy/sse_hook_test.go",
+          "size": 6831,
+          "sha256": "338f1bf513e34e54f9620c10652b52bb9c2605c126dbe65a0de55abff39b1544"
+        },
+        {
+          "path": "proxy/sse_realtime_test.go",
+          "size": 11214,
+          "sha256": "03fb44955bf218f603869678c524c44dcc920a67dd1e89111dcea2f47b6683b6"
+        },
+        {
+          "path": "proxy/sse_test.go",
+          "size": 8269,
+          "sha256": "a0d20e455dc20a6b7e52a12acab29a6603a075ac2f15c5d214179b64f1b92647"
+        },
+        {
+          "path": "proxy/websocket.go",
+          "size": 8200,
+          "sha256": "ad5e530c1f6e7b85a420c6691078f39b841356934c3ac475b6976f06250f45c3"
+        },
+        {
+          "path": "proxy/websocket_test.go",
+          "size": 13536,
+          "sha256": "85e391149514be893afbaf658a29c18d581d04bef40cab35ac3c435c82b83401"
+        },
+        {
+          "path": "web/client/.eslintignore",
+          "size": 6,
+          "sha256": "f10ec3ffef16a8dace9b58801e0da28819c98af4c8933410d7e7cacc952f9e9b"
+        },
+        {
+          "path": "web/client/.eslintrc.yml",
+          "size": 566,
+          "sha256": "50545908530aa945eaca226125d9159a2f9aa36682437223fcb15c5aca7fd5ac"
+        },
+        {
+          "path": "web/client/.gitignore",
+          "size": 158,
+          "sha256": "63c3108cfcd84ffb3ab116592a308a62239eb958992aa433f138b4af5871bb85"
+        },
+        {
+          "path": "web/client/README.md",
+          "size": 2113,
+          "sha256": "ecc8a45573bc97a7eaa8284e18d34152ede8ab06e231629c307dfd869f477405"
+        },
+        {
+          "path": "web/client/build/assets/index-Bg-Pyro0.css",
+          "size": 233168,
+          "sha256": "33b0c42e96801a9cd720f09173eaffd3f0d7853317cc4321d7a77dc21e73db5b"
+        },
+        {
+          "path": "web/client/build/assets/index-DBYjaXAB.js",
+          "size": 240998,
+          "sha256": "ead7303c3c2add4ff35a29a3f14db59782b5a157a1d7c8eabf6d883f5d404c49"
+        },
+        {
+          "path": "web/client/build/favicon.ico",
+          "size": 3870,
+          "sha256": "3d10f7da6c603178340081668c4ac5b3ae9743ca9a262ab0fcd312fbb9f48bdd"
+        },
+        {
+          "path": "web/client/build/index.html",
+          "size": 722,
+          "sha256": "8a9b035479245a0747ecaa24fc52da1dd90487816578ceca9ac6ba50811f7aaa"
+        },
+        {
+          "path": "web/client/build/logo192.png",
+          "size": 5347,
+          "sha256": "c386396ec70db3608075b5fbfaac4ab1ccaa86ba05a68ab393ec551eb66c3e00"
+        },
+        {
+          "path": "web/client/build/logo512.png",
+          "size": 9664,
+          "sha256": "9ea4f4da7050c0cc408926f6a39c253624e9babb1d43c7977cd821445a60b461"
+        },
+        {
+          "path": "web/client/build/manifest.json",
+          "size": 492,
+          "sha256": "50b3d8c3903af3f78d871b94557ab14f4e39ca192eaca3d2cfa863c867279a14"
+        },
+        {
+          "path": "web/client/build/robots.txt",
+          "size": 67,
+          "sha256": "90d24bc3bf698ac1e173739502298ccca72adf1f564fab05f484b8c48d1cadd2"
+        },
+        {
+          "path": "web/client/index.html",
+          "size": 625,
+          "sha256": "d975ff9fb4e89971be755223ddf8c3192e1ffd7a60ffb2a9b365374b15447a3f"
+        },
+        {
+          "path": "web/client/package-lock.json",
+          "size": 211009,
+          "sha256": "350fc179f05f6c56bcc7a542dd59215610495c3a00dc57bd95402cee9aed5e4a"
+        },
+        {
+          "path": "web/client/package.json",
+          "size": 778,
+          "sha256": "f5994b3e571a16adf1d56d00c5fece80b4e98a32789b8675a0d82bede72c14af"
+        },
+        {
+          "path": "web/client/public/favicon.ico",
+          "size": 3870,
+          "sha256": "3d10f7da6c603178340081668c4ac5b3ae9743ca9a262ab0fcd312fbb9f48bdd"
+        },
+        {
+          "path": "web/client/public/logo192.png",
+          "size": 5347,
+          "sha256": "c386396ec70db3608075b5fbfaac4ab1ccaa86ba05a68ab393ec551eb66c3e00"
+        },
+        {
+          "path": "web/client/public/logo512.png",
+          "size": 9664,
+          "sha256": "9ea4f4da7050c0cc408926f6a39c253624e9babb1d43c7977cd821445a60b461"
+        },
+        {
+          "path": "web/client/public/manifest.json",
+          "size": 492,
+          "sha256": "50b3d8c3903af3f78d871b94557ab14f4e39ca192eaca3d2cfa863c867279a14"
+        },
+        {
+          "path": "web/client/public/robots.txt",
+          "size": 67,
+          "sha256": "90d24bc3bf698ac1e173739502298ccca72adf1f564fab05f484b8c48d1cadd2"
+        },
+        {
+          "path": "web/client/src/App.css",
+          "size": 2563,
+          "sha256": "f9ae5b1e717fa64d17c0962add62d5eb68e3c8a5709e541fa4a29a9228ec260f"
+        },
+        {
+          "path": "web/client/src/App.tsx",
+          "size": 12669,
+          "sha256": "a6a4a895ac65550d378f8d212d4b5158eaf5d2bdba77825444432086dc9195c5"
+        },
+        {
+          "path": "web/client/src/components/Resizer.tsx",
+          "size": 1487,
+          "sha256": "ed2e1d9bc7f6057ec01bff0e8a666ed0328b79369cb0ef7216c149933838123f"
+        },
+        {
+          "path": "web/client/src/components/ResizerItem.tsx",
+          "size": 1172,
+          "sha256": "be45ca4b041bdab317e0c88fb243b295950730063eb103f289b20f273c7eee49"
+        },
+        {
+          "path": "web/client/src/containers/BreakPoint.tsx",
+          "size": 3023,
+          "sha256": "a35371f6d9ccf27715640c3c950c77a7c83a076d1c731e037af5bef48361f13a"
+        },
+        {
+          "path": "web/client/src/containers/EditFlow.tsx",
+          "size": 5708,
+          "sha256": "80b1c2c1d9cf7b104077321fd38686fb56d07e9ae8054689c6c135f37d6db601"
+        },
+        {
+          "path": "web/client/src/containers/FlowPreview.tsx",
+          "size": 1208,
+          "sha256": "4c02a89f97bf95a3f23f9227bbad35cbdac11c0a650630ecde46fa34aaeb849d"
+        },
+        {
+          "path": "web/client/src/containers/ViewFlow.tsx",
+          "size": 18845,
+          "sha256": "e18306d91a1dd4639c1d48548c196c326ced647e3d9c336236426a7388b309e0"
+        },
+        {
+          "path": "web/client/src/github-mark.svg",
+          "size": 963,
+          "sha256": "7a0dd11e373830a51a565de9fed4a985707c67ccd390f9ae4946a152303ea676"
+        },
+        {
+          "path": "web/client/src/index.tsx",
+          "size": 236,
+          "sha256": "6cbd59aecf590c487a0ddb50cebdf4be0e0a18a20acb2867c0ef0bf3d8872b00"
+        },
+        {
+          "path": "web/client/src/utils/config.ts",
+          "size": 2405,
+          "sha256": "6931e4db16bdd57ee76a49cf7cf39d35db1adcd2834c0ce2da8a8a993cc5c04e"
+        },
+        {
+          "path": "web/client/src/utils/connection.ts",
+          "size": 549,
+          "sha256": "df77f4b9ffa32ff282b1d575e38fa6c2e0a47c975c8e3a01c3cba2919408fd9b"
+        },
+        {
+          "path": "web/client/src/utils/filter.ts",
+          "size": 4951,
+          "sha256": "7bd6a290c04bfc690ad676483c7aa2af0c16d58bb690ed917e40aef50493e059"
+        },
+        {
+          "path": "web/client/src/utils/filterRuleParser.js",
+          "size": 20387,
+          "sha256": "167dd981555f2eea512e2b8c0d2b6ba04c7ddd76bbee82ce9b310c3b0687cc42"
+        },
+        {
+          "path": "web/client/src/utils/flow.ts",
+          "size": 11246,
+          "sha256": "42c0e4d42e3891747be3ed35b35e8c761f201dd3baa1a7df875a9eada7f0476b"
+        },
+        {
+          "path": "web/client/src/utils/message.ts",
+          "size": 5803,
+          "sha256": "9012fb07fb5f195394730a787a5a0e63c28c12e42ff189ffd6d1ae877fb592c3"
+        },
+        {
+          "path": "web/client/src/utils/utils.ts",
+          "size": 3449,
+          "sha256": "387acf37eb5efca6e388508a4d9f8fa7a605cdba3fe5521ebe59b65a96693ae7"
+        },
+        {
+          "path": "web/client/src/vite-env.d.ts",
+          "size": 38,
+          "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
+        },
+        {
+          "path": "web/client/tsconfig.json",
+          "size": 538,
+          "sha256": "e8f2fd7cd279a36dcb5da7a3ad7307a7b0d33a691aeda8ad65f43f3dc158f431"
+        },
+        {
+          "path": "web/client/vite.config.ts",
+          "size": 203,
+          "sha256": "a335b3b6f00765daaba7b821eba0e37d8c7bd43a419a090e99121104acb38bf1"
+        },
+        {
+          "path": "web/conn.go",
+          "size": 4314,
+          "sha256": "cbdce99a3122a5bea920fefcc8914d45b18ac851c09f1410228b64732afd8732"
+        },
+        {
+          "path": "web/message.go",
+          "size": 8663,
+          "sha256": "1b9ac5f15b44df8d4233cbd3af4badeeae91589a40049d86e58deda32342521f"
+        },
+        {
+          "path": "web/web.go",
+          "size": 6560,
+          "sha256": "d654eb1e6ac07f8d4e9031082ce69b8e6ad086aa2cbba00643f175a9282caae3"
+        }
+      ],
+      "changedFiles": [
+        {
+          "path": "proxy/attacker.go",
+          "upstreamSHA256": "9509f0c2dfbcb036d5e2f22192754964f56825b015bab819b46697dd314b6341",
+          "patchedSHA256": "dbba33be679bc717e1610b92167eb9a551254fe5def8608e158c6c9d831cfc86",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/connection.go",
+          "upstreamSHA256": "2ca9f69638d8220d3f621398b3d81428c62a87eea7d0927abd6bc8483ba1777b",
+          "patchedSHA256": "f61d59c7f8bdf030bb9afa406f4fb1fd00bf056b4c77d659657255b1bfa7ab46",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/entry.go",
+          "upstreamSHA256": "d1167cf19e3d206693e670b54f5e9e400af5622d7726bc6413eb486f8f121bb5",
+          "patchedSHA256": "d38b624b272e23974cd325503b034c55c139768b843fd37dac7fef978a34d5fa",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/helper.go",
+          "upstreamSHA256": "5f6638341e6664b08707318e2f40b336ad365b4d39cc93e4d5e0f29f11670548",
+          "patchedSHA256": "78b82d1f424eac71479973fe5ec193345e911e062446be4c9a8298f9cee2518f",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/proxy.go",
+          "upstreamSHA256": "6bdaae2118f4bd2b326eaf11ed1090b4b5eb6ffcf1d0fab22fe2ee60a5d7fb7f",
+          "patchedSHA256": "044a36a748ecca66bbc4b567c022904172d6694522f82bcf7e56a77c85966e9b",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/websocket.go",
+          "upstreamSHA256": "ad5e530c1f6e7b85a420c6691078f39b841356934c3ac475b6976f06250f45c3",
+          "patchedSHA256": "93b2b41964f274b2c05c23d0a30fd94143b6977f8e49567ff033b41a34c86120",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        }
+      ],
+      "addedFiles": [
+        {
+          "path": "proxy/lifecycle.go",
+          "size": 4798,
+          "sha256": "446bf3c493f398fe86d42843a6961a4ac3cf05b6d769647ccf7dd8a78ae05b1b"
+        },
+        {
+          "path": "proxy/listener_lifecycle_test.go",
+          "size": 18146,
+          "sha256": "5dd63e3a08271b1314fc63348d0c5d8694cb137d67afb084b042f370a110f015"
+        }
+      ],
+      "deletedFiles": []
+    }
+  ]
+}

@@ -135,12 +135,15 @@ const TrafficSearchDescription = "查询记录代理已抓取的目标流量（�
 
 // Traffic runs the recording proxy and owns the file tree + index.
 type Traffic struct {
-	dir   string
-	addr  string
-	db    *sql.DB
-	wmu   sync.Mutex // serializes record() vs DeleteHost (incl. blob GC)
-	seq   atomic.Int64
-	proxy *mproxy.Proxy
+	dir            string
+	addr           string
+	addrMu         sync.RWMutex
+	served         bool // protected by addrMu; rejected listeners cannot replace actual addr
+	legacyLoopback bool // a configured bare :port is advertised to clients as loopback
+	db             *sql.DB
+	wmu            sync.Mutex // serializes record() vs DeleteHost (incl. blob GC)
+	seq            atomic.Int64
+	proxy          *mproxy.Proxy
 	// fts reports whether the full-text index is available. False on a driver
 	// build without FTS5: recording and metadata search still work, body search
 	// degrades to unsupported rather than erroring.
@@ -161,6 +164,7 @@ type Traffic struct {
 	// stopping() treats as "not closing".
 	closed    chan struct{}
 	closeOnce sync.Once
+	closeErr  error
 	// pass is the set of hosts whose MITM interception failed for a proxy/protocol
 	// reason; connections to them are tunneled transparently (fail-open) so the
 	// request still reaches the target — unrecorded — instead of being killed.
@@ -195,7 +199,7 @@ func Open(dir, addr string) (*Traffic, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &Traffic{dir: dir, addr: addr, db: db, closed: make(chan struct{})}
+	t := &Traffic{dir: dir, addr: addr, legacyLoopback: strings.HasPrefix(addr, ":"), db: db, closed: make(chan struct{})}
 	if err := t.initIndex(); err != nil {
 		db.Close()
 		return nil, err
@@ -303,8 +307,15 @@ func hostOnly(hostport string) string {
 // ProxyAddr returns the address workers should set as HTTP(S)_PROXY. A bare
 // ":port" means "bind all interfaces" (legacy default), so map it to loopback.
 func (t *Traffic) ProxyAddr() string {
+	t.addrMu.RLock()
+	defer t.addrMu.RUnlock()
 	if strings.HasPrefix(t.addr, ":") {
 		return "http://127.0.0.1" + t.addr
+	}
+	if t.legacyLoopback {
+		if _, port, err := net.SplitHostPort(t.addr); err == nil {
+			return "http://" + net.JoinHostPort("127.0.0.1", port)
+		}
 	}
 	return "http://" + t.addr
 }
@@ -356,7 +367,48 @@ func (t *Traffic) CACertPath() string {
 }
 
 // Start runs the proxy (blocking); run in a goroutine.
-func (t *Traffic) Start() error { return t.proxy.Start() }
+func (t *Traffic) Start() error {
+	t.addrMu.RLock()
+	addr := t.addr
+	t.addrMu.RUnlock()
+	if addr == "" {
+		addr = ":http"
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return t.Serve(ln)
+}
+
+// Serve transfers the reserved listener to the proxy, including on rejection.
+// Callers must join their own Serve goroutine after Close/Shutdown. The actual
+// address is published before any request/capture handler is admitted.
+func (t *Traffic) Serve(ln net.Listener) error {
+	if ln == nil {
+		return t.proxy.Serve(nil)
+	}
+	t.addrMu.Lock()
+	if t.served || t.stopping() {
+		t.addrMu.Unlock()
+		ln.Close()
+		return errors.New("traffic: already started or closed")
+	}
+	t.served = true
+	t.addr = ln.Addr().String()
+	t.addrMu.Unlock()
+	return t.proxy.Serve(ln)
+}
+
+// Shutdown force-stops and joins proxy writers even on an expired deadline,
+// then closes the index. It reports the context error after all owners exit.
+func (t *Traffic) Shutdown(ctx context.Context) error {
+	var proxyErr error
+	if t.proxy != nil {
+		proxyErr = t.proxy.Shutdown(ctx)
+	}
+	return errors.Join(proxyErr, t.Close())
+}
 
 // Close waits for background tree reclamation to finish before closing the
 // index, so shutdown never leaves a goroutine unlinking files out from under a
@@ -364,11 +416,28 @@ func (t *Traffic) Start() error { return t.proxy.Start() }
 // it holds a whole minutes-long budget, and finishing it is never worth delaying
 // shutdown for — the next deletion resumes it.
 func (t *Traffic) Close() error {
-	if t.closed != nil {
-		t.closeOnce.Do(func() { close(t.closed) })
-	}
-	t.reaping.Wait()
-	return t.db.Close()
+	t.closeOnce.Do(func() {
+		if t.closed != nil {
+			close(t.closed)
+		}
+		var proxyErr error
+		if t.proxy != nil {
+			proxyErr = t.proxy.Close()
+		}
+		// Proxy.Close has joined the actual addon handlers, including captures
+		// blocked on wmu. Never close SQLite while those writers can run.
+		// Drain any active deletion/staged transaction before Wait. All reaping
+		// enrollments occur while wmu is held; new mutations reject stopping().
+		t.wmu.Lock()
+		t.wmu.Unlock()
+		t.reaping.Wait()
+		if t.db != nil {
+			t.closeErr = errors.Join(proxyErr, t.db.Close())
+		} else {
+			t.closeErr = proxyErr
+		}
+	})
+	return t.closeErr
 }
 
 // stopping reports whether Close has been called. A nil channel (the zero value)
@@ -1031,6 +1100,9 @@ func (t *Traffic) DeleteHost(host string) (int64, error) {
 	like := "%" + host + "%"
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
+	if t.stopping() {
+		return 0, net.ErrClosed
+	}
 	// Resolved before the rows go away: with a substring match, the index is the
 	// only record of which host directories the filter actually hit.
 	legacy, err := t.hostTrees(`host LIKE ?`, like)
@@ -1083,6 +1155,9 @@ func (t *Traffic) DeleteHost(host string) (int64, error) {
 func (t *Traffic) DeleteAll() (deleted int64, reclaimed int64, err error) {
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
+	if t.stopping() {
+		return 0, 0, net.ErrClosed
+	}
 	before := t.indexBytes()
 	trees, err := t.allHostTrees()
 	if err != nil {
@@ -1423,6 +1498,10 @@ func (t *Traffic) StageDeleteHostsExactForArchive(hosts []string, archiveID, tas
 
 func (t *Traffic) stageDeleteHostsExact(hosts []string, archiveID, taskID int64) (*HostDeleteStage, error) {
 	t.wmu.Lock()
+	if t.stopping() {
+		t.wmu.Unlock()
+		return nil, net.ErrClosed
+	}
 	stage := &HostDeleteStage{traffic: t}
 	fail := func(cause error) (*HostDeleteStage, error) {
 		if rollbackErr := stage.rollbackLocked(); rollbackErr != nil {
@@ -1483,6 +1562,9 @@ func (t *Traffic) RecoverHostDeleteStages(archiveCommitted func(int64, int64) (b
 	}
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
+	if t.stopping() {
+		return net.ErrClosed
+	}
 	parent := filepath.Join(t.dir, "_delete_staging")
 	entries, err := os.ReadDir(parent)
 	if os.IsNotExist(err) {

@@ -1,2 +1,17 @@
 *.bat text eol=crlf
 *.sh  text eol=lf
+
+# Scoped SDK provenance: upstream byte hashes must survive every checkout.
+third_party/go-mitmproxy/** -text
+third_party/patches/go-mitmproxy-v1.9.2.patch -text
+third_party/upstream-manifest.json -text
+
+# Preserve upstream formatting; patch context lines use meaningful indentation.
+# Patched Go sources keep the repository's normal whitespace checks.
+third_party/go-mitmproxy/README.md whitespace=-space-before-tab
+third_party/go-mitmproxy/README_CN.md whitespace=-space-before-tab
+third_party/go-mitmproxy/proxy/flow.go whitespace=-blank-at-eof
+third_party/go-mitmproxy/proxy/instance_logger.go whitespace=-blank-at-eol
+third_party/go-mitmproxy/web/client/src/containers/EditFlow.tsx whitespace=-blank-at-eol
+third_party/go-mitmproxy/web/client/src/utils/filterRuleParser.js whitespace=-blank-at-eol
+third_party/patches/go-mitmproxy-v1.9.2.patch -whitespace
