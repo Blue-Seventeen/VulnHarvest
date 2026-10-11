@@ -49,6 +49,9 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_exp   ON llm_usage(exploration_id);
 
 // EnsureLLMUsageTable creates the llm_usage metering table if it does not exist.
 func (d *DB) EnsureLLMUsageTable() error {
+	if d.IsSQLite() {
+		return d.verifySQLiteTable("llm_usage", "cache_read", "cache_write")
+	}
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -199,14 +202,21 @@ func (d *DB) UsageDaily(days int) ([]ProfileDayUsage, error) {
 	if days <= 0 {
 		days = 365
 	}
-	rows, err := d.Query(`
+	rows, err := d.Query(d.SQL(`
 SELECT COALESCE(profile_name,'') AS profile_name,
        to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0)
 FROM llm_usage
 WHERE ts >= now() - ($1 * interval '1 day')
 GROUP BY profile_name, day
-ORDER BY day`, days)
+ORDER BY day`, `
+SELECT COALESCE(profile_name,'') AS profile_name,
+       substr(ts,1,10) AS day,
+       COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0)
+FROM llm_usage
+WHERE ts >= datetime(now(), '-'||$1||' days')
+GROUP BY profile_name, day
+ORDER BY day`), days)
 	if err != nil {
 		return nil, err
 	}
@@ -298,13 +308,19 @@ WHERE worker = 'judge'`).Scan(&u.Calls, &u.InputTokens, &u.OutputTokens,
 	if err != nil {
 		return JudgeUsage{}, err
 	}
-	rows, err := d.Query(`
+	rows, err := d.Query(d.SQL(`
 SELECT to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
        COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0)
 FROM llm_usage
 WHERE worker = 'judge' AND ts >= now() - ($1 * interval '1 day')
 GROUP BY day
-ORDER BY day`, days)
+ORDER BY day`, `
+SELECT substr(ts,1,10) AS day,
+       COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0)
+FROM llm_usage
+WHERE worker = 'judge' AND ts >= datetime(now(), '-'||$1||' days')
+GROUP BY day
+ORDER BY day`), days)
 	if err != nil {
 		return JudgeUsage{}, err
 	}

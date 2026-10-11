@@ -22,7 +22,7 @@ type CommandRecord struct {
 // commandFilter builds the WHERE clause shared by the tool-execution list and
 // its per-tool tally, so the summary always describes exactly the rows the table
 // pages through. Returns the clause, its args, and the next placeholder index.
-func commandFilter(expID *int64, q string) (string, []any, int) {
+func (d *DB) commandFilter(expID *int64, q string) (string, []any, int) {
 	where := `WHERE u.kind = 'tool_use'`
 	args := []any{}
 	argN := 1
@@ -33,7 +33,7 @@ func commandFilter(expID *int64, q string) (string, []any, int) {
 		argN++
 	}
 	if q != "" {
-		where += fmt.Sprintf(` AND (u.tool ILIKE $%d OR u.detail ILIKE $%d)`, argN, argN)
+		where += fmt.Sprintf(d.SQL(` AND (u.tool ILIKE $%d OR u.detail ILIKE $%d)`, ` AND (LOWER(u.tool) LIKE LOWER($%d) OR LOWER(u.detail) LIKE LOWER($%d))`), argN, argN)
 		args = append(args, "%"+q+"%")
 		argN++
 	}
@@ -51,7 +51,7 @@ type ToolStat struct {
 // ListCommands takes. Unpaginated on purpose: the tally describes the whole
 // filtered set, not the page currently on screen.
 func (d *DB) ToolStats(expID *int64, q string) ([]ToolStat, error) {
-	where, args, _ := commandFilter(expID, q)
+	where, args, _ := d.commandFilter(expID, q)
 
 	rows, err := d.Query(`
 SELECT COALESCE(NULLIF(u.tool,''),'-') AS tool, COUNT(*) AS total,
@@ -89,7 +89,7 @@ func (d *DB) ListCommands(expID *int64, q string, page, size int) ([]CommandReco
 	}
 	offset := page * size
 
-	where, args, argN := commandFilter(expID, q)
+	where, args, argN := d.commandFilter(expID, q)
 
 	// count
 	var total int
@@ -189,6 +189,9 @@ ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS raw_response TEXT;
 
 // EnsureLLMRecordsTable creates the llm_records table if it does not exist.
 func (d *DB) EnsureLLMRecordsTable() error {
+	if d.IsSQLite() {
+		return d.verifySQLiteTable("llm_records", "raw_request", "raw_response")
+	}
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -237,7 +240,7 @@ func (d *DB) ListLLMRecords(model, session, task string, page, size int) ([]LLMR
 		argN++
 	}
 	if session != "" {
-		where += fmt.Sprintf(` AND session_id ILIKE $%d`, argN)
+		where += fmt.Sprintf(d.SQL(` AND session_id ILIKE $%d`, ` AND LOWER(session_id) LIKE LOWER($%d)`), argN)
 		args = append(args, "%"+session+"%")
 		argN++
 	}

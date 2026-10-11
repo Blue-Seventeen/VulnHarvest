@@ -34,7 +34,7 @@ for table in tables:
         if serial: default='0'
         elif default:
             if typ=='ARRAY':default="'[]'"
-            elif default=='now()': default="(strftime('%Y-%m-%d %H:%M:%f','now'))"
+            elif default=='now()': default="(now())"
             else:default=expression(default)
         if default is not None:decl+=' DEFAULT '+default
         if typ in ('jsonb','ARRAY'):
@@ -58,7 +58,7 @@ for idx in meta['indexes']:
 for tr in meta['triggers']:
     if tr['action_statement']!='EXECUTE FUNCTION set_updated_at()':continue
     table=tr['event_object_table'];name=tr['trigger_name']
-    out.append('CREATE TRIGGER IF NOT EXISTS '+name+' AFTER UPDATE ON '+table+" BEGIN UPDATE "+table+" SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;")
+    out.append('CREATE TRIGGER IF NOT EXISTS '+name+' AFTER UPDATE ON '+table+" BEGIN UPDATE "+table+" SET updated_at=now() WHERE rowid=NEW.rowid; END;")
 for event in ['INSERT','UPDATE OF task_ids']:
     suffix='insert' if event=='INSERT' else 'update'
     out.append("""CREATE TRIGGER IF NOT EXISTS trg_assets_task_links_%s AFTER %s ON assets BEGIN
@@ -68,7 +68,7 @@ for event in ['INSERT','UPDATE OF task_ids']:
     DELETE FROM task_asset_links WHERE asset_id=NEW.id AND task_id NOT IN (SELECT value FROM json_each(NEW.task_ids));
 END;"""%(suffix,event))
 out.append("""CREATE TRIGGER IF NOT EXISTS trg_conversation_retest_delete BEFORE DELETE ON conversations BEGIN
-    UPDATE finding_retests SET status='stopped',error='复测会话已删除',finished_at=strftime('%Y-%m-%d %H:%M:%f','now')
+    UPDATE finding_retests SET status='stopped',error='复测会话已删除',finished_at=now()
     WHERE conversation_id=OLD.id AND status IN ('pending','running');
 END;""")
 out.append("""CREATE TRIGGER IF NOT EXISTS trg_side_request_ordinal AFTER INSERT ON side_question_requests WHEN NEW.ordinal=0 BEGIN
@@ -79,7 +79,7 @@ END;""")
 for filename,constant in [('commands.go','llmRecordsSchema'),('llm_usage.go','llmUsageSchema')]:
     text=(root/filename).read_text(encoding='utf-8-sig')
     sql=re.search(r'const '+constant+r' = `([^`]+)`',text)[1]
-    sql=sql.replace('BIGSERIAL PRIMARY KEY','INTEGER PRIMARY KEY AUTOINCREMENT').replace('TIMESTAMPTZ','DATETIME').replace('now()',"(strftime('%Y-%m-%d %H:%M:%f','now'))")
+    sql=sql.replace('BIGSERIAL PRIMARY KEY','INTEGER PRIMARY KEY AUTOINCREMENT').replace('TIMESTAMPTZ','DATETIME').replace('now()',"(now())")
     out.append(sql.strip())
 with (root/'sqlite_schema.sql').open('w',encoding='utf-8',newline='\n') as output:
     output.write('\n\n'.join(out)+'\n')

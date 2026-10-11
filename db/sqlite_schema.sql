@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS activity (
     output_tokens INTEGER,
     cache_read_tokens INTEGER,
     cache_write_tokens INTEGER,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     main_seg INTEGER,
     CONSTRAINT activity_exploration_id_fkey FOREIGN KEY (exploration_id) REFERENCES explorations(id) ON DELETE CASCADE,
     CONSTRAINT activity_node_id_fkey FOREIGN KEY (node_id) REFERENCES exploration_nodes(id) ON DELETE SET NULL
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS agent_prompts (
     template_text TEXT NOT NULL,
     note TEXT,
     updated_by TEXT,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT agent_prompts_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
     CONSTRAINT agent_prompts_agent_id_version_key UNIQUE (agent_id, version)
 );
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS agent_skill_visibility (
     agent_id INTEGER NOT NULL,
     skill_name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT agent_skill_visibility_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
     CONSTRAINT agent_skill_visibility_pkey PRIMARY KEY (agent_id, skill_name)
 );
@@ -79,8 +79,8 @@ CREATE TABLE IF NOT EXISTS agent_triggers (
     task_create_message TEXT NOT NULL DEFAULT '',
     tool_names TEXT NOT NULL DEFAULT '',
     last_fire DATETIME,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now())
 );
 
 CREATE TABLE IF NOT EXISTS agent_visibility (
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS agent_visibility (
     resource_id INTEGER NOT NULL,
     mcp_tool_name TEXT NOT NULL DEFAULT '',
     enabled BOOLEAN NOT NULL DEFAULT true,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT agent_visibility_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
     CONSTRAINT agent_visibility_pkey PRIMARY KEY (agent_id, resource_kind, resource_id, mcp_tool_name),
     CONSTRAINT agent_visibility_resource_kind_check CHECK ((resource_kind = 'mcp'))
@@ -116,8 +116,8 @@ CREATE TABLE IF NOT EXISTS agents (
     trigger_run_mode TEXT NOT NULL DEFAULT 'serial',
     trigger_merge_mode TEXT NOT NULL DEFAULT 'all',
     trigger_max_parallel INTEGER NOT NULL DEFAULT 5,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT agents_key_check CHECK ((key GLOB '[a-z]*' AND key NOT GLOB '*[^a-z0-9_]*')),
     CONSTRAINT agents_key_key UNIQUE (key),
     CONSTRAINT agents_llm_profile_id_fkey FOREIGN KEY (llm_profile_id) REFERENCES llm_profiles(id) ON DELETE SET NULL,
@@ -134,8 +134,8 @@ CREATE TABLE IF NOT EXISTS asset_intercept_rules (
     pattern TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     builtin BOOLEAN NOT NULL DEFAULT false,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT asset_intercept_rules_kind_check CHECK ((kind IN ('exact_domain', 'exact_ip', 'exact_url', 'fuzzy_domain', 'fuzzy_ip', 'fuzzy_url', 'cidr')))
 );
 
@@ -172,9 +172,9 @@ CREATE TABLE IF NOT EXISTS assets (
     method TEXT,
     params TEXT NOT NULL DEFAULT '[]' CHECK (params IS NULL OR (json_valid(params) AND json_type(params)='array')),
     extra TEXT NOT NULL DEFAULT '{}' CHECK (extra IS NULL OR (json_valid(extra))),
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    last_seen DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    last_seen DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT assets_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
     CONSTRAINT assets_company_source_check CHECK ((company_source IN ('explicit', 'scope'))),
     CONSTRAINT assets_port_check CHECK (((port >= 1) AND (port <= 65535))),
@@ -187,8 +187,8 @@ CREATE TABLE IF NOT EXISTS companies (
     name TEXT NOT NULL,
     nkey TEXT NOT NULL,
     logo TEXT,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT companies_nkey_key UNIQUE (nkey)
 );
 
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS company_scope (
     value TEXT,
     raw TEXT NOT NULL,
     reason TEXT,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT ck_company_scope_payload CHECK ((((kind = 'domain') AND (domain IS NOT NULL) AND (net IS NULL) AND (value IS NULL)) OR ((kind IN ('ip', 'cidr')) AND (domain IS NULL) AND (net IS NOT NULL) AND (value IS NULL)) OR ((kind IN ('icp', 'keyword')) AND (domain IS NULL) AND (net IS NULL) AND (value IS NOT NULL)))),
     CONSTRAINT company_scope_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
     CONSTRAINT company_scope_kind_check CHECK ((kind IN ('domain', 'ip', 'cidr', 'icp', 'keyword'))),
@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS conversation_activities (
     output_tokens INTEGER,
     cache_read_tokens INTEGER,
     cache_write_tokens INTEGER,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT conversation_activities_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
@@ -233,8 +233,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     title TEXT NOT NULL DEFAULT '',
     llm_profile_id INTEGER,
     pinned_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT conversations_llm_profile_id_fkey FOREIGN KEY (llm_profile_id) REFERENCES llm_profiles(id) ON DELETE SET NULL
 );
 
@@ -251,7 +251,7 @@ CREATE TABLE IF NOT EXISTS exploration_edges (
     src_id INTEGER NOT NULL,
     dst_id INTEGER NOT NULL,
     rel TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT ck_edge_noself CHECK ((src_id <> dst_id)),
     CONSTRAINT ck_edge_rel CHECK ((rel IN ('spawns', 'derived_from', 'yields', 'proves', 'covers'))),
     CONSTRAINT exploration_edges_dst_id_fkey FOREIGN KEY (dst_id) REFERENCES exploration_nodes(id) ON DELETE CASCADE,
@@ -271,8 +271,8 @@ CREATE TABLE IF NOT EXISTS exploration_nodes (
     owner TEXT,
     blocked_reason TEXT,
     delete_reason TEXT,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     completed_at DATETIME,
     content_version INTEGER NOT NULL DEFAULT 0,
     cold_since_round INTEGER,
@@ -286,8 +286,8 @@ CREATE TABLE IF NOT EXISTS explorations (
     description TEXT,
     goal TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     round_no INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT explorations_status_check CHECK ((status IN ('open', 'achieved', 'failed')))
 );
@@ -303,7 +303,7 @@ CREATE TABLE IF NOT EXISTS finding_retests (
     summary TEXT NOT NULL DEFAULT '',
     evidence TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     started_at DATETIME,
     finished_at DATETIME,
     CONSTRAINT finding_retests_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL,
@@ -320,7 +320,7 @@ CREATE TABLE IF NOT EXISTS finding_traffic_bindings (
     role TEXT NOT NULL DEFAULT 'supporting',
     note TEXT NOT NULL DEFAULT '',
     position INTEGER NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT finding_traffic_bindings_finding_id_fkey FOREIGN KEY (finding_id) REFERENCES findings(id) ON DELETE CASCADE,
     CONSTRAINT finding_traffic_bindings_finding_id_snapshot_id_key UNIQUE (finding_id, snapshot_id),
     CONSTRAINT finding_traffic_bindings_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES traffic_evidence_snapshots(id)
@@ -339,7 +339,7 @@ CREATE TABLE IF NOT EXISTS findings (
     asset_ids TEXT NOT NULL DEFAULT '[]' CHECK (asset_ids IS NULL OR (json_valid(asset_ids))),
     status TEXT NOT NULL DEFAULT 'pending',
     report TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     evidence_version INTEGER NOT NULL DEFAULT 0,
     report_evidence_version INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT findings_node_id_fkey FOREIGN KEY (node_id) REFERENCES exploration_nodes(id) ON DELETE SET NULL,
@@ -357,7 +357,7 @@ CREATE TABLE IF NOT EXISTS intercept_pending (
     status TEXT NOT NULL DEFAULT 'pending',
     reason TEXT NOT NULL DEFAULT '',
     decided_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     audit TEXT CHECK (audit IS NULL OR (json_valid(audit))),
     decision_source TEXT NOT NULL DEFAULT '',
     CONSTRAINT intercept_pending_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
@@ -378,8 +378,8 @@ CREATE TABLE IF NOT EXISTS intercept_rules (
     timeout_enabled BOOLEAN NOT NULL DEFAULT true,
     timeout_seconds INTEGER NOT NULL DEFAULT 60,
     timeout_action TEXT NOT NULL DEFAULT 'deny',
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT intercept_rules_action_check CHECK ((action IN ('allow', 'deny', 'ask'))),
     CONSTRAINT intercept_rules_match_target_check CHECK ((match_target IN ('tool_name', 'tool_input'))),
     CONSTRAINT intercept_rules_match_type_check CHECK ((match_type IN ('string', 'regex')))
@@ -391,7 +391,7 @@ CREATE TABLE IF NOT EXISTS llm_profile_health (
     trips INTEGER NOT NULL DEFAULT 0,
     open_until DATETIME,
     last_error TEXT NOT NULL DEFAULT '',
-    last_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    last_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT llm_profile_health_pkey PRIMARY KEY (profile_id),
     CONSTRAINT llm_profile_health_profile_id_fkey FOREIGN KEY (profile_id) REFERENCES llm_profiles(id) ON DELETE CASCADE
 );
@@ -423,8 +423,8 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     retry_empty_interval_ms INTEGER NOT NULL DEFAULT 0,
     retry_stream_attempts INTEGER NOT NULL DEFAULT 0,
     retry_stream_interval_ms INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT llm_profiles_format_check CHECK ((format IN ('openai', 'anthropic', 'openai-responses'))),
     CONSTRAINT llm_profiles_max_tokens_check CHECK ((max_tokens >= 0)),
     CONSTRAINT llm_profiles_max_tokens_field_check CHECK ((max_tokens_field IN ('', 'max_completion_tokens'))),
@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
 CREATE TABLE IF NOT EXISTS main_sessions (
     exploration_id INTEGER NOT NULL,
     seq INTEGER NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT main_sessions_exploration_id_fkey FOREIGN KEY (exploration_id) REFERENCES explorations(id) ON DELETE CASCADE,
     CONSTRAINT main_sessions_pkey PRIMARY KEY (exploration_id, seq)
 );
@@ -450,8 +450,8 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     url TEXT,
     enabled BOOLEAN NOT NULL DEFAULT true,
     insecure BOOLEAN NOT NULL DEFAULT false,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT mcp_servers_name_key UNIQUE (name),
     CONSTRAINT mcp_servers_transport_check CHECK ((transport IN ('stdio', 'http', 'sse')))
 );
@@ -462,7 +462,7 @@ CREATE TABLE IF NOT EXISTS mcp_tools_cache (
     tool_name TEXT NOT NULL,
     description TEXT,
     schema TEXT CHECK (schema IS NULL OR (json_valid(schema))),
-    discovered_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    discovered_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT mcp_tools_cache_server_id_fkey FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE,
     CONSTRAINT mcp_tools_cache_server_id_tool_name_key UNIQUE (server_id, tool_name)
 );
@@ -476,8 +476,8 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     mode TEXT NOT NULL DEFAULT 'realtime',
     filter TEXT NOT NULL DEFAULT '{}' CHECK (filter IS NULL OR (json_valid(filter))),
     rate_per_min INTEGER NOT NULL DEFAULT 20,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now())
 );
 
 CREATE TABLE IF NOT EXISTS notification_deliveries (
@@ -486,10 +486,10 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     channel_id INTEGER NOT NULL,
     state TEXT NOT NULL DEFAULT 'pending',
     attempts INTEGER NOT NULL DEFAULT 0,
-    next_attempt_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    next_attempt_at DATETIME NOT NULL DEFAULT (now()),
     last_error TEXT NOT NULL DEFAULT '',
     batch_id INTEGER,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     sent_at DATETIME,
     CONSTRAINT notification_deliveries_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES notification_channels(id) ON DELETE CASCADE,
     CONSTRAINT notification_deliveries_event_id_fkey FOREIGN KEY (event_id) REFERENCES notification_events(id) ON DELETE CASCADE
@@ -501,7 +501,7 @@ CREATE TABLE IF NOT EXISTS notification_events (
     finding_id INTEGER NOT NULL,
     snapshot TEXT NOT NULL CHECK (snapshot IS NULL OR (json_valid(snapshot))),
     fanned_out BOOLEAN NOT NULL DEFAULT false,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
+    created_at DATETIME NOT NULL DEFAULT (now())
 );
 
 CREATE TABLE IF NOT EXISTS scheduler_state (
@@ -512,7 +512,7 @@ CREATE TABLE IF NOT EXISTS scheduler_state (
 
 CREATE TABLE IF NOT EXISTS server_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     level TEXT NOT NULL DEFAULT 'info',
     tag TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL DEFAULT ''
@@ -521,7 +521,7 @@ CREATE TABLE IF NOT EXISTS server_logs (
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT settings_pkey PRIMARY KEY (key)
 );
 
@@ -537,7 +537,7 @@ CREATE TABLE IF NOT EXISTS side_question_requests (
     error TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL CHECK (model IS NULL OR (json_valid(model))),
     snapshot_at DATETIME NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     sequence INTEGER NOT NULL DEFAULT 0,
     usage TEXT NOT NULL DEFAULT '{}' CHECK (usage IS NULL OR (json_valid(usage))),
     context_info TEXT NOT NULL DEFAULT '{}' CHECK (context_info IS NULL OR (json_valid(context_info))),
@@ -569,7 +569,7 @@ CREATE TABLE IF NOT EXISTS side_question_sessions (
 
 CREATE TABLE IF NOT EXISTS skill_usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    ts DATETIME NOT NULL DEFAULT (now()),
     skill TEXT NOT NULL,
     agent_key TEXT,
     task_id INTEGER,
@@ -604,9 +604,9 @@ CREATE TABLE IF NOT EXISTS task_archives (
     data_counts TEXT NOT NULL DEFAULT '{}' CHECK (data_counts IS NULL OR (json_valid(data_counts))),
     aggregate_stats TEXT NOT NULL DEFAULT '{}' CHECK (aggregate_stats IS NULL OR (json_valid(aggregate_stats))),
     archived_at DATETIME,
-    requested_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    requested_at DATETIME NOT NULL DEFAULT (now()),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_archives_progress_check CHECK (((progress >= 0) AND (progress <= 100))),
     CONSTRAINT task_archives_state_check CHECK ((state IN ('archive_queued', 'archiving', 'archive_failed', 'ready', 'restore_queued', 'restoring', 'restore_failed', 'delete_queued', 'deleting', 'delete_failed'))),
     CONSTRAINT task_archives_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
@@ -619,8 +619,8 @@ CREATE TABLE IF NOT EXISTS task_asset_links (
     source TEXT NOT NULL DEFAULT 'system',
     source_summary TEXT NOT NULL DEFAULT '',
     source_node_id INTEGER,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_asset_links_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
     CONSTRAINT task_asset_links_pkey PRIMARY KEY (task_id, asset_id),
     CONSTRAINT task_asset_links_source_node_id_fkey FOREIGN KEY (source_node_id) REFERENCES exploration_nodes(id) ON DELETE SET NULL,
@@ -631,8 +631,8 @@ CREATE TABLE IF NOT EXISTS task_categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     nkey TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_categories_nkey_key UNIQUE (nkey)
 );
 
@@ -642,8 +642,8 @@ CREATE TABLE IF NOT EXISTS task_constraints (
     kind TEXT NOT NULL,
     text TEXT NOT NULL,
     origin TEXT,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_constraints_exploration_id_fkey FOREIGN KEY (exploration_id) REFERENCES explorations(id) ON DELETE CASCADE,
     CONSTRAINT task_constraints_kind_check CHECK ((kind IN ('allow', 'deny')))
 );
@@ -656,8 +656,8 @@ CREATE TABLE IF NOT EXISTS task_intercept_rules (
     kind TEXT NOT NULL,
     pattern TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_intercept_rules_action_check CHECK ((action IN ('block', 'allow'))),
     CONSTRAINT task_intercept_rules_kind_check CHECK ((kind IN ('exact_domain', 'exact_ip', 'exact_url', 'fuzzy_domain', 'fuzzy_ip', 'fuzzy_url', 'cidr'))),
     CONSTRAINT task_intercept_rules_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -670,8 +670,8 @@ CREATE TABLE IF NOT EXISTS task_llm_profiles (
     status TEXT NOT NULL DEFAULT 'ready',
     last_error TEXT,
     exhausted_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_llm_profiles_pkey PRIMARY KEY (task_id, profile_id),
     CONSTRAINT task_llm_profiles_position_check CHECK (("position" >= 0)),
     CONSTRAINT task_llm_profiles_profile_id_fkey FOREIGN KEY (profile_id) REFERENCES llm_profiles(id) ON DELETE CASCADE,
@@ -683,7 +683,7 @@ CREATE TABLE IF NOT EXISTS task_llm_profiles (
 CREATE TABLE IF NOT EXISTS task_relations (
     task_id INTEGER NOT NULL,
     source_task_id INTEGER NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT ck_task_relation_not_self CHECK ((task_id <> source_task_id)),
     CONSTRAINT task_relations_pkey PRIMARY KEY (task_id, source_task_id),
     CONSTRAINT task_relations_source_task_id_fkey FOREIGN KEY (source_task_id) REFERENCES tasks(id) ON DELETE CASCADE,
@@ -700,7 +700,7 @@ CREATE TABLE IF NOT EXISTS task_scope (
     value TEXT,
     source TEXT NOT NULL DEFAULT 'auto',
     reason TEXT,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_scope_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
     CONSTRAINT task_scope_kind_check CHECK ((kind IN ('company', 'root_domain', 'subdomain', 'ip', 'cidr', 'icp', 'keyword'))),
     CONSTRAINT task_scope_source_check CHECK ((source IN ('auto', 'agent', 'manual'))),
@@ -715,8 +715,8 @@ CREATE TABLE IF NOT EXISTS task_templates (
     goal TEXT NOT NULL,
     category_id INTEGER,
     intercept_rules TEXT NOT NULL DEFAULT '[]' CHECK (intercept_rules IS NULL OR (json_valid(intercept_rules))),
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT task_templates_category_id_fkey FOREIGN KEY (category_id) REFERENCES task_categories(id) ON DELETE SET NULL,
     CONSTRAINT task_templates_nkey_key UNIQUE (nkey)
 );
@@ -747,8 +747,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     archived_at DATETIME,
     deleted_at DATETIME,
     completed_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT tasks_active_llm_profile_id_fkey FOREIGN KEY (active_llm_profile_id) REFERENCES llm_profiles(id) ON DELETE SET NULL,
     CONSTRAINT tasks_category_id_fkey FOREIGN KEY (category_id) REFERENCES task_categories(id) ON DELETE SET NULL,
     CONSTRAINT tasks_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
@@ -760,7 +760,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE TABLE IF NOT EXISTS tool_usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    ts DATETIME NOT NULL DEFAULT (now()),
     tool_key TEXT NOT NULL,
     agent_key TEXT,
     task_id INTEGER,
@@ -779,7 +779,7 @@ CREATE TABLE IF NOT EXISTS tools (
     kind TEXT NOT NULL DEFAULT 'builtin',
     exec TEXT NOT NULL DEFAULT '{}' CHECK (exec IS NULL OR (json_valid(exec))),
     deferred BOOLEAN NOT NULL DEFAULT false,
-    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    updated_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT tools_pkey PRIMARY KEY (key)
 );
 
@@ -798,7 +798,7 @@ CREATE TABLE IF NOT EXISTS traffic_evidence_snapshots (
     req_len INTEGER NOT NULL,
     resp_len INTEGER NOT NULL,
     unreferenced_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    created_at DATETIME NOT NULL DEFAULT (now()),
     CONSTRAINT traffic_evidence_snapshots_pkey PRIMARY KEY (id)
 );
 
@@ -996,45 +996,45 @@ CREATE INDEX IF NOT EXISTS idx_tool_usage_task ON tool_usage (task_id);
 
 CREATE INDEX IF NOT EXISTS idx_tool_usage_tool ON tool_usage (tool_key, ts DESC);
 
-CREATE TRIGGER IF NOT EXISTS trg_agent_triggers_upd AFTER UPDATE ON agent_triggers BEGIN UPDATE agent_triggers SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_agent_triggers_upd AFTER UPDATE ON agent_triggers BEGIN UPDATE agent_triggers SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_agents_upd AFTER UPDATE ON agents BEGIN UPDATE agents SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_agents_upd AFTER UPDATE ON agents BEGIN UPDATE agents SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_asset_intercept_rules_upd AFTER UPDATE ON asset_intercept_rules BEGIN UPDATE asset_intercept_rules SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_asset_intercept_rules_upd AFTER UPDATE ON asset_intercept_rules BEGIN UPDATE asset_intercept_rules SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_av2_upd AFTER UPDATE ON assets BEGIN UPDATE assets SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_av2_upd AFTER UPDATE ON assets BEGIN UPDATE assets SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_companies_upd AFTER UPDATE ON companies BEGIN UPDATE companies SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_companies_upd AFTER UPDATE ON companies BEGIN UPDATE companies SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_conversations_upd AFTER UPDATE ON conversations BEGIN UPDATE conversations SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_conversations_upd AFTER UPDATE ON conversations BEGIN UPDATE conversations SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_expnodes_upd AFTER UPDATE ON exploration_nodes BEGIN UPDATE exploration_nodes SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_expnodes_upd AFTER UPDATE ON exploration_nodes BEGIN UPDATE exploration_nodes SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_exp_upd AFTER UPDATE ON explorations BEGIN UPDATE explorations SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_exp_upd AFTER UPDATE ON explorations BEGIN UPDATE explorations SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_intercept_rules_upd AFTER UPDATE ON intercept_rules BEGIN UPDATE intercept_rules SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_intercept_rules_upd AFTER UPDATE ON intercept_rules BEGIN UPDATE intercept_rules SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_llm_upd AFTER UPDATE ON llm_profiles BEGIN UPDATE llm_profiles SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_llm_upd AFTER UPDATE ON llm_profiles BEGIN UPDATE llm_profiles SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_mcp_upd AFTER UPDATE ON mcp_servers BEGIN UPDATE mcp_servers SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_mcp_upd AFTER UPDATE ON mcp_servers BEGIN UPDATE mcp_servers SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_notification_channels_upd AFTER UPDATE ON notification_channels BEGIN UPDATE notification_channels SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_notification_channels_upd AFTER UPDATE ON notification_channels BEGIN UPDATE notification_channels SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_task_archives_upd AFTER UPDATE ON task_archives BEGIN UPDATE task_archives SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_task_archives_upd AFTER UPDATE ON task_archives BEGIN UPDATE task_archives SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_task_asset_links_upd AFTER UPDATE ON task_asset_links BEGIN UPDATE task_asset_links SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_task_asset_links_upd AFTER UPDATE ON task_asset_links BEGIN UPDATE task_asset_links SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_task_categories_upd AFTER UPDATE ON task_categories BEGIN UPDATE task_categories SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_task_categories_upd AFTER UPDATE ON task_categories BEGIN UPDATE task_categories SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_task_intercept_rules_upd AFTER UPDATE ON task_intercept_rules BEGIN UPDATE task_intercept_rules SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_task_intercept_rules_upd AFTER UPDATE ON task_intercept_rules BEGIN UPDATE task_intercept_rules SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_task_llm_profiles_upd AFTER UPDATE ON task_llm_profiles BEGIN UPDATE task_llm_profiles SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_task_llm_profiles_upd AFTER UPDATE ON task_llm_profiles BEGIN UPDATE task_llm_profiles SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_task_templates_upd AFTER UPDATE ON task_templates BEGIN UPDATE task_templates SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_task_templates_upd AFTER UPDATE ON task_templates BEGIN UPDATE task_templates SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_tasks_upd AFTER UPDATE ON tasks BEGIN UPDATE tasks SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_tasks_upd AFTER UPDATE ON tasks BEGIN UPDATE tasks SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_tools_upd AFTER UPDATE ON tools BEGIN UPDATE tools SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE rowid=NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS trg_tools_upd AFTER UPDATE ON tools BEGIN UPDATE tools SET updated_at=now() WHERE rowid=NEW.rowid; END;
 
 CREATE TRIGGER IF NOT EXISTS trg_assets_task_links_insert AFTER INSERT ON assets BEGIN
     INSERT INTO task_asset_links(task_id,asset_id,source,source_summary)
@@ -1051,7 +1051,7 @@ CREATE TRIGGER IF NOT EXISTS trg_assets_task_links_update AFTER UPDATE OF task_i
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_conversation_retest_delete BEFORE DELETE ON conversations BEGIN
-    UPDATE finding_retests SET status='stopped',error='复测会话已删除',finished_at=strftime('%Y-%m-%d %H:%M:%f','now')
+    UPDATE finding_retests SET status='stopped',error='复测会话已删除',finished_at=now()
     WHERE conversation_id=OLD.id AND status IN ('pending','running');
 END;
 
@@ -1063,7 +1063,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS llm_records (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts            DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    ts            DATETIME DEFAULT (now()),
     model         TEXT,
     profile_name  TEXT,
     session_id    TEXT,
@@ -1086,7 +1086,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_records_session ON llm_records(session_id);
 
 CREATE TABLE IF NOT EXISTS llm_usage (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts             DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+    ts             DATETIME NOT NULL DEFAULT (now()),
     task_id        TEXT,
     exploration_id BIGINT,
     worker         TEXT,

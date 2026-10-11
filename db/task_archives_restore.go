@@ -784,7 +784,7 @@ WHERE task.archived_at IS NOT NULL`)
 	var out []json.RawMessage
 	for rows.Next() {
 		var raw json.RawMessage
-		if err := rows.Scan(&raw); err != nil {
+		if err := rows.Scan(JSONScanner{&raw}); err != nil {
 			return nil, err
 		}
 		out = append(out, raw)

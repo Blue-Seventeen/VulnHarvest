@@ -75,7 +75,7 @@ func OpenSQLite(path string) (_ *DB, err error) {
 	params.Add("_pragma", "recursive_triggers(OFF)")
 	params.Set("_txlock", "immediate")
 	u.RawQuery = params.Encode()
-	writer, err := sql.Open("sqlite", u.String())
+	writer, err := sql.Open("artex-sqlite", u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func OpenSQLite(path string) (_ *DB, err error) {
 	params.Set("_txlock", "deferred")
 	params.Add("_pragma", "query_only(ON)")
 	u.RawQuery = params.Encode()
-	d.reader, err = sql.Open("sqlite", u.String())
+	d.reader, err = sql.Open("artex-sqlite", u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +120,9 @@ func OpenSQLite(path string) (_ *DB, err error) {
 	d.reader.SetMaxIdleConns(8)
 	if err = d.reader.Ping(); err != nil {
 		return nil, fmt.Errorf("open SQLite reader: %w", err)
+	}
+	if err = d.seedBuiltins(); err != nil {
+		return nil, fmt.Errorf("seed SQLite builtins: %w", err)
 	}
 	return d, nil
 }
@@ -270,7 +273,7 @@ func registerSQLiteFunctions() error {
 			fn   func(*sqlite.FunctionContext, []driver.Value) (driver.Value, error)
 		}{
 			{"now", 0, func(_ *sqlite.FunctionContext, _ []driver.Value) (driver.Value, error) {
-				return time.Now().UTC().Format("2006-01-02 15:04:05.000"), nil
+				return time.Now().UTC().Format(sqliteTimeLayout), nil
 			}},
 			{"concat_ws", -1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 				if len(args) == 0 {
@@ -287,6 +290,14 @@ func registerSQLiteFunctions() error {
 				}
 				return strings.Join(parts, fmt.Sprint(args[0])), nil
 			}},
+			{"portable_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+				if args[0] == nil {
+					return nil, nil
+				}
+				return strings.ToLower(fmt.Sprint(args[0])), nil
+			}},
+			{"portable_json_overlay", 2, sqliteJSONOverlay},
+			{"portable_time_shift", 2, sqliteTimeShift},
 			{"greatest", -1, sqliteExtremum(true)},
 			{"least", -1, sqliteExtremum(false)},
 		}

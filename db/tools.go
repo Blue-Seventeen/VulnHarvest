@@ -47,7 +47,7 @@ ON CONFLICT (key) DO NOTHING`, key, desc, schema, agents)
 // default toolset on existing DBs.
 func (d *DB) AddAgentToToolBinding(agentKey string, keys []string) error {
 	for _, k := range keys {
-		if _, err := d.Exec(`UPDATE tools SET agents = agents || to_jsonb($1::text) WHERE key=$2 AND NOT (agents ? $1)`, agentKey, k); err != nil {
+		if _, err := d.Exec(d.SQL(`UPDATE tools SET agents = agents || to_jsonb($1::text) WHERE key=$2 AND NOT (agents ? $1)`, `UPDATE tools SET agents=json_insert(agents,'$[#]',$1) WHERE key=$2 AND NOT EXISTS(SELECT 1 FROM json_each(tools.agents) WHERE value=$1)`), agentKey, k); err != nil {
 			return err
 		}
 	}
@@ -58,7 +58,7 @@ func (d *DB) AddAgentToToolBinding(agentKey string, keys []string) error {
 // JSONB array — called when a custom agent is deleted so no tool keeps a dangling
 // binding. Uses jsonb `-` (remove array element) guarded by `?` (membership).
 func (d *DB) RemoveAgentFromToolBindings(agentKey string) error {
-	_, err := d.Exec(`UPDATE tools SET agents = agents - $1 WHERE agents ? $1`, agentKey)
+	_, err := d.Exec(d.SQL(`UPDATE tools SET agents = agents - $1 WHERE agents ? $1`, `UPDATE tools SET agents=(SELECT json_group_array(value) FROM json_each(tools.agents) WHERE value<>$1) WHERE EXISTS(SELECT 1 FROM json_each(tools.agents) WHERE value=$1)`), agentKey)
 	return err
 }
 
@@ -66,7 +66,7 @@ func (d *DB) RemoveAgentFromToolBindings(agentKey string) error {
 // used by one-time migrations that change a tool's default binding on existing DBs
 // (SeedTool is first-insert-only, so a changed default never reaches a seeded row).
 func (d *DB) RemoveAgentFromTool(agentKey, toolKey string) error {
-	_, err := d.Exec(`UPDATE tools SET agents = agents - $1 WHERE key=$2 AND agents ? $1`, agentKey, toolKey)
+	_, err := d.Exec(d.SQL(`UPDATE tools SET agents = agents - $1 WHERE key=$2 AND agents ? $1`, `UPDATE tools SET agents=(SELECT json_group_array(value) FROM json_each(tools.agents) WHERE value<>$1) WHERE key=$2 AND EXISTS(SELECT 1 FROM json_each(tools.agents) WHERE value=$1)`), agentKey, toolKey)
 	return err
 }
 
@@ -107,7 +107,7 @@ func (d *DB) RefreshToolDefaults(key, desc string, schema json.RawMessage) error
 func scanTool(rows interface{ Scan(...any) error }) (*Tool, error) {
 	var t Tool
 	var agents []byte
-	if err := rows.Scan(&t.Key, &t.System, &t.Description, &t.Schema, &agents, &t.Enabled, &t.Kind, &t.Exec, &t.Deferred); err != nil {
+	if err := rows.Scan(&t.Key, &t.System, &t.Description, JSONScanner{&t.Schema}, &agents, &t.Enabled, &t.Kind, JSONScanner{&t.Exec}, &t.Deferred); err != nil {
 		return nil, err
 	}
 	if len(agents) > 0 {

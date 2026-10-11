@@ -59,7 +59,7 @@ func (d *DB) SkillStats() ([]SkillStat, error) {
 	// agent keys come back as one comma-joined string rather than text[]: the pgx
 	// stdlib driver has no database/sql Scan target for arrays, and agent keys are
 	// [a-z0-9_-] so a comma join is unambiguous.
-	rows, err := d.Query(`
+	rows, err := d.Query(d.SQL(`
 SELECT skill, COUNT(*) AS calls,
        COUNT(DISTINCT task_id) AS tasks,
        COALESCE(STRING_AGG(DISTINCT agent_key, ','), '') AS agents,
@@ -67,7 +67,15 @@ SELECT skill, COUNT(*) AS calls,
 FROM skill_usage
 WHERE found
 GROUP BY skill
-ORDER BY COUNT(*) DESC, skill`)
+ORDER BY COUNT(*) DESC, skill`, `
+SELECT skill, COUNT(*) AS calls,
+       COUNT(DISTINCT task_id) AS tasks,
+       COALESCE(GROUP_CONCAT(DISTINCT agent_key), '') AS agents,
+       MAX(ts) AS last_used
+FROM skill_usage
+WHERE found
+GROUP BY skill
+ORDER BY COUNT(*) DESC, skill`))
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +85,7 @@ ORDER BY COUNT(*) DESC, skill`)
 		var s SkillStat
 		var agents string
 		var lastUsed sql.NullTime
-		if err := rows.Scan(&s.Skill, &s.Calls, &s.Tasks, &agents, &lastUsed); err != nil {
+		if err := rows.Scan(&s.Skill, &s.Calls, &s.Tasks, &agents, nullableTimeScanner{&lastUsed}); err != nil {
 			return nil, err
 		}
 		s.Agents = []string{}
@@ -107,14 +115,21 @@ func (d *DB) MissingSkillStats(limit int) ([]SkillStat, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 20
 	}
-	rows, err := d.Query(`
+	rows, err := d.Query(d.SQL(`
 SELECT skill, COUNT(*) AS calls,
        COALESCE(STRING_AGG(DISTINCT agent_key, ','), '') AS agents,
        MAX(ts) AS last_used
 FROM skill_usage
 WHERE NOT found
 GROUP BY skill
-ORDER BY COUNT(*) DESC, skill`)
+ORDER BY COUNT(*) DESC, skill`, `
+SELECT skill, COUNT(*) AS calls,
+       COALESCE(GROUP_CONCAT(DISTINCT agent_key), '') AS agents,
+       MAX(ts) AS last_used
+FROM skill_usage
+WHERE NOT found
+GROUP BY skill
+ORDER BY COUNT(*) DESC, skill`))
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +139,7 @@ ORDER BY COUNT(*) DESC, skill`)
 		var s SkillStat
 		var agents string
 		var lastUsed sql.NullTime
-		if err := rows.Scan(&s.Skill, &s.Calls, &agents, &lastUsed); err != nil {
+		if err := rows.Scan(&s.Skill, &s.Calls, &agents, nullableTimeScanner{&lastUsed}); err != nil {
 			return nil, err
 		}
 		s.Agents = []string{}
@@ -203,7 +218,7 @@ ORDER BY COUNT(*) DESC, skill`, taskID)
 	for rows.Next() {
 		var s SkillStat
 		var lastUsed sql.NullTime
-		if err := rows.Scan(&s.Skill, &s.Calls, &lastUsed); err != nil {
+		if err := rows.Scan(&s.Skill, &s.Calls, nullableTimeScanner{&lastUsed}); err != nil {
 			return nil, err
 		}
 		s.Agents = []string{}

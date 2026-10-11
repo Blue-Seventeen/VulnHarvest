@@ -221,40 +221,30 @@ var builtinAgents = []builtinAgent{
 func (d *DB) seedBuiltins() error {
 	for _, a := range builtinAgents {
 		var agentID int64
-		err := d.QueryRow(`
-INSERT INTO agents(key, name, description, role, builtin, enabled, interactive_shell, run_seconds)
+		interactive := a.interactiveShell || a.key == "planner" || a.key == "worker" || a.key == "mainagent" || a.key == "auto"
+		_, err := d.Exec(`INSERT INTO agents(key, name, description, role, builtin, enabled, interactive_shell, run_seconds)
 VALUES ($1, $2, NULLIF($3,''), $4, true, true, $5, COALESCE($6, 1200))
-ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description
-RETURNING id`, a.key, a.name, a.desc, a.role, a.interactiveShell, a.runSeconds).Scan(&agentID)
+ON CONFLICT (key) DO NOTHING`, a.key, a.name, a.desc, a.role, interactive, a.runSeconds)
 		if err != nil {
 			return fmt.Errorf("agent %s: %w", a.key, err)
+		}
+		if err := d.QueryRow(`SELECT id FROM agents WHERE key=$1`, a.key).Scan(&agentID); err != nil {
+			return err
 		}
 		for _, v := range a.vars {
 			if _, err := d.Exec(`
 INSERT INTO agent_prompt_vars(agent_id, var_name, description, example, source)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (agent_id, var_name) DO UPDATE
-  SET description = EXCLUDED.description, example = EXCLUDED.example, source = EXCLUDED.source`,
+ON CONFLICT (agent_id, var_name) DO NOTHING`,
 				agentID, v.name, v.desc, v.example, v.source); err != nil {
 				return fmt.Errorf("agent %s var %s: %w", a.key, v.name, err)
 			}
 		}
 	}
-	// Drop catalog entries for variables that were renamed, so the white-list no
-	// longer advertises a name templates can't resolve (EngagementTitle→Description).
-	// 'Now' 从各 agent 目录提升为全局 runtime 变量后,旧库里 goals 仍残留一条 'Now'
-	// 会与全局项撞名(前端变量列表 key 重复);一并清掉。
-	if _, err := d.Exec(`DELETE FROM agent_prompt_vars WHERE var_name IN ('EngagementTitle', 'CoverageGaps', 'Now')`); err != nil {
-		return fmt.Errorf("cleanup renamed vars: %w", err)
-	}
-	// Default-on interactive_shell for the runtime agents (planner/worker/mainagent/auto)
-	// ONCE — respects a later user toggle-off (guarded by a settings flag). goals(one-shot
-	// decomposer) stays off. Runs after the column exists (schema applied before seed).
-	if v, _, _ := d.GetSetting("interactive_shell_default_v1"); v != "true" {
-		if _, err := d.Exec(`UPDATE agents SET interactive_shell=true WHERE key IN ('planner','worker','mainagent','auto')`); err != nil {
-			return fmt.Errorf("seed interactive_shell defaults: %w", err)
-		}
-		_ = d.SetSetting("interactive_shell_default_v1", "true")
+	// Defaults belong to newly inserted agents only. Missing migration markers
+	// must never grant permission to overwrite an existing user's switch.
+	if _, err := d.InsertSettingIfAbsent("interactive_shell_default_v1", "true"); err != nil {
+		return err
 	}
 	// Seed the built-in browser (Playwright) MCP once — DISABLED by default (用户
 	// 需要时自行启用), no proxy by default. The traffic-capture toggle injects/strips
@@ -268,9 +258,11 @@ ON CONFLICT (name) DO NOTHING`,
 		`["@playwright/mcp","--headless"]`); err != nil {
 		return fmt.Errorf("seed browser mcp: %w", err)
 	}
-	// NOTE: the placeholder ScopeSentry data-source MCP (empty URL + empty X-API-Key,
-	// disabled) is seeded directly in schema.sql §F so a raw `psql < schema.sql` init
-	// also gets it. schema.sql is Exec'd on every startup, so it stays idempotent.
+	if _, err := d.Exec(`INSERT INTO mcp_servers(name,transport,url,env,enabled)
+VALUES ('ScopeSentry','http',NULL,'{"X-API-Key":""}',false)
+ON CONFLICT(name) DO NOTHING`); err != nil {
+		return fmt.Errorf("seed ScopeSentry MCP: %w", err)
+	}
 	if err := d.seedBuiltinSkillVisibility(); err != nil {
 		return fmt.Errorf("seed skill visibility: %w", err)
 	}

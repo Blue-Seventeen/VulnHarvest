@@ -20,13 +20,19 @@ type ConvTokenSummary struct {
 // ConversationTokenSummaries returns one row per conversation with its summed
 // result-row token usage (0 for conversations with no completed run yet).
 func (d *DB) ConversationTokenSummaries() ([]ConvTokenSummary, error) {
-	rows, err := d.Query(`
+	rows, err := d.Query(d.SQL(`
 SELECT c.llm_profile_id, c.created_at::text,
        COALESCE(sum(ca.input_tokens),0), COALESCE(sum(ca.output_tokens),0),
        COALESCE(sum(ca.cache_read_tokens),0), COALESCE(sum(ca.cache_write_tokens),0)
 FROM conversations c
 LEFT JOIN conversation_activities ca ON ca.conversation_id = c.id AND ca.kind = 'result'
-GROUP BY c.id`)
+GROUP BY c.id`, `
+SELECT c.llm_profile_id, CAST(c.created_at AS TEXT),
+       COALESCE(sum(ca.input_tokens),0), COALESCE(sum(ca.output_tokens),0),
+       COALESCE(sum(ca.cache_read_tokens),0), COALESCE(sum(ca.cache_write_tokens),0)
+FROM conversations c
+LEFT JOIN conversation_activities ca ON ca.conversation_id = c.id AND ca.kind = 'result'
+GROUP BY c.id`))
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +103,11 @@ RETURNING `+convCols, agentKey, title))
 	if err != nil {
 		return nil, err
 	}
-	if err := lockLLMProfileForReference(tx, llmProfileID); err != nil {
+	if err := d.lockLLMProfileForReference(tx, llmProfileID); err != nil {
 		return nil, err
 	}
 	if llmProfileID != nil {
-		c, err = scanConv(tx.QueryRow(`UPDATE conversations SET llm_profile_id=$2
+		c, err = scanConv(tx.QueryRow(`UPDATE conversations SET llm_profile_id=$2, updated_at=now()
 WHERE id=$1 RETURNING `+convCols, c.ID, llmProfileID))
 		if err != nil {
 			return nil, err
@@ -122,14 +128,14 @@ func (d *DB) UpdateConversationProfile(id int64, llmProfileID *int64) error {
 	defer tx.Rollback()
 
 	var lockedID int64
-	if err := tx.QueryRow(`SELECT id FROM conversations WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(d.SQL(`SELECT id FROM conversations WHERE id=$1 FOR UPDATE`, `SELECT id FROM conversations WHERE id=$1`), id).Scan(&lockedID); err != nil {
 		if err == sql.ErrNoRows {
 			// Preserve the previous UPDATE semantics: an unknown id is a no-op.
 			return tx.Commit()
 		}
 		return err
 	}
-	if err := lockLLMProfileForReference(tx, llmProfileID); err != nil {
+	if err := d.lockLLMProfileForReference(tx, llmProfileID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE conversations SET llm_profile_id=$2 WHERE id=$1`, id, llmProfileID); err != nil {
@@ -172,15 +178,23 @@ func (d *DB) GetConversation(id int64) (*Conversation, error) {
 // UpdateConversation applies a partial title/pin mutation and returns the updated
 // row. Pinning an already-pinned conversation preserves its original pin order.
 func (d *DB) UpdateConversation(id int64, patch ConversationPatch) (*Conversation, error) {
-	c, err := scanConv(d.QueryRow(`UPDATE conversations SET
+	c, err := scanConv(d.QueryRow(d.SQL(`UPDATE conversations SET
 	title = CASE WHEN $2::boolean THEN $3 ELSE title END,
 	pinned_at = CASE
 		WHEN $4::boolean IS NULL THEN pinned_at
 		WHEN $4::boolean THEN COALESCE(pinned_at, now())
 		ELSE NULL
-	END
+	END, updated_at=now()
 WHERE id=$1
-RETURNING `+convCols, id, patch.Title != nil, patch.Title, patch.Pinned))
+RETURNING `, `UPDATE conversations SET
+	title = CASE WHEN $2 THEN $3 ELSE title END,
+	pinned_at = CASE
+		WHEN $4 IS NULL THEN pinned_at
+		WHEN $4 THEN COALESCE(pinned_at, now())
+		ELSE NULL
+	END, updated_at=now()
+WHERE id=$1
+RETURNING `)+convCols, id, patch.Title != nil, patch.Title, patch.Pinned))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -215,7 +229,14 @@ func (d *DB) DeleteConversations(ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return []int64{}, nil
 	}
-	rows, err := d.Query(`DELETE FROM conversations WHERE id=ANY($1::bigint[]) RETURNING id`, ids)
+	query := `DELETE FROM conversations WHERE id=ANY($1::bigint[]) RETURNING id`
+	args := []any{ids}
+	if d.IsSQLite() {
+		ph, values := placeholders(1, ids)
+		query = `DELETE FROM conversations WHERE id IN (` + ph + `) RETURNING id`
+		args = values
+	}
+	rows, err := d.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
