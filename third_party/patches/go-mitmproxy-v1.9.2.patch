@@ -80,7 +80,7 @@
  		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
  			return context.WithValue(ctx, connContextKey, c.(*attackerConn).connCtx)
  		},
-@@ -116,13 +148,26 @@
+@@ -116,17 +148,31 @@
  			},
  		}
  
@@ -108,9 +108,17 @@
 +			defer a.proxy.life.work.Done()
 +			defer func() { close(done); cancel(); clientTlsConn.Close(); <-watchDone }()
  			a.h2Server.ServeConn(clientTlsConn, &http2.ServeConnOpts{
- 				Context:    ctx,
- 				Handler:    a,
-@@ -139,6 +184,11 @@
+-				Context:    ctx,
+-				Handler:    a,
+-				BaseConfig: a.server,
++				Context: ctx,
++				Handler: a,
++				// a.server.Serve initializes HTTP2 concurrently. Its configuration
++				// is otherwise default; use x/net's independent per-connection server.
+ 			})
+ 		}()
+ 		return
+@@ -139,6 +185,11 @@
  }
  
  func (a *attacker) ServeHTTP(res http.ResponseWriter, req *http.Request) {
@@ -122,7 +130,16 @@
  	if req.URL.Scheme == "" {
  		req.URL.Scheme = "https"
  	}
-@@ -217,6 +267,9 @@
+@@ -173,7 +224,7 @@
+ 		f.finish()
+ 
+ 		if err := a.proxy.webSocketHandler.handleWSS(res, req); err != nil {
+-			log.Errorf("handleWSS error: %v", err)
++			a.proxy.logError(log.WithField("in", "Proxy.attacker.ServeHTTP"), err, "handleWSS error")
+ 		}
+ 		return
+ 	}
+@@ -217,6 +268,9 @@
  		for _, addon := range proxy.Addons {
  			addon.ServerConnected(connCtx)
  		}
@@ -132,7 +149,7 @@
  
  		return nil
  	}
-@@ -313,11 +366,16 @@
+@@ -313,11 +367,16 @@
  	for _, addon := range connCtx.proxy.Addons {
  		addon.ServerConnected(connCtx)
  	}
@@ -149,7 +166,7 @@
  	connCtx := cconn.(*wrapClientConn).connCtx
  	log := log.WithFields(log.Fields{
  		"in":   "Proxy.attacker.httpsTlsDial",
-@@ -325,11 +383,13 @@
+@@ -325,11 +384,13 @@
  	})
  
  	var clientHello *tls.ClientHelloInfo
@@ -165,7 +182,7 @@
  
  	clientTlsConn := tls.Server(cconn, &tls.Config{
  		SessionTicketsDisabled: true, // 设置此值为 true ，确保每次都会调用下面的 GetConfigForClient 方法
-@@ -339,6 +399,8 @@
+@@ -339,6 +400,8 @@
  
  			// wait server handshake finish
  			select {
@@ -174,7 +191,7 @@
  			case err := <-errChan2:
  				return nil, err
  			case serverTlsState := <-serverTlsStateChan:
-@@ -360,6 +422,7 @@
+@@ -360,6 +423,7 @@
  		},
  	})
  	go func() {
@@ -182,7 +199,75 @@
  		if err := clientTlsConn.HandshakeContext(ctx); err != nil {
  			errChan1 <- err
  			return
-@@ -615,7 +678,7 @@
+@@ -372,7 +436,7 @@
+ 	case err := <-errChan1:
+ 		cconn.Close()
+ 		conn.Close()
+-		log.Error(err)
++		a.proxy.logError(log, err, "")
+ 		return
+ 	case clientHello = <-clientHelloChan:
+ 	}
+@@ -382,7 +446,7 @@
+ 		cconn.Close()
+ 		conn.Close()
+ 		errChan2 <- err
+-		log.Error(err)
++		a.proxy.logError(log, err, "")
+ 		return
+ 	}
+ 	serverTlsStateChan <- connCtx.ServerConn.tlsState
+@@ -392,7 +456,7 @@
+ 	case err := <-errChan1:
+ 		cconn.Close()
+ 		conn.Close()
+-		log.Error(err)
++		a.proxy.logError(log, err, "")
+ 		return
+ 	case <-clientHandshakeDoneChan:
+ 	}
+@@ -425,7 +489,7 @@
+ 	})
+ 	if err := clientTlsConn.HandshakeContext(ctx); err != nil {
+ 		cconn.Close()
+-		log.Error(err)
++		a.proxy.logError(log, err, "")
+ 		return
+ 	}
+ 
+@@ -484,19 +548,19 @@
+ 		if body != nil {
+ 			err := copyStream(body)
+ 			if err != nil {
+-				logErr(log, err)
++				proxy.logError(log, err, "")
+ 			}
+ 		}
+ 		if response.BodyReader != nil {
+ 			err := copyStream(response.BodyReader)
+ 			if err != nil {
+-				logErr(log, err)
++				proxy.logError(log, err, "")
+ 			}
+ 		}
+ 		if len(response.Body) > 0 {
+ 			_, err := res.Write(response.Body)
+ 			if err != nil {
+-				logErr(log, err)
++				proxy.logError(log, err, "")
+ 			}
+ 		}
+ 	}
+@@ -606,7 +670,7 @@
+ 		proxyRes, err = f.ConnContext.ServerConn.client.Do(proxyReq)
+ 	}
+ 	if err != nil {
+-		logErr(log, err)
++		proxy.logError(log, err, "")
+ 		for _, addon := range proxy.Addons {
+ 			addon.RequestError(f, err)
+ 		}
+@@ -615,7 +679,7 @@
  	}
  
  	if proxyRes.Close {
@@ -350,7 +435,13 @@
  
  	log := log.WithFields(log.Fields{
  		"in":   "Proxy.entry.ServeHTTP",
-@@ -340,6 +369,7 @@
+@@ -335,11 +364,12 @@
+ 	if err != nil {
+ 		cconn.Close()
+ 		conn.Close()
+-		log.Error(err)
++		proxy.logError(log, err, "")
+ 		return
  	}
  
  	if helper.IsTls(peek) {
@@ -358,7 +449,38 @@
  		f.ConnContext.ClientConn.Tls = true
  		proxy.attacker.httpsTlsDial(req.Context(), cconn, conn)
  		return
-@@ -392,6 +422,7 @@
+@@ -352,14 +382,14 @@
+ 	if err != nil {
+ 		cconn.Close()
+ 		conn.Close()
+-		log.Error(err)
++		proxy.logError(log, err, "")
+ 		return
+ 	}
+ 
+ 	if helper.IsWebSocket(wsPeek) {
+ 		err = proxy.webSocketHandler.handle(conn, cconn, f)
+ 		if err != nil {
+-			log.Errorf("WebSocket handle error: %v", err)
++			proxy.logError(log, err, "WebSocket handle error")
+ 			cconn.Close()
+ 			conn.Close()
+ 		}
+@@ -380,18 +410,19 @@
+ 
+ 	cconn, err := e.establishConnection(res, f)
+ 	if err != nil {
+-		log.Error(err)
++		proxy.logError(log, err, "")
+ 		return
+ 	}
+ 
+ 	peek, err := cconn.(*wrapClientConn).Peek(3)
+ 	if err != nil {
+ 		cconn.Close()
+-		log.Error(err)
++		proxy.logError(log, err, "")
+ 		return
  	}
  
  	if helper.IsTls(peek) {
@@ -366,17 +488,82 @@
  		f.ConnContext.ClientConn.Tls = true
  		proxy.attacker.httpsLazyAttack(req.Context(), cconn, req)
  		return
+@@ -403,7 +434,7 @@
+ 	}
+ 	if err != nil {
+ 		cconn.Close()
+-		log.Error(err)
++		proxy.logError(log, err, "")
+ 		return
+ 	}
+ 
+@@ -411,12 +442,12 @@
+ 		conn, err := proxy.attacker.httpsDial(req.Context(), req)
+ 		if err != nil {
+ 			cconn.Close()
+-			log.Error(err)
++			proxy.logError(log, err, "")
+ 			return
+ 		}
+ 		err = proxy.webSocketHandler.handle(conn, cconn, f)
+ 		if err != nil {
+-			log.Errorf("WebSocket handle error: %v", err)
++			proxy.logError(log, err, "WebSocket handle error")
+ 			cconn.Close()
+ 			conn.Close()
+ 		}
+@@ -426,7 +457,7 @@
+ 	conn, err := proxy.attacker.httpsDial(req.Context(), req)
+ 	if err != nil {
+ 		cconn.Close()
+-		log.Error(err)
++		proxy.logError(log, err, "")
+ 		return
+ 	}
+ 	transfer(log, conn, cconn)
 --- a/proxy/helper.go
 +++ b/proxy/helper.go
-@@ -3,7 +3,6 @@
+@@ -1,14 +1,39 @@
+ package proxy
+ 
  import (
++	"context"
++	"errors"
  	"fmt"
  	"io"
--	"net"
+ 	"net"
  	"net/http"
  	"strings"
++	"syscall"
++
++	"github.com/gorilla/websocket"
  
-@@ -39,44 +38,26 @@
+ 	log "github.com/sirupsen/logrus"
+ )
++
++func expectedDisconnect(err error) bool {
++	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure)
++}
++
++func (p *Proxy) logError(entry *log.Entry, err error, message string) {
++	if p.isClosing() && expectedDisconnect(err) {
++		if message == "" {
++			entry.Debug(err)
++		} else {
++			entry.Debugf("%s: %v", message, err)
++		}
++		return
++	}
++	if message == "" {
++		entry.Error(err)
++	} else {
++		entry.Errorf("%s: %v", message, err)
++	}
++}
+ 
+ var normalErrMsgs []string = []string{
+ 	"read: connection reset by peer",
+@@ -39,44 +64,26 @@
  
  // 转发流量
  func transfer(log *log.Entry, server, client io.ReadWriteCloser) {
@@ -617,11 +804,12 @@
 +func (p *Proxy) Shutdown(ctx context.Context) error { return p.stop(ctx) }
 --- /dev/null
 +++ b/proxy/listener_lifecycle_test.go
-@@ -0,0 +1,640 @@
+@@ -0,0 +1,833 @@
 +package proxy
 +
 +import (
 +	"bufio"
++	"bytes"
 +	"context"
 +	"crypto/tls"
 +	"crypto/x509"
@@ -793,6 +981,7 @@
 +}
 +
 +func TestCloseWebSocketJoinsBothDirections(t *testing.T) {
++	out := captureLifecycleLogs(t)
 +	u := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 +	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 +		c, err := u.Upgrade(w, r, nil)
@@ -842,6 +1031,9 @@
 +	case <-a.ends:
 +	default:
 +		t.Fatal("Close returned before WebSocketEnd")
++	}
++	if strings.Contains(out.String(), `"level":"error"`) {
++		t.Fatalf("expected WSS stop produced error:\n%s", out)
 +	}
 +}
 +
@@ -1258,6 +1450,194 @@
 +		}
 +	}
 +}
++
++func TestColdStartConcurrentH2Capture(t *testing.T) {
++	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Proto) }))
++	target.EnableHTTP2 = true
++	target.StartTLS()
++	defer target.Close()
++	p := lifecycleProxy(t)
++	a := &lifecycleAddon{}
++	p.AddAddon(a)
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	pu, _ := url.Parse("http://" + ln.Addr().String())
++	pool := x509.NewCertPool()
++	ca := p.GetCertificate()
++	pool.AddCert(&ca)
++	tr := &http.Transport{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}, ForceAttemptHTTP2: true}
++	defer tr.CloseIdleConnections()
++	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
++	var wg sync.WaitGroup
++	for i := 0; i < 8; i++ {
++		wg.Go(func() {
++			r, e := c.Get(strings.Replace(target.URL, "127.0.0.1", "localhost", 1))
++			if e != nil {
++				t.Error(e)
++				return
++			}
++			b, e := io.ReadAll(r.Body)
++			r.Body.Close()
++			if e != nil || string(b) != "HTTP/2.0" {
++				t.Errorf("h2 capture %q: %v", b, e)
++			}
++		})
++	}
++	wg.Wait()
++	if a.responses.Load() != 8 {
++		t.Fatalf("captures=%d", a.responses.Load())
++	}
++	p.Close()
++	awaitServe(t, done)
++}
++
++func captureLifecycleLogs(t *testing.T) *bytes.Buffer {
++	t.Helper()
++	l := log.StandardLogger()
++	oldOut, oldLevel, oldFormatter := l.Out, l.GetLevel(), l.Formatter
++	out := &bytes.Buffer{}
++	l.SetOutput(out)
++	l.SetLevel(log.DebugLevel)
++	l.SetFormatter(&log.JSONFormatter{})
++	t.Cleanup(func() { l.SetOutput(oldOut); l.SetLevel(oldLevel); l.SetFormatter(oldFormatter) })
++	return out
++}
++
++type lifecycleErrorSignal struct {
++	done chan struct{}
++	once sync.Once
++}
++
++func (h *lifecycleErrorSignal) Levels() []log.Level { return []log.Level{log.ErrorLevel} }
++func (h *lifecycleErrorSignal) Fire(*log.Entry) error {
++	h.once.Do(func() { close(h.done) })
++	return nil
++}
++func waitErrorLog(t *testing.T) <-chan struct{} {
++	t.Helper()
++	logger := log.StandardLogger()
++	old := logger.ReplaceHooks(make(log.LevelHooks))
++	h := &lifecycleErrorSignal{done: make(chan struct{})}
++	logger.AddHook(h)
++	t.Cleanup(func() { logger.ReplaceHooks(old) })
++	return h.done
++}
++
++func TestClosingCONNECTLogsExpectedDisconnectBelowError(t *testing.T) {
++	out := captureLifecycleLogs(t)
++	p := lifecycleProxy(t)
++	p.AddAddon(NewUpstreamCertAddon(false))
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	c, e := net.Dial("tcp", ln.Addr().String())
++	if e != nil {
++		t.Fatal(e)
++	}
++	defer c.Close()
++	c.SetDeadline(time.Now().Add(5 * time.Second))
++	fmt.Fprint(c, "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n")
++	r, e := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"})
++	if e != nil || r.StatusCode != 200 {
++		t.Fatalf("CONNECT %v %v", r, e)
++	}
++	p.Close()
++	awaitServe(t, done)
++	if strings.Contains(out.String(), `"level":"error"`) {
++		t.Fatalf("expected shutdown produced error logs:\n%s", out)
++	}
++	if !strings.Contains(out.String(), `"level":"debug"`) {
++		t.Fatal("expected disconnect classification was not logged")
++	}
++}
++
++func TestRunningTLSFailureKeepsErrorLog(t *testing.T) {
++	out := captureLifecycleLogs(t)
++	errorLogged := waitErrorLog(t)
++	p := lifecycleProxy(t)
++	p.AddAddon(NewUpstreamCertAddon(false))
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	c, e := net.Dial("tcp", ln.Addr().String())
++	if e != nil {
++		t.Fatal(e)
++	}
++	defer c.Close()
++	c.SetDeadline(time.Now().Add(5 * time.Second))
++	fmt.Fprint(c, "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n")
++	if _, e := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"}); e != nil {
++		t.Fatal(e)
++	}
++	c.Write([]byte{0x16, 0x03, 0x01, 0, 4, 0xff, 0, 0, 0})
++	c.Read(make([]byte, 16))
++	awaitLifecycle(t, errorLogged)
++	p.Close()
++	awaitServe(t, done)
++	if !strings.Contains(out.String(), `"level":"error"`) {
++		t.Fatalf("real TLS failure was suppressed:\n%s", out)
++	}
++}
++
++func TestRunningWebSocketFailureKeepsErrorLog(t *testing.T) {
++	out := captureLifecycleLogs(t)
++	errorLogged := waitErrorLog(t)
++	p := lifecycleProxy(t)
++	ln := loopback(t)
++	done := reservedServe(t, p, ln)
++	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
++	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		c, e := upgrader.Upgrade(w, r, nil)
++		if e != nil {
++			return
++		}
++		c.Close()
++	}))
++	defer target.Close()
++	pu, _ := url.Parse("http://" + ln.Addr().String())
++	pool := x509.NewCertPool()
++	ca := p.GetCertificate()
++	pool.AddCert(&ca)
++	dialer := websocket.Dialer{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}, HandshakeTimeout: 5 * time.Second}
++	c, _, e := dialer.Dial(strings.Replace("wss"+target.URL[5:], "127.0.0.1", "localhost", 1), nil)
++	if e == nil {
++		c.SetReadDeadline(time.Now().Add(5 * time.Second))
++		c.ReadMessage()
++		c.Close()
++	}
++	awaitLifecycle(t, errorLogged)
++	p.Close()
++	awaitServe(t, done)
++	if !strings.Contains(out.String(), `"level":"error"`) {
++		t.Fatalf("real WSS failure suppressed:\n%s", out)
++	}
++}
++
++func TestLifecycleErrorLogsRequireClosingAndExpectedCause(t *testing.T) {
++	for _, closing := range []bool{false, true} {
++		for _, cause := range []struct {
++			name     string
++			err      error
++			expected bool
++		}{
++			{"cancel", context.Canceled, true}, {"closed", net.ErrClosed, true}, {"websocket1006", &websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}, true}, {"tls", errors.New("tls: bad certificate"), false}, {"capture", errors.New("capture persistence failed"), false},
++		} {
++			t.Run(fmt.Sprintf("closing=%v/%s", closing, cause.name), func(t *testing.T) {
++				out := captureLifecycleLogs(t)
++				p := lifecycleProxy(t)
++				if closing {
++					p.Close()
++				}
++				p.logError(log.WithField("test", "classification"), cause.err, "capture failure")
++				want := "error"
++				if closing && cause.expected {
++					want = "debug"
++				}
++				if !strings.Contains(out.String(), `"level":"`+want+`"`) {
++					t.Fatalf("classification wanted %s:\n%s", want, out)
++				}
++			})
++		}
++	}
++}
 --- a/proxy/proxy.go
 +++ b/proxy/proxy.go
 @@ -10,7 +10,6 @@
@@ -1341,6 +1721,33 @@
  
  	"github.com/gorilla/websocket"
  	log "github.com/sirupsen/logrus"
+@@ -92,7 +93,7 @@
+ 	buf := bufio.NewReader(clientConn)
+ 	clientReq, err := http.ReadRequest(buf)
+ 	if err != nil {
+-		log.Errorf("Failed to read client handshake: %v", err)
++		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to read client handshake")
+ 		return err
+ 	}
+ 
+@@ -114,7 +115,7 @@
+ 	// 我们不传递 clientReq.Header，避免重复头的错误
+ 	serverWS, _, err := dialer.Dial(serverURL, nil)
+ 	if err != nil {
+-		log.Errorf("Failed to dial server: %v", err)
++		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to dial server")
+ 		return err
+ 	}
+ 	defer serverWS.Close()
+@@ -134,7 +135,7 @@
+ 
+ 	clientWS, err := upgrader.Upgrade(respWriter, clientReq, nil)
+ 	if err != nil {
+-		log.Errorf("Failed to upgrade client connection: %v", err)
++		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to upgrade client connection")
+ 		return err
+ 	}
+ 	defer clientWS.Close()
 @@ -161,12 +162,13 @@
  	}()
  
@@ -1357,6 +1764,15 @@
  			serverWS.Close()
  		}()
  
+@@ -188,7 +190,7 @@
+ 			}
+ 
+ 			if err := serverWS.WriteMessage(msgType, msg); err != nil {
+-				log.Errorf("Client -> Server: Write error: %v", err)
++				h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Client -> Server: Write error")
+ 				errChan <- err
+ 				return
+ 			}
 @@ -197,9 +199,8 @@
  
  	// 服务器 -> 客户端
@@ -1368,6 +1784,15 @@
  			clientWS.Close()
  		}()
  
+@@ -221,7 +222,7 @@
+ 			}
+ 
+ 			if err := clientWS.WriteMessage(msgType, msg); err != nil {
+-				log.Errorf("Server -> Client: Write error: %v", err)
++				h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Server -> Client: Write error")
+ 				errChan <- err
+ 				return
+ 			}
 @@ -230,6 +231,10 @@
  
  	// 等待任一方向出错或关闭
@@ -1379,6 +1804,15 @@
  	// 如果是正常关闭（nil），返回 nil
  	return err
  }
+@@ -247,7 +252,7 @@
+ 	// 步骤 1: 获取上游连接
+ 	plainConn, err := h.proxy.getUpstreamConn(req.Context(), req)
+ 	if err != nil {
+-		log.Errorf("Failed to get upstream connection: %v", err)
++		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to get upstream connection")
+ 		return err
+ 	}
+ 
 @@ -265,6 +270,10 @@
  	for _, addon := range connCtx.proxy.Addons {
  		addon.ServerConnected(connCtx)
@@ -1390,3 +1824,21 @@
  
  	// 步骤 4: 创建 Dialer，使用自定义 NetDial
  	dialer := &websocket.Dialer{
+@@ -279,7 +288,7 @@
+ 	upstreamHeader := cloneHeaderWithoutWSHandshake(req.Header)
+ 	serverWS, _, err := dialer.Dial(serverURL, upstreamHeader)
+ 	if err != nil {
+-		log.Errorf("Failed to dial WSS server: %v", err)
++		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to dial WSS server")
+ 		return err
+ 	}
+ 	defer serverWS.Close()
+@@ -294,7 +303,7 @@
+ 
+ 	clientWS, err := upgrader.Upgrade(res, req, nil)
+ 	if err != nil {
+-		log.Errorf("Failed to upgrade client connection: %v", err)
++		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to upgrade client connection")
+ 		return err
+ 	}
+ 	defer clientWS.Close()

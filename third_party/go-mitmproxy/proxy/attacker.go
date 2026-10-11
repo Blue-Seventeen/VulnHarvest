@@ -169,9 +169,10 @@ func (a *attacker) serveConn(clientTlsConn *tls.Conn, connCtx *ConnContext) {
 			defer a.proxy.life.work.Done()
 			defer func() { close(done); cancel(); clientTlsConn.Close(); <-watchDone }()
 			a.h2Server.ServeConn(clientTlsConn, &http2.ServeConnOpts{
-				Context:    ctx,
-				Handler:    a,
-				BaseConfig: a.server,
+				Context: ctx,
+				Handler: a,
+				// a.server.Serve initializes HTTP2 concurrently. Its configuration
+				// is otherwise default; use x/net's independent per-connection server.
 			})
 		}()
 		return
@@ -223,7 +224,7 @@ func (a *attacker) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		f.finish()
 
 		if err := a.proxy.webSocketHandler.handleWSS(res, req); err != nil {
-			log.Errorf("handleWSS error: %v", err)
+			a.proxy.logError(log.WithField("in", "Proxy.attacker.ServeHTTP"), err, "handleWSS error")
 		}
 		return
 	}
@@ -435,7 +436,7 @@ func (a *attacker) httpsTlsDial(ctx context.Context, cconn net.Conn, conn net.Co
 	case err := <-errChan1:
 		cconn.Close()
 		conn.Close()
-		log.Error(err)
+		a.proxy.logError(log, err, "")
 		return
 	case clientHello = <-clientHelloChan:
 	}
@@ -445,7 +446,7 @@ func (a *attacker) httpsTlsDial(ctx context.Context, cconn net.Conn, conn net.Co
 		cconn.Close()
 		conn.Close()
 		errChan2 <- err
-		log.Error(err)
+		a.proxy.logError(log, err, "")
 		return
 	}
 	serverTlsStateChan <- connCtx.ServerConn.tlsState
@@ -455,7 +456,7 @@ func (a *attacker) httpsTlsDial(ctx context.Context, cconn net.Conn, conn net.Co
 	case err := <-errChan1:
 		cconn.Close()
 		conn.Close()
-		log.Error(err)
+		a.proxy.logError(log, err, "")
 		return
 	case <-clientHandshakeDoneChan:
 	}
@@ -488,7 +489,7 @@ func (a *attacker) httpsLazyAttack(ctx context.Context, cconn net.Conn, req *htt
 	})
 	if err := clientTlsConn.HandshakeContext(ctx); err != nil {
 		cconn.Close()
-		log.Error(err)
+		a.proxy.logError(log, err, "")
 		return
 	}
 
@@ -547,19 +548,19 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 		if body != nil {
 			err := copyStream(body)
 			if err != nil {
-				logErr(log, err)
+				proxy.logError(log, err, "")
 			}
 		}
 		if response.BodyReader != nil {
 			err := copyStream(response.BodyReader)
 			if err != nil {
-				logErr(log, err)
+				proxy.logError(log, err, "")
 			}
 		}
 		if len(response.Body) > 0 {
 			_, err := res.Write(response.Body)
 			if err != nil {
-				logErr(log, err)
+				proxy.logError(log, err, "")
 			}
 		}
 	}
@@ -669,7 +670,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 		proxyRes, err = f.ConnContext.ServerConn.client.Do(proxyReq)
 	}
 	if err != nil {
-		logErr(log, err)
+		proxy.logError(log, err, "")
 		for _, addon := range proxy.Addons {
 			addon.RequestError(f, err)
 		}

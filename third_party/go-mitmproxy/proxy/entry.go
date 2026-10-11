@@ -364,7 +364,7 @@ func (e *entry) httpsDialFirstAttack(res http.ResponseWriter, req *http.Request,
 	if err != nil {
 		cconn.Close()
 		conn.Close()
-		log.Error(err)
+		proxy.logError(log, err, "")
 		return
 	}
 
@@ -382,14 +382,14 @@ func (e *entry) httpsDialFirstAttack(res http.ResponseWriter, req *http.Request,
 	if err != nil {
 		cconn.Close()
 		conn.Close()
-		log.Error(err)
+		proxy.logError(log, err, "")
 		return
 	}
 
 	if helper.IsWebSocket(wsPeek) {
 		err = proxy.webSocketHandler.handle(conn, cconn, f)
 		if err != nil {
-			log.Errorf("WebSocket handle error: %v", err)
+			proxy.logError(log, err, "WebSocket handle error")
 			cconn.Close()
 			conn.Close()
 		}
@@ -410,14 +410,14 @@ func (e *entry) httpsDialLazyAttack(res http.ResponseWriter, req *http.Request, 
 
 	cconn, err := e.establishConnection(res, f)
 	if err != nil {
-		log.Error(err)
+		proxy.logError(log, err, "")
 		return
 	}
 
 	peek, err := cconn.(*wrapClientConn).Peek(3)
 	if err != nil {
 		cconn.Close()
-		log.Error(err)
+		proxy.logError(log, err, "")
 		return
 	}
 
@@ -434,7 +434,7 @@ func (e *entry) httpsDialLazyAttack(res http.ResponseWriter, req *http.Request, 
 	}
 	if err != nil {
 		cconn.Close()
-		log.Error(err)
+		proxy.logError(log, err, "")
 		return
 	}
 
@@ -442,12 +442,12 @@ func (e *entry) httpsDialLazyAttack(res http.ResponseWriter, req *http.Request, 
 		conn, err := proxy.attacker.httpsDial(req.Context(), req)
 		if err != nil {
 			cconn.Close()
-			log.Error(err)
+			proxy.logError(log, err, "")
 			return
 		}
 		err = proxy.webSocketHandler.handle(conn, cconn, f)
 		if err != nil {
-			log.Errorf("WebSocket handle error: %v", err)
+			proxy.logError(log, err, "WebSocket handle error")
 			cconn.Close()
 			conn.Close()
 		}
@@ -457,7 +457,7 @@ func (e *entry) httpsDialLazyAttack(res http.ResponseWriter, req *http.Request, 
 	conn, err := proxy.attacker.httpsDial(req.Context(), req)
 	if err != nil {
 		cconn.Close()
-		log.Error(err)
+		proxy.logError(log, err, "")
 		return
 	}
 	transfer(log, conn, cconn)

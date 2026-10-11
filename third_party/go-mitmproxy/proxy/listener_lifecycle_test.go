@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -173,6 +174,7 @@ func TestCloseOwnsHijackedCONNECTAndTLSHandshake(t *testing.T) {
 }
 
 func TestCloseWebSocketJoinsBothDirections(t *testing.T) {
+	out := captureLifecycleLogs(t)
 	u := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := u.Upgrade(w, r, nil)
@@ -222,6 +224,9 @@ func TestCloseWebSocketJoinsBothDirections(t *testing.T) {
 	case <-a.ends:
 	default:
 		t.Fatal("Close returned before WebSocketEnd")
+	}
+	if strings.Contains(out.String(), `"level":"error"`) {
+		t.Fatalf("expected WSS stop produced error:\n%s", out)
 	}
 }
 
@@ -635,6 +640,194 @@ func TestConcurrentServeTransfersBothListenerOwnership(t *testing.T) {
 	for _, ln := range listeners {
 		if _, e := ln.Accept(); !errors.Is(e, net.ErrClosed) {
 			t.Fatalf("listener not owned/closed: %v", e)
+		}
+	}
+}
+
+func TestColdStartConcurrentH2Capture(t *testing.T) {
+	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Proto) }))
+	target.EnableHTTP2 = true
+	target.StartTLS()
+	defer target.Close()
+	p := lifecycleProxy(t)
+	a := &lifecycleAddon{}
+	p.AddAddon(a)
+	ln := loopback(t)
+	done := reservedServe(t, p, ln)
+	pu, _ := url.Parse("http://" + ln.Addr().String())
+	pool := x509.NewCertPool()
+	ca := p.GetCertificate()
+	pool.AddCert(&ca)
+	tr := &http.Transport{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}, ForceAttemptHTTP2: true}
+	defer tr.CloseIdleConnections()
+	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Go(func() {
+			r, e := c.Get(strings.Replace(target.URL, "127.0.0.1", "localhost", 1))
+			if e != nil {
+				t.Error(e)
+				return
+			}
+			b, e := io.ReadAll(r.Body)
+			r.Body.Close()
+			if e != nil || string(b) != "HTTP/2.0" {
+				t.Errorf("h2 capture %q: %v", b, e)
+			}
+		})
+	}
+	wg.Wait()
+	if a.responses.Load() != 8 {
+		t.Fatalf("captures=%d", a.responses.Load())
+	}
+	p.Close()
+	awaitServe(t, done)
+}
+
+func captureLifecycleLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	l := log.StandardLogger()
+	oldOut, oldLevel, oldFormatter := l.Out, l.GetLevel(), l.Formatter
+	out := &bytes.Buffer{}
+	l.SetOutput(out)
+	l.SetLevel(log.DebugLevel)
+	l.SetFormatter(&log.JSONFormatter{})
+	t.Cleanup(func() { l.SetOutput(oldOut); l.SetLevel(oldLevel); l.SetFormatter(oldFormatter) })
+	return out
+}
+
+type lifecycleErrorSignal struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func (h *lifecycleErrorSignal) Levels() []log.Level { return []log.Level{log.ErrorLevel} }
+func (h *lifecycleErrorSignal) Fire(*log.Entry) error {
+	h.once.Do(func() { close(h.done) })
+	return nil
+}
+func waitErrorLog(t *testing.T) <-chan struct{} {
+	t.Helper()
+	logger := log.StandardLogger()
+	old := logger.ReplaceHooks(make(log.LevelHooks))
+	h := &lifecycleErrorSignal{done: make(chan struct{})}
+	logger.AddHook(h)
+	t.Cleanup(func() { logger.ReplaceHooks(old) })
+	return h.done
+}
+
+func TestClosingCONNECTLogsExpectedDisconnectBelowError(t *testing.T) {
+	out := captureLifecycleLogs(t)
+	p := lifecycleProxy(t)
+	p.AddAddon(NewUpstreamCertAddon(false))
+	ln := loopback(t)
+	done := reservedServe(t, p, ln)
+	c, e := net.Dial("tcp", ln.Addr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprint(c, "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n")
+	r, e := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"})
+	if e != nil || r.StatusCode != 200 {
+		t.Fatalf("CONNECT %v %v", r, e)
+	}
+	p.Close()
+	awaitServe(t, done)
+	if strings.Contains(out.String(), `"level":"error"`) {
+		t.Fatalf("expected shutdown produced error logs:\n%s", out)
+	}
+	if !strings.Contains(out.String(), `"level":"debug"`) {
+		t.Fatal("expected disconnect classification was not logged")
+	}
+}
+
+func TestRunningTLSFailureKeepsErrorLog(t *testing.T) {
+	out := captureLifecycleLogs(t)
+	errorLogged := waitErrorLog(t)
+	p := lifecycleProxy(t)
+	p.AddAddon(NewUpstreamCertAddon(false))
+	ln := loopback(t)
+	done := reservedServe(t, p, ln)
+	c, e := net.Dial("tcp", ln.Addr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprint(c, "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n")
+	if _, e := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"}); e != nil {
+		t.Fatal(e)
+	}
+	c.Write([]byte{0x16, 0x03, 0x01, 0, 4, 0xff, 0, 0, 0})
+	c.Read(make([]byte, 16))
+	awaitLifecycle(t, errorLogged)
+	p.Close()
+	awaitServe(t, done)
+	if !strings.Contains(out.String(), `"level":"error"`) {
+		t.Fatalf("real TLS failure was suppressed:\n%s", out)
+	}
+}
+
+func TestRunningWebSocketFailureKeepsErrorLog(t *testing.T) {
+	out := captureLifecycleLogs(t)
+	errorLogged := waitErrorLog(t)
+	p := lifecycleProxy(t)
+	ln := loopback(t)
+	done := reservedServe(t, p, ln)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, e := upgrader.Upgrade(w, r, nil)
+		if e != nil {
+			return
+		}
+		c.Close()
+	}))
+	defer target.Close()
+	pu, _ := url.Parse("http://" + ln.Addr().String())
+	pool := x509.NewCertPool()
+	ca := p.GetCertificate()
+	pool.AddCert(&ca)
+	dialer := websocket.Dialer{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}, HandshakeTimeout: 5 * time.Second}
+	c, _, e := dialer.Dial(strings.Replace("wss"+target.URL[5:], "127.0.0.1", "localhost", 1), nil)
+	if e == nil {
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		c.ReadMessage()
+		c.Close()
+	}
+	awaitLifecycle(t, errorLogged)
+	p.Close()
+	awaitServe(t, done)
+	if !strings.Contains(out.String(), `"level":"error"`) {
+		t.Fatalf("real WSS failure suppressed:\n%s", out)
+	}
+}
+
+func TestLifecycleErrorLogsRequireClosingAndExpectedCause(t *testing.T) {
+	for _, closing := range []bool{false, true} {
+		for _, cause := range []struct {
+			name     string
+			err      error
+			expected bool
+		}{
+			{"cancel", context.Canceled, true}, {"closed", net.ErrClosed, true}, {"websocket1006", &websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}, true}, {"tls", errors.New("tls: bad certificate"), false}, {"capture", errors.New("capture persistence failed"), false},
+		} {
+			t.Run(fmt.Sprintf("closing=%v/%s", closing, cause.name), func(t *testing.T) {
+				out := captureLifecycleLogs(t)
+				p := lifecycleProxy(t)
+				if closing {
+					p.Close()
+				}
+				p.logError(log.WithField("test", "classification"), cause.err, "capture failure")
+				want := "error"
+				if closing && cause.expected {
+					want = "debug"
+				}
+				if !strings.Contains(out.String(), `"level":"`+want+`"`) {
+					t.Fatalf("classification wanted %s:\n%s", want, out)
+				}
+			})
 		}
 	}
 }

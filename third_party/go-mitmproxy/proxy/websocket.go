@@ -93,7 +93,7 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 	buf := bufio.NewReader(clientConn)
 	clientReq, err := http.ReadRequest(buf)
 	if err != nil {
-		log.Errorf("Failed to read client handshake: %v", err)
+		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to read client handshake")
 		return err
 	}
 
@@ -115,7 +115,7 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 	// 我们不传递 clientReq.Header，避免重复头的错误
 	serverWS, _, err := dialer.Dial(serverURL, nil)
 	if err != nil {
-		log.Errorf("Failed to dial server: %v", err)
+		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to dial server")
 		return err
 	}
 	defer serverWS.Close()
@@ -135,7 +135,7 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 
 	clientWS, err := upgrader.Upgrade(respWriter, clientReq, nil)
 	if err != nil {
-		log.Errorf("Failed to upgrade client connection: %v", err)
+		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to upgrade client connection")
 		return err
 	}
 	defer clientWS.Close()
@@ -190,7 +190,7 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 			}
 
 			if err := serverWS.WriteMessage(msgType, msg); err != nil {
-				log.Errorf("Client -> Server: Write error: %v", err)
+				h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Client -> Server: Write error")
 				errChan <- err
 				return
 			}
@@ -222,7 +222,7 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 			}
 
 			if err := clientWS.WriteMessage(msgType, msg); err != nil {
-				log.Errorf("Server -> Client: Write error: %v", err)
+				h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Server -> Client: Write error")
 				errChan <- err
 				return
 			}
@@ -252,7 +252,7 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 	// 步骤 1: 获取上游连接
 	plainConn, err := h.proxy.getUpstreamConn(req.Context(), req)
 	if err != nil {
-		log.Errorf("Failed to get upstream connection: %v", err)
+		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to get upstream connection")
 		return err
 	}
 
@@ -288,7 +288,7 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 	upstreamHeader := cloneHeaderWithoutWSHandshake(req.Header)
 	serverWS, _, err := dialer.Dial(serverURL, upstreamHeader)
 	if err != nil {
-		log.Errorf("Failed to dial WSS server: %v", err)
+		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to dial WSS server")
 		return err
 	}
 	defer serverWS.Close()
@@ -303,7 +303,7 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 
 	clientWS, err := upgrader.Upgrade(res, req, nil)
 	if err != nil {
-		log.Errorf("Failed to upgrade client connection: %v", err)
+		h.proxy.logError(log.WithField("in", "Proxy.webSocketHandler"), err, "Failed to upgrade client connection")
 		return err
 	}
 	defer clientWS.Close()

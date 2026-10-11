@@ -6,9 +6,13 @@
 only its source location is replaced with `./third_party/go-mitmproxy`. The
 upstream module declaration, Go directive, `Proxy.Version`, MIT license,
 copyright, dependency manifests, documentation and all upstream tests are
-retained. No transitive dependency is vendored and no module-cache file is
-changed. Source evidence is the cached Go zip, compared offline, not a new
-online SumDB check.
+retained. No transitive dependency is vendored. No source files in either
+scoped SDK's module-cache directory were patched or written. An initial full
+nested-module compile attempted to download a missing transitive module and
+left a `github.com/samber/lo/@v/v1.53.0.lock` cache file before timing out; the
+Task5a1 report records this exception. No host-cache cleanup was attempted.
+Source evidence is the cached Go zip, compared offline, not a new online
+SumDB check.
 
 `upstream-manifest.json` records every one of the 104 upstream files using raw
 byte size/SHA-256, the compressed zip SHA-256, Go h1 content checksum, and all
@@ -31,11 +35,15 @@ Changes:
   Close. Closing sockets never invokes addons under the registry mutex.
 - `proxy/attacker.go`: close-wake listener without closing send channel; owned
   request contexts; h2 service+watcher joining; TLS worker cancellation/join;
-  register outgoing callback owners, including first/lazy TLS capture.
+  register outgoing callback owners, including first/lazy TLS capture. H2 uses
+  x/net's independent per-connection default configuration, retaining explicit
+  handler/context instead of racing HTTP Serve's BaseConfig initialization.
 - `proxy/connection.go`: atomic close-after-response flag used by close
   callbacks; atomic internal TLS flag lives in wrapClientConn.
 - `proxy/helper.go`: close both endpoints and wait for both copy workers,
-  including the first-error path.
+  including the first-error path; only closing + expected cancellation/socket
+  disconnection lowers lifecycle errors to debug. Running TLS/WS failures and
+  capture faults, including faults during shutdown, still log at error level.
 - `proxy/websocket.go`: track WSS upstream during handshake; close both ends,
   join both message workers before WebSocketEnd; remove unbounded deferred
   WriteMessage close frames. Normal forwarded messages are unchanged.
