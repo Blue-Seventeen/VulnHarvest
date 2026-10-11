@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -500,5 +501,51 @@ func TestSQLiteWriteReturningContextAndClose(t *testing.T) {
 	defer d.Close()
 	if err := d.QueryRow(`SELECT id FROM companies WHERE nkey='returning'`).Scan(&id); err != nil || id != 1 {
 		t.Fatal("state lost after close/move", id, err)
+	}
+}
+
+func TestSQLiteRejectFutureWALWithoutMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "future.sqlite")
+	external, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external.SetMaxOpenConns(1)
+	external.SetMaxIdleConns(1)
+	defer external.Close()
+	for _, q := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA wal_autocheckpoint=0`, `CREATE TABLE future_data(value TEXT)`, `INSERT INTO future_data VALUES('uncheckpointed')`, `PRAGMA user_version=999`} {
+		if _, err := external.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := func(path string) [32]byte {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sha256.Sum256(data)
+	}
+	mainBefore, walBefore := hash(path), hash(path+"-wal")
+	if stat, err := os.Stat(path + "-wal"); err != nil || stat.Size() == 0 {
+		t.Fatal("fixture requires a nonempty WAL", err)
+	}
+	if d, err := OpenSQLite(path); err == nil {
+		d.Close()
+		t.Fatal("future schema accepted")
+	}
+	if got := hash(path); got != mainBefore {
+		t.Error("rejecting future schema changed main database bytes")
+	}
+	if got := hash(path + "-wal"); got != walBefore {
+		t.Error("rejecting future schema changed or checkpointed WAL bytes")
+	}
+	var version int
+	var value string
+	if err := external.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 999 {
+		t.Fatal(version, err)
+	}
+	if err := external.QueryRow(`SELECT value FROM future_data`).Scan(&value); err != nil || value != "uncheckpointed" {
+		t.Fatal(value, err)
 	}
 }

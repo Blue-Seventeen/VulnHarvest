@@ -60,7 +60,12 @@ func OpenSQLite(path string) (_ *DB, err error) {
 	d := &DB{DB: writer, sqlite: true}
 	defer func() {
 		if err != nil {
-			d.Close()
+			// Failure cleanup must not checkpoint a database whose version we
+			// rejected. Close only the pools; normal Close owns the checkpoint.
+			if d.reader != nil {
+				d.reader.Close()
+			}
+			writer.Close()
 		}
 	}()
 	writer.SetMaxOpenConns(1)

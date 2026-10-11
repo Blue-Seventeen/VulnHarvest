@@ -51,3 +51,16 @@
 - db/task_context_lock_test.go / db/task_delete_concurrency_test.go 两行无名 DB literal 改为命名 DB 字段，避免扩展结构导致已有测试无法编译，经主代理同意。
 - 未运行全量应用/前端；独立 PG 全量回归由主代理负责，不将其他业务未适配视为 Task1 测试通过。
 `go test -race ./db -run '^TestSQLite' -count=1`：未通过运行验收；编译完成后测试进程退出 `0xc0000139`（Windows DLL entry point 初始化错误类），未输出任何测试断言或 race 报告。当前 gcc 来源 E:\Software\CodeBlocks\MinGW\bin\gcc.exe；未扩大范围排查系统环境。普通测试及 vet 已通过，不能称 race 验证通过。
+
+
+## Task 1 fix 1 — 未来 WAL 版本拒绝不得 checkpoint
+
+审查复现确认初始化失败 defer d.Close() 仍会执行 wal_checkpoint(TRUNCATE)，因此未来版本虽然被拒绝，主库/WAL字节却已变化。修复仅限失败清理：分别关闭已建立 reader/writer pool，避免调用正常运行期负责 checkpoint 的 DB.Close。成功打开后的 Close 保持 checkpoint 行为。
+
+TDD 回归 TestSQLiteRejectFutureWALWithoutMutation：独立临时 future.sqlite，外部连接保持打开，WAL 模式、wal_autocheckpoint=0、创建未来数据并设置 user_version=999；拒绝前后比较主库与非空 WAL 的 SHA-256，并确认外部连接仍读取完整未来数据/版本。
+
+- 修复前 `go test ./db -run '^TestSQLiteRejectFutureWALWithoutMutation$' -count=1 -v`：FAIL，主库字节改变、WAL字节改变/被checkpoint（1.140s）。
+- 修复后同命令：PASS（1.223s）。
+- `go test ./config ./db -run 'TestResolveMode|^TestSQLite|TestApplySchemaRetries' -count=1`：PASS config 0.417s / db 2.139s。
+- `go vet ./config ./db`：PASS（退出码0，无诊断）。
+- 未启动应用、未seed、未访问旧实例；无其他业务改动。
