@@ -6,11 +6,11 @@ import (
 )
 
 func TestTokenStatsBySessionUsesCompleteIntentHistory(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openExplorationTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
+	defer closeExplorationTestDB(t, d)
 
 	expID, err := d.CreateExploration("token sessions", "aggregate complete session history")
 	if err != nil {

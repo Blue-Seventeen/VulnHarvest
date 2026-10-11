@@ -9,11 +9,11 @@ import (
 )
 
 func TestCompareAndSetIntentStateAllowsSingleWinner(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openExplorationTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
+	defer closeExplorationTestDB(t, d)
 	expID, err := d.CreateExploration("intent CAS", "only one controller wins")
 	if err != nil {
 		t.Fatal(err)
@@ -59,11 +59,11 @@ func TestCompareAndSetIntentStateAllowsSingleWinner(t *testing.T) {
 }
 
 func TestCancelIntentPreservesTokenMeteringWithoutDoubleCount(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openExplorationTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
+	defer closeExplorationTestDB(t, d)
 	expID, err := d.CreateExploration("cancel token rollup", "preserve consumed tokens")
 	if err != nil {
 		t.Fatal(err)
@@ -168,11 +168,14 @@ func TestCancelIntentPreservesTokenMeteringWithoutDoubleCount(t *testing.T) {
 		t.Fatalf("cancelled intent leaked into sessions: %+v", sessions)
 	}
 	var rollups, datedRollups int
-	if err := d.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (
+	if err := d.QueryRow(d.SQL(`SELECT COUNT(*), COUNT(*) FILTER (
 			WHERE metadata->>'token_day'=TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
 		) FROM activity
 		WHERE exploration_id=$1 AND worker='token-ledger' AND kind='result'
-		  AND metadata->>'cancelled_intent_id'=$2`, expID, fmt.Sprint(intentID)).Scan(&rollups, &datedRollups); err != nil {
+		  AND metadata->>'cancelled_intent_id'=$2`, `SELECT COUNT(*), COUNT(*) FILTER (
+            WHERE metadata->>'token_day'=strftime('%Y-%m-%d',created_at)
+        ) FROM activity WHERE exploration_id=$1 AND worker='token-ledger' AND kind='result'
+          AND CAST(metadata->>'cancelled_intent_id' AS TEXT)=$2`), expID, fmt.Sprint(intentID)).Scan(&rollups, &datedRollups); err != nil {
 		t.Fatal(err)
 	}
 	if rollups != 3 || datedRollups != rollups {
@@ -227,11 +230,11 @@ func assertDailyTokenBucketsEqual(t *testing.T, got, want map[string]DailyTokenB
 }
 
 func TestCancelIntentPreservesOutputsYieldedByAnotherIntent(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openExplorationTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
+	defer closeExplorationTestDB(t, d)
 	expID, err := d.CreateExploration("shared intent output", "preserve shared facts and findings")
 	if err != nil {
 		t.Fatal(err)

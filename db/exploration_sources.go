@@ -118,12 +118,12 @@ func (s *ExplorationStore) ListByKindPageWithSources(kind string, before int64, 
 	if limit <= 0 {
 		limit = 20
 	}
-	own, err := s.listByKindPageFiltered(kind, before, limit, q)
+	own, err := s.listByKindPageFiltered(kind, before, limit, q, false)
 	if err != nil {
 		return nil, false, 0, err
 	}
 	merged := own
-	total, err = s.countByKindFiltered(kind, q)
+	total, err = s.countByKindFiltered(kind, q, false)
 	if err != nil {
 		return nil, false, 0, err
 	}
@@ -133,14 +133,14 @@ func (s *ExplorationStore) ListByKindPageWithSources(kind string, before int64, 
 		return nil, false, 0, err
 	}
 	for _, source := range sources {
-		page, err := source.Store.listByKindPageFiltered(kind, before, limit, q)
+		page, err := source.Store.listByKindPageFiltered(kind, before, limit, q, kind == KindIntent)
 		if err != nil {
 			return nil, false, 0, err
 		}
 		for _, n := range page {
 			merged = append(merged, markInheritedNode(n, source.Task.TaskID))
 		}
-		cnt, err := source.Store.countByKindFiltered(kind, q)
+		cnt, err := source.Store.countByKindFiltered(kind, q, kind == KindIntent)
 		if err != nil {
 			return nil, false, 0, err
 		}
