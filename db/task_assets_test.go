@@ -8,11 +8,11 @@ import (
 )
 
 func TestRegisterTaskAssetScopesCreatesAssetsAndPersistsTextScope(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
+	defer closeTaskBindingsDB(t, d)
 
 	task, err := d.CreateTask("manual scope registration", "goal", nil, 0, 0)
 	if err != nil {
@@ -87,11 +87,11 @@ func TestRegisterTaskAssetScopesCreatesAssetsAndPersistsTextScope(t *testing.T) 
 }
 
 func TestTaskAssetAttachDetachPreservesGlobalAssetAndAnchors(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
+	defer closeTaskBindingsDB(t, d)
 
 	task, err := d.CreateTask("asset editing", "goal", nil, 0, 0)
 	if err != nil {
@@ -140,11 +140,11 @@ func TestTaskAssetAttachDetachPreservesGlobalAssetAndAnchors(t *testing.T) {
 }
 
 func TestIntentAssetsIncludesDirectSourceProvenance(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
+	defer closeTaskBindingsDB(t, d)
 
 	source, err := d.CreateTask("source assets", "goal", nil, 0, 0)
 	if err != nil {

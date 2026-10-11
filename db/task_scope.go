@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 )
@@ -43,14 +44,14 @@ func stripHostPort(v string) string {
 // ipToHostCIDR turns a bare IP into its single-host CIDR (/32 or /128). "" if invalid.
 func ipToHostCIDR(ip string) string {
 	ip = strings.TrimSpace(ip)
-	p := net.ParseIP(ip)
-	if p == nil {
+	p, err := netip.ParseAddr(ip)
+	if err != nil || p.Zone() != "" {
 		return ""
 	}
-	if p.To4() != nil {
-		return ip + "/32"
+	if p.Is4() {
+		return p.String() + "/32"
 	}
-	return ip + "/128"
+	return p.String() + "/128"
 }
 
 // upsertTaskScope inserts one scope row idempotently (uq_task_scope). A duplicate is
@@ -58,6 +59,13 @@ func ipToHostCIDR(ip string) string {
 func (s *AssetStore) upsertTaskScopeResult(ts TaskScope) (bool, error) {
 	if ts.TaskID <= 0 || ts.Kind == "" {
 		return false, nil
+	}
+	if s.db.IsSQLite() && ts.Net != "" {
+		prefix, err := netip.ParsePrefix(ts.Net)
+		if err != nil || prefix != prefix.Masked() {
+			return false, fmt.Errorf("invalid cidr value: %q", ts.Net)
+		}
+		ts.Net = prefix.String()
 	}
 	var domainVal, netVal, companyVal, valueVal any
 	if ts.Domain != "" {
@@ -76,10 +84,12 @@ func (s *AssetStore) upsertTaskScopeResult(ts TaskScope) (bool, error) {
 	if src == "" {
 		src = "auto"
 	}
-	query := `
+	query := s.db.SQL(`
 INSERT INTO task_scope(task_id, kind, company_id, domain, net, value, source, reason)
 VALUES ($1,$2,$3,$4,$5::cidr,$6,$7,NULLIF($8,''))
-ON CONFLICT DO NOTHING`
+ON CONFLICT DO NOTHING`, `
+INSERT INTO task_scope(task_id,kind,company_id,domain,net,value,source,reason)
+VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,'')) ON CONFLICT DO NOTHING`)
 	var (
 		result sql.Result
 		err    error
@@ -87,7 +97,7 @@ ON CONFLICT DO NOTHING`
 	if s.tx != nil {
 		result, err = s.tx.Exec(query, ts.TaskID, ts.Kind, companyVal, domainVal, netVal, valueVal, src, ts.Reason)
 	} else {
-		result, err = s.db.Exec(query, ts.TaskID, ts.Kind, companyVal, domainVal, netVal, valueVal, src, ts.Reason)
+		result, err = s.exec(query, ts.TaskID, ts.Kind, companyVal, domainVal, netVal, valueVal, src, ts.Reason)
 	}
 	if err != nil {
 		return false, err
@@ -160,20 +170,20 @@ func (s *AssetStore) AddAgentScope(taskID int64, kind, value, reason, source str
 		if s.company == nil {
 			return ts, fmt.Errorf("company store 未启用")
 		}
-		var comp *Company
+		var companyID int64
 		var err error
 		if id, e := strconv.ParseInt(value, 10, 64); e == nil {
-			comp, err = s.company.GetCompany(id)
+			err = s.readQueryRow(`SELECT id FROM companies WHERE id=$1`, id).Scan(&companyID)
 		} else {
-			comp, err = s.company.GetCompanyByName(value)
+			err = s.readQueryRow(`SELECT id FROM companies WHERE nkey=$1`, companyNKey(value)).Scan(&companyID)
 		}
-		if err != nil {
+		if err != nil && err != sql.ErrNoRows {
 			return ts, err
 		}
-		if comp == nil {
+		if err == sql.ErrNoRows {
 			return ts, fmt.Errorf("company 不存在: %s（先用 list_companies 确认，或建好企业）", value)
 		}
-		ts.CompanyID = &comp.ID
+		ts.CompanyID = &companyID
 	case "root_domain":
 		d := DomainKey(stripHostPort(value))
 		root, _ := RootDomain(d)
@@ -201,7 +211,7 @@ func (s *AssetStore) AddAgentScope(taskID int64, kind, value, reason, source str
 		if v == "" {
 			return ts, fmt.Errorf("无效 ip/cidr: %s", value)
 		}
-		if _, _, err := net.ParseCIDR(v); err != nil {
+		if _, err := netip.ParsePrefix(v); err != nil {
 			return ts, fmt.Errorf("无效 ip/cidr: %s", value)
 		}
 		ts.Net = v
@@ -223,7 +233,7 @@ func (s *AssetStore) AddAgentScope(taskID int64, kind, value, reason, source str
 // DeleteTaskScope removes a single scope row by id, scoped to the given task.
 // Returns whether a row was actually deleted.
 func (s *AssetStore) DeleteTaskScope(taskID, scopeID int64) (bool, error) {
-	res, err := s.db.Exec(`DELETE FROM task_scope WHERE id=$1 AND task_id=$2`, scopeID, taskID)
+	res, err := s.exec(`DELETE FROM task_scope WHERE id=$1 AND task_id=$2`, scopeID, taskID)
 	if err != nil {
 		return false, err
 	}
@@ -233,12 +243,17 @@ func (s *AssetStore) DeleteTaskScope(taskID, scopeID int64) (bool, error) {
 
 // ListTaskScope returns all scope rows for a task.
 func (s *AssetStore) ListTaskScope(taskID int64) ([]TaskScope, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.readQuery(s.db.SQL(`
 SELECT ts.id, ts.kind, COALESCE(ts.company_id,0), COALESCE(c.name,''), COALESCE(ts.domain,''),
        COALESCE(ts.net::text,''), COALESCE(ts.value,''), ts.source, COALESCE(ts.reason,'')
 FROM task_scope ts
 LEFT JOIN companies c ON c.id=ts.company_id
-WHERE ts.task_id=$1 ORDER BY ts.id`, taskID)
+WHERE ts.task_id=$1 ORDER BY ts.id`, `
+SELECT ts.id, ts.kind, COALESCE(ts.company_id,0), COALESCE(c.name,''), COALESCE(ts.domain,''),
+       COALESCE(ts.net,''), COALESCE(ts.value,''), ts.source, COALESCE(ts.reason,'')
+FROM task_scope ts
+LEFT JOIN companies c ON c.id=ts.company_id
+WHERE ts.task_id=$1 ORDER BY ts.id`), taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +308,7 @@ func (s *AssetStore) CoverageEnabled(taskID int64) bool {
 		return true
 	}
 	var enabled bool
-	if err := s.db.QueryRow(`SELECT COALESCE(coverage_enabled,true) FROM tasks WHERE id=$1`, taskID).Scan(&enabled); err != nil {
+	if err := s.readQueryRow(`SELECT COALESCE(coverage_enabled,true) FROM tasks WHERE id=$1`, taskID).Scan(&enabled); err != nil {
 		return true
 	}
 	return enabled
@@ -323,12 +338,37 @@ tested AS (
   WHERE en.exploration_id = $2 AND en.kind = 'fact'
 )`
 
+const sqliteCovTargetCTE = `
+target AS (
+  SELECT DISTINCT a.id, a.type,
+         COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, '') AS label
+  FROM assets a
+  JOIN task_scope ts ON ts.task_id = $1 AND (
+       (ts.kind='company'     AND a.company_id = ts.company_id)
+    OR (ts.kind='root_domain' AND a.root_domain = ts.domain)
+    OR (ts.kind='subdomain'   AND a.domain = ts.domain)
+    OR (ts.kind IN ('ip','cidr') AND portable_net_contains(ts.net,a.ip))
+    OR (ts.kind='icp' AND (
+         portable_normalize_icp(a.icp) = ts.value
+         OR portable_normalize_icp(a.app_icp) = ts.value
+       ))
+  )
+),
+tested AS (
+  SELECT DISTINCT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes en ON en.id = ea.node_id
+  WHERE en.exploration_id = $2 AND en.kind = 'fact'
+)`
+
+func (s *AssetStore) covTargetSQL() string { return s.db.SQL(covTargetCTE, sqliteCovTargetCTE) }
+
 // TaskCoverage computes rough per-type coverage for a task. taskID indexes
 // task_scope + assets; expID indexes the fact anchors. Reference figure only.
 func (s *AssetStore) TaskCoverage(taskID, expID int64) (*Coverage, error) {
 	cov := &Coverage{ByType: []CoverageByType{}}
-	_ = s.db.QueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1`, taskID).Scan(&cov.ScopeRows)
-	rows, err := s.db.Query(`WITH `+covTargetCTE+`
+	_ = s.readQueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1`, taskID).Scan(&cov.ScopeRows)
+	rows, err := s.readQuery(`WITH `+s.covTargetSQL()+`
 SELECT t.type, count(*) AS total,
        count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM tested)) AS tested
 FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
@@ -425,7 +465,7 @@ func (s *AssetStore) BuildCoverageGraph(taskID, _ int64) (*CoverageGraphData, er
 	if taskID <= 0 {
 		return g, nil
 	}
-	rows, err := s.db.Query(`WITH `+contextCoverageCTE+`
+	rows, err := s.readQuery(`WITH `+s.contextCoverageSQL()+`
 SELECT a.id, a.type, COALESCE(a.company_id,0),
        COALESCE(a.domain,''), COALESCE(a.root_domain,''), COALESCE(a.ip,''),
        COALESCE(a.url,''), COALESCE(a.port,0), COALESCE(a.service_type,''),
@@ -510,7 +550,7 @@ ORDER BY a.id`, taskID)
 	}
 	for root := range missingRoots {
 		var id, companyID int64
-		err := s.db.QueryRow(`SELECT id, COALESCE(company_id,0) FROM assets
+		err := s.readQueryRow(`SELECT id, COALESCE(company_id,0) FROM assets
 WHERE type='root_domain' AND domain=$1 LIMIT 1`, root).Scan(&id, &companyID)
 		var node CoverageGraphNode
 		if err == nil && id > 0 {
@@ -533,7 +573,7 @@ WHERE type='root_domain' AND domain=$1 LIMIT 1`, root).Scan(&id, &companyID)
 			continue
 		}
 		var name string
-		if err := s.db.QueryRow(`SELECT name FROM companies WHERE id=$1`, id).Scan(&name); err != nil {
+		if err := s.readQueryRow(`SELECT name FROM companies WHERE id=$1`, id).Scan(&name); err != nil {
 			continue
 		}
 		add(CoverageGraphNode{Key: key, Kind: "company", CompanyID: id,
@@ -619,12 +659,12 @@ func (s *AssetStore) ListUntestedAssets(taskID, expID int64, typ string, limit, 
 		args = append(args, typ)
 	}
 	var total int
-	_ = s.db.QueryRow(`WITH `+covTargetCTE+`
+	_ = s.readQueryRow(`WITH `+s.covTargetSQL()+`
 SELECT count(*) FROM target t WHERE t.id NOT IN (SELECT asset_id FROM tested)`+typeFilter, args...).Scan(&total)
 	pageArgs := append(append([]any{}, args...), limit, offset)
 	limPos := strconv.Itoa(len(args) + 1)
 	offPos := strconv.Itoa(len(args) + 2)
-	rows, err := s.db.Query(`WITH `+covTargetCTE+`
+	rows, err := s.readQuery(`WITH `+s.covTargetSQL()+`
 SELECT t.id, t.type, t.label FROM target t
 WHERE t.id NOT IN (SELECT asset_id FROM tested)`+typeFilter+`
 ORDER BY t.id LIMIT $`+limPos+` OFFSET $`+offPos, pageArgs...)

@@ -87,7 +87,7 @@ func TestTaskDeleteCascadeAssets(t *testing.T) {
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
+	defer closeTaskBindingsDB(t, d)
 
 	first, err := d.CreateTask("级联删除测试", "目标A", nil, 0, 0)
 	if err != nil {
@@ -169,7 +169,8 @@ func TestTaskDeleteCascadeAssets(t *testing.T) {
 		t.Fatalf("shared host was not protected from traffic cleanup: %v", deletableHosts)
 	}
 
-	findingID, err := d.AddFinding(first.ID, 0, "__task_delete_cascade__", "", SeverityHigh, "summary", "evidence", "tester", []int64{exclusiveID})
+	var findingID int64
+	err = d.QueryRow(d.SQL(`INSERT INTO findings(task_id,vulnclass,name,severity,summary,evidence,worker,asset_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,jsonb_build_array($8::bigint)) RETURNING id`, `INSERT INTO findings(task_id,vulnclass,name,severity,summary,evidence,worker,asset_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,json_array($8)) RETURNING id`), first.ID, "__task_delete_cascade__", "", SeverityHigh, "summary", "evidence", "tester", exclusiveID).Scan(&findingID)
 	if err != nil {
 		t.Fatal(err)
 	}

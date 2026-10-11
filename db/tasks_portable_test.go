@@ -52,7 +52,7 @@ func taskContractDB(t *testing.T) *DB {
 }
 
 func openTaskTestDB(t *testing.T) (*DB, error) {
-	if strings.HasPrefix(t.Name(), "TestPortableTaskContract/") {
+	if strings.HasPrefix(t.Name(), "TestPortableTaskContract/") || strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/") {
 		return taskContractDB(t), nil
 	}
 	return Open(testDSN(t))
@@ -517,21 +517,15 @@ func testTaskPeerCompanySnapshot(t *testing.T) {
 	if _, err = tx.Exec(`UPDATE assets SET company_id=$2 WHERE id=$1`, asset, b); err != nil {
 		t.Fatal(err)
 	}
-	started := make(chan struct{})
+	pid := prepareTaskPeerObservation(t, peer)
 	done := make(chan error, 1)
 	var created *Task
 	go func() {
-		close(started)
 		var createErr error
 		created, createErr = peer.CreateTaskWithOptions("peer snapshot", "goal", TaskCreateOptions{CompanyIDs: []int64{b, a}})
 		done <- createErr
 	}()
-	<-started
-	select {
-	case err := <-done:
-		t.Fatalf("snapshot crossed mutation barrier: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitTaskPeerObservation(t, d, peer, pid, done)
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -579,21 +573,15 @@ func testTaskPeerStaleRevision(t *testing.T) {
 	if _, err = tx.Exec(`UPDATE tasks SET llm_chain_revision=llm_chain_revision+1 WHERE id=$1`, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	started := make(chan struct{})
+	pid := prepareTaskPeerObservation(t, peer)
 	done := make(chan error, 1)
 	var transition TaskLLMTransition
 	go func() {
-		close(started)
 		var quotaErr error
 		transition, quotaErr = peer.MarkTaskLLMProfileQuotaExhaustedAtRevision(task.ID, profile, snapshot.LLMChainRevision, "late quota")
 		done <- quotaErr
 	}()
-	<-started
-	select {
-	case err := <-done:
-		t.Fatalf("quota crossed task mutation barrier: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitTaskPeerObservation(t, d, peer, pid, done)
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}

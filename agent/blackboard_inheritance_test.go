@@ -27,7 +27,7 @@ func callReadJSON(t *testing.T, tool actool.CoreTool, input string) any {
 
 func TestGraphOverviewExpandsAssociatedCompanyScope(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
+	defer closeTaskCompanyToolDB(t, d)
 
 	companies := d.Companies()
 	companyID, _, err := companies.UpsertCompany(fmt.Sprintf("overview-scope-%d", time.Now().UnixNano()), "")
@@ -82,26 +82,33 @@ func TestGraphOverviewExpandsAssociatedCompanyScope(t *testing.T) {
 	if !ok {
 		t.Fatalf("coverage missing: %#v", overview["coverage"])
 	}
-	scopeRows, ok := coverage["scope"].([]map[string]any)
-	if !ok || len(scopeRows) != 1 {
-		t.Fatalf("task scope missing: %#v", coverage["scope"])
+	listed := callReadJSON(t, tools.listCompanies(), fmt.Sprintf(`{"search":%q}`, companiesName(t, companies, companyID))).(map[string]any)
+	companyRows := listed["companies"].([]any)
+	if len(companyRows) != 1 {
+		t.Fatal("company tool output", listed)
 	}
-	companyScope, ok := scopeRows[0]["company_scope"].([]map[string]any)
-	if !ok || len(companyScope) != len(inputs) {
-		t.Fatalf("company scope not expanded: %#v", scopeRows[0])
+	company := companyRows[0].(map[string]any)
+	scopeValues := company["scope"].([]any)
+	if len(scopeValues) != len(inputs) {
+		t.Fatal("full model-visible company scope missing", company)
 	}
-	kinds := make(map[string]string, len(companyScope))
-	for _, rule := range companyScope {
-		kinds[fmt.Sprint(rule["kind"])] = fmt.Sprint(rule["value"])
+	visible := map[string]bool{}
+	for _, value := range scopeValues {
+		visible[fmt.Sprint(value)] = true
 	}
 	for _, input := range inputs {
-		if kinds[input.Kind] != input.Value {
-			t.Errorf("scope %s=%q want %q", input.Kind, kinds[input.Kind], input.Value)
+		if !visible[strings.TrimSpace(input.Value)] {
+			t.Errorf("scope %s=%q missing from list_companies: %v", input.Kind, input.Value, scopeValues)
 		}
 	}
-	keywords, ok := scopeRows[0]["company_keywords"].([]string)
-	if !ok || len(keywords) != 1 || keywords[0] != keyword {
-		t.Fatalf("company keywords missing: %#v", scopeRows[0]["company_keywords"])
+	// Scope is persisted and available via its real tool, without adding it to
+	// graphOverviewData's current prompt assembly contract.
+	scopes, err := assets.ListTaskScope(task.ID)
+	if err != nil || len(scopes) != 1 || scopes[0].CompanyID == nil || *scopes[0].CompanyID != companyID {
+		t.Fatal(scopes, err)
+	}
+	if _, exists := coverage["scope"]; exists {
+		t.Fatal("unexpected overview scope expansion", coverage)
 	}
 	if hc, _ := coverage["host_count"].(int); hc < 1 {
 		t.Fatalf("company asset host not counted in agent context: %#v", coverage["host_count"])

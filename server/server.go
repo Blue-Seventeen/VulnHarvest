@@ -1680,27 +1680,49 @@ func (s *Server) seed(t *Task, text string) {
 	if !(scheme == "https" && port == 443) && !(scheme == "http" && port == 80) {
 		u += ":" + strconv.Itoa(port)
 	}
-	var rootID int64
-	if as := s.m.Assets(); as != nil {
-		taskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	as := s.m.Assets()
+	if as == nil {
+		log.Printf("[seed] task %s: 登记目标失败: database unavailable", t.ID)
+		return
+	}
+	taskID, err := strconv.ParseInt(t.ID, 10, 64)
+	if err != nil || taskID <= 0 {
+		log.Printf("[seed] task %s: 登记目标失败: invalid task id", t.ID)
+		return
+	}
+	_, err = as.WithTaskAssetMutation(taskID, func(scoped *db.AssetStore) (int64, error) {
+		var rootID int64
+		var err error
 		if net.ParseIP(host) != nil {
-			rootID, _ = as.UpsertIP(db.UpsertIPReq{IP: host, TaskID: taskID})
+			rootID, err = scoped.UpsertIP(db.UpsertIPReq{IP: host, TaskID: taskID})
 		} else if scheme == "https" || scheme == "http" {
-			rootID, _ = as.UpsertHTTPService(db.UpsertHTTPServiceReq{URL: u, TaskID: taskID})
+			rootID, err = scoped.UpsertHTTPService(db.UpsertHTTPServiceReq{URL: u, TaskID: taskID})
 		} else {
-			rootID, _ = as.UpsertRootDomain(db.UpsertRootDomainReq{Domain: host, TaskID: taskID})
+			rootID, err = scoped.UpsertRootDomain(db.UpsertRootDomainReq{Domain: host, TaskID: taskID})
 		}
-		if rootID > 0 {
-			_ = as.SetTaskAssetSource(taskID, rootID, "task", "由任务描述或目标初始化", nil)
+		if err != nil {
+			return 0, err
 		}
+		if err := scoped.SetTaskAssetSource(taskID, rootID, "task", "由任务描述或目标初始化", nil); err != nil {
+			return 0, err
+		}
+		begin, err := scoped.TaskOriginFactID(taskID)
+		if err != nil {
+			return 0, err
+		}
+		if begin <= 0 {
+			return 0, fmt.Errorf("origin fact missing")
+		}
+		if err := scoped.AnchorAsset(begin, rootID); err != nil {
+			return 0, err
+		}
+		return rootID, nil
+	})
+	if err != nil {
+		log.Printf("[seed] task %s: 登记目标失败: %v", t.ID, err)
+		return
 	}
-	// anchor the seeded assets to this task's begin root as lineage/provenance
-	// (the asset graph is global and shared; anchoring no longer gates reads).
-	if rootID > 0 {
-		if begin, _ := t.Store.OriginFactID(); begin > 0 {
-			_ = t.Store.Anchor(begin, rootID)
-		}
-	}
+
 	log.Printf("[seed] task %s: 目标站点 %s", t.ID, u)
 	// 不在这里 Notify:首轮是否触发统一由 engine.Run 的 HasActiveIntent 决定(种子意图任务
 	// 跳过首轮)。seed 早于 Run 执行,若在此 Notify 会 buffered 到通道、被 plannerLoop 启动时

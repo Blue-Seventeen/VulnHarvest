@@ -52,6 +52,41 @@ tested AS (
   JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
 )`
 
+const sqliteContextCoverageCTE = directTaskContextCTE + `,
+target AS (
+  SELECT DISTINCT a.id, a.type,
+         COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, '') AS label
+  FROM assets a
+  JOIN task_scope ts ON (
+       (ts.kind='company'     AND a.company_id = ts.company_id)
+    OR (ts.kind='root_domain' AND a.root_domain = ts.domain)
+    OR (ts.kind='subdomain'   AND a.domain = ts.domain)
+    OR (ts.kind IN ('ip','cidr') AND portable_net_contains(ts.net,a.ip))
+    OR (ts.kind='icp' AND (
+         portable_normalize_icp(a.icp) = ts.value
+         OR portable_normalize_icp(a.app_icp) = ts.value
+       ))
+  )
+  JOIN context_tasks ctx ON ctx.task_id=ts.task_id
+	UNION
+	SELECT a.id, a.type,
+	       COALESCE(a.url, a.domain, a.ip, a.app_name, a.root_domain, '') AS label
+	FROM assets a
+	JOIN exploration_anchors ea ON ea.asset_id=a.id
+	JOIN exploration_nodes en ON en.id=ea.node_id
+	JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
+),
+tested AS (
+  SELECT DISTINCT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes en ON en.id=ea.node_id AND en.kind='fact'
+  JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
+)`
+
+func (s *AssetStore) contextCoverageSQL() string {
+	return s.db.SQL(contextCoverageCTE, sqliteContextCoverageCTE)
+}
+
 // scopeTargetCTE selects every asset that BELONGS to the current task's (and its
 // direct source tasks') declared scope — membership, not literal value: a
 // root_domain scope pulls in every subdomain / service / endpoint whose own
@@ -91,13 +126,19 @@ target AS (
 // ListTaskScopeWithSources returns the current task's scope followed by the
 // scopes of its direct source tasks. TaskScope.TaskID preserves provenance.
 func (s *AssetStore) ListTaskScopeWithSources(taskID int64) ([]TaskScope, error) {
-	rows, err := s.db.Query(`WITH `+directTaskContextCTE+`
+	rows, err := s.readQuery(s.db.SQL(`WITH `+directTaskContextCTE+`
 SELECT ts.id, ts.task_id, ts.kind, COALESCE(ts.company_id,0), COALESCE(c.name,''), COALESCE(ts.domain,''),
        COALESCE(ts.net::text,''), COALESCE(ts.value,''), ts.source, COALESCE(ts.reason,'')
 FROM task_scope ts
 JOIN context_tasks ctx ON ctx.task_id=ts.task_id
 LEFT JOIN companies c ON c.id=ts.company_id
-ORDER BY CASE WHEN ts.task_id=$1 THEN 0 ELSE 1 END, ts.id`, taskID)
+ORDER BY CASE WHEN ts.task_id=$1 THEN 0 ELSE 1 END, ts.id`, `WITH `+directTaskContextCTE+`
+SELECT ts.id, ts.task_id, ts.kind, COALESCE(ts.company_id,0), COALESCE(c.name,''), COALESCE(ts.domain,''),
+       COALESCE(ts.net,''), COALESCE(ts.value,''), ts.source, COALESCE(ts.reason,'')
+FROM task_scope ts
+JOIN context_tasks ctx ON ctx.task_id=ts.task_id
+LEFT JOIN companies c ON c.id=ts.company_id
+ORDER BY CASE WHEN ts.task_id=$1 THEN 0 ELSE 1 END, ts.id`), taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -122,9 +163,9 @@ ORDER BY CASE WHEN ts.task_id=$1 THEN 0 ELSE 1 END, ts.id`, taskID)
 // the denominator, while fact anchors count as tested. No row is copied.
 func (s *AssetStore) TaskCoverageWithSources(taskID int64) (*Coverage, error) {
 	cov := &Coverage{ByType: []CoverageByType{}}
-	_ = s.db.QueryRow(`WITH `+directTaskContextCTE+`
+	_ = s.readQueryRow(`WITH `+directTaskContextCTE+`
 SELECT count(*) FROM task_scope ts JOIN context_tasks ctx ON ctx.task_id=ts.task_id`, taskID).Scan(&cov.ScopeRows)
-	rows, err := s.db.Query(`WITH `+contextCoverageCTE+`
+	rows, err := s.readQuery(`WITH `+s.contextCoverageSQL()+`
 SELECT target.type, count(*) AS total,
        count(*) FILTER (WHERE target.id IN (SELECT asset_id FROM tested)) AS tested
 FROM target GROUP BY target.type ORDER BY target.type`, taskID)
@@ -167,14 +208,14 @@ func (s *AssetStore) ListUntestedAssetsWithSources(taskID int64, typ string, lim
 		args = append(args, typ)
 	}
 	var total int
-	if err := s.db.QueryRow(`WITH `+contextCoverageCTE+`
+	if err := s.readQueryRow(`WITH `+s.contextCoverageSQL()+`
 SELECT count(*) FROM target WHERE target.id NOT IN (SELECT asset_id FROM tested)`+typeFilter, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	pageArgs := append(append([]any{}, args...), limit, offset)
 	limitPosition := strconv.Itoa(len(args) + 1)
 	offsetPosition := strconv.Itoa(len(args) + 2)
-	rows, err := s.db.Query(`WITH `+contextCoverageCTE+`
+	rows, err := s.readQuery(`WITH `+s.contextCoverageSQL()+`
 SELECT target.id, target.type, target.label FROM target
 WHERE target.id NOT IN (SELECT asset_id FROM tested)`+typeFilter+`
 ORDER BY target.id LIMIT $`+limitPosition+` OFFSET $`+offsetPosition, pageArgs...)
@@ -199,7 +240,7 @@ ORDER BY target.id LIMIT $`+limitPosition+` OFFSET $`+offsetPosition, pageArgs..
 // used for destructive task cleanup; HostsByTask intentionally retains that
 // narrower, task-owned behavior.
 func (s *AssetStore) HostsByTaskWithSources(taskID int64) ([]string, error) {
-	rows, err := s.db.Query(`WITH `+directTaskContextCTE+`,
+	rows, err := s.readQuery(s.db.SQL(`WITH `+directTaskContextCTE+`,
 context_assets AS (
   SELECT DISTINCT a.id
   FROM assets a
@@ -225,7 +266,33 @@ context_assets AS (
   JOIN context_tasks ctx ON ctx.task_id=ts.task_id
 )
 SELECT COALESCE(a.domain,''), COALESCE(a.ip,''), COALESCE(a.url,'')
-FROM assets a JOIN context_assets ctx ON ctx.id=a.id`, taskID)
+FROM assets a JOIN context_assets ctx ON ctx.id=a.id`, `WITH `+directTaskContextCTE+`,
+context_assets AS (
+  SELECT DISTINCT a.id
+  FROM assets a
+  WHERE EXISTS (SELECT 1 FROM context_tasks ctx WHERE EXISTS(SELECT 1 FROM json_each(a.task_ids) WHERE value=ctx.task_id))
+  UNION
+  SELECT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes en ON en.id=ea.node_id
+  JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
+  UNION
+  SELECT DISTINCT a.id
+  FROM assets a
+  JOIN task_scope ts ON (
+       (ts.kind='company'     AND a.company_id=ts.company_id)
+    OR (ts.kind='root_domain' AND a.root_domain=ts.domain)
+    OR (ts.kind='subdomain'   AND a.domain=ts.domain)
+    OR (ts.kind IN ('ip','cidr') AND portable_net_contains(ts.net,a.ip))
+    OR (ts.kind='icp' AND (
+         portable_normalize_icp(a.icp) = ts.value
+         OR portable_normalize_icp(a.app_icp) = ts.value
+       ))
+  )
+  JOIN context_tasks ctx ON ctx.task_id=ts.task_id
+)
+SELECT COALESCE(a.domain,''), COALESCE(a.ip,''), COALESCE(a.url,'')
+FROM assets a JOIN context_assets ctx ON ctx.id=a.id`), taskID)
 	if err != nil {
 		return nil, err
 	}

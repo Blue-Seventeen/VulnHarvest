@@ -174,6 +174,13 @@ func (d *DB) CreateTaskWithOptions(description, goal string, opts TaskCreateOpti
 		return nil, err
 	}
 	defer tx.Rollback()
+	// Source relations take FK locks on existing tasks. Take the company lock
+	// first when company scopes will be inserted, matching task deletion.
+	if len(opts.CompanyIDs) > 0 {
+		if err := lockCompanyScopeMutation(tx, d); err != nil {
+			return nil, err
+		}
+	}
 	var expID int64
 	if err := tx.QueryRow(`INSERT INTO explorations(description, goal) VALUES ($1,$2) RETURNING id`, description, goal).Scan(&expID); err != nil {
 		return nil, err
@@ -579,13 +586,13 @@ func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool, dele
 }
 
 // DeleteTaskCascadePrepared coordinates reversible external deletion with the
-// PostgreSQL cascade. When prepare is non-nil, host ownership is resolved and
+// database cascade. When prepare is non-nil, host ownership is resolved and
 // prepare is invoked inside this transaction while asset and anchor writers are
 // excluded. The locks remain held through commit, closing the window where a
 // host could become shared after its traffic had already been staged.
 //
 // prepare must only stage reversible work. Any returned error or later database
-// error rolls PostgreSQL back; the caller remains responsible for rolling back
+// error rolls the database back; the caller remains responsible for rolling back
 // external work that its callback staged successfully.
 func (d *DB) DeleteTaskCascadePrepared(
 	id int64,
@@ -598,6 +605,9 @@ func (d *DB) DeleteTaskCascadePrepared(
 		return result, err
 	}
 	defer tx.Rollback()
+	if err := lockCompanyScopeMutation(tx, d); err != nil {
+		return result, err
+	}
 	var expID int64
 	if err := tx.QueryRow(d.SQL(`SELECT exploration_id FROM tasks WHERE id=$1 FOR UPDATE`, `SELECT exploration_id FROM tasks WHERE id=$1`), id).Scan(&expID); err != nil {
 		if err == sql.ErrNoRows {
@@ -610,7 +620,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 	// tables and with another coordinated deletion. Taking both in one fixed order
 	// prevents phantoms (a distinct asset row for the same host) as well as new
 	// ownership/anchor references until the deletion transaction commits.
-	if deleteAssets || prepare != nil {
+	if (deleteAssets || prepare != nil) && !d.IsSQLite() {
 		if _, err := tx.Exec(`LOCK TABLE assets, exploration_anchors IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return result, err
 		}
@@ -632,7 +642,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 		// An asset is deletable only when no other live task references it through
 		// either mechanism. This covers legacy anchor-only seeds without destroying
 		// evidence anchored by another task.
-		res, err := tx.Exec(`
+		res, err := tx.Exec(d.SQL(`
 WITH candidate_assets AS (
   SELECT id FROM assets WHERE $1 = ANY(task_ids)
   UNION
@@ -656,18 +666,42 @@ deletable AS (
     WHERE ea.asset_id=a.id AND t.id<>$1 AND t.deleted_at IS NULL
   )
 )
-DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
+DELETE FROM assets a USING deletable d WHERE a.id=d.id`, `
+WITH candidate_assets AS (
+  SELECT id FROM assets WHERE EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1)
+  UNION
+  SELECT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes n ON n.id=ea.node_id
+  WHERE n.exploration_id=$2
+),
+deletable AS (
+  SELECT a.id
+  FROM assets a
+  JOIN candidate_assets c ON c.id=a.id
+  WHERE NOT EXISTS (
+    SELECT 1 FROM tasks t
+    WHERE t.id<>$1 AND t.deleted_at IS NULL AND EXISTS(SELECT 1 FROM json_each(a.task_ids) WHERE value=t.id)
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM exploration_anchors ea
+    JOIN exploration_nodes n ON n.id=ea.node_id
+    JOIN tasks t ON t.exploration_id=n.exploration_id
+    WHERE ea.asset_id=a.id AND t.id<>$1 AND t.deleted_at IS NULL
+  )
+)
+DELETE FROM assets WHERE id IN (SELECT id FROM deletable)`), id, expID)
 		if err != nil {
 			return result, err
 		}
 		result.AssetsDeleted, _ = res.RowsAffected()
-
-		res, err = tx.Exec(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, id)
-		if err != nil {
-			return result, err
-		}
-		result.AssetsDetached, _ = res.RowsAffected()
 	}
+	// Retaining global assets still removes the deleted task membership.
+	res, err := tx.Exec(d.SQL(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, `UPDATE assets SET task_ids=(SELECT json_group_array(value) FROM json_each(task_ids) WHERE value<>$1) WHERE EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1)`), id)
+	if err != nil {
+		return result, err
+	}
+	result.AssetsDetached, _ = res.RowsAffected()
 	if deleteFindings {
 		res, err := tx.Exec(`DELETE FROM findings WHERE task_id = $1`, id)
 		if err != nil {

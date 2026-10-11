@@ -12,6 +12,9 @@ import (
 // testDB opens a DB connection, skipping if PG is unavailable.
 func testDB(t *testing.T) *db.DB {
 	t.Helper()
+	if strings.HasPrefix(t.Name(), "TestPortableTaskCompanyTools/") {
+		return taskCompanyToolDB(t)
+	}
 	dsn, _, err := db.DSN()
 	if err != nil {
 		t.Skipf("no database config (%v)", err)

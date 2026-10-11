@@ -12,6 +12,10 @@ import (
 // testSetup opens a DB and returns both stores. Skips if no PG.
 func testSetup(t *testing.T) (*DB, *AssetStore, *CompanyStore) {
 	t.Helper()
+	if strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/") {
+		d := taskContractDB(t)
+		return d, d.Assets(), d.Companies()
+	}
 	if strings.HasPrefix(t.Name(), "TestPortableAssetContract/") {
 		d := assetContractDB(t)
 		return d, d.Assets(), d.Companies()

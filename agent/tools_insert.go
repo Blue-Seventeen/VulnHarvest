@@ -250,119 +250,127 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 				}
 
 				typ := strings.TrimSpace(item.Type)
-				var id int64
-				var err error
-
-				switch typ {
-				case "root_domain":
-					id, err = t.as.UpsertRootDomain(db.UpsertRootDomainReq{
-						Domain: item.Domain,
-						ICP:    item.ICP,
-						TaskID: taskID,
-					})
-
-				case "ip":
-					id, err = t.as.UpsertIP(db.UpsertIPReq{
-						IP:           item.IP,
-						BoundDomains: item.BoundDomains,
-						OpenPorts:    item.OpenPorts,
-						TaskID:       taskID,
-					})
-
-				case "subdomain":
-					id, err = t.as.UpsertSubdomain(db.UpsertSubdomainReq{
-						Domain:      item.Domain,
-						RecordType:  item.RecordType,
-						RecordValue: item.RecordValue,
-						ICP:         item.ICP,
-						TaskID:      taskID,
-					})
-
-				case "app":
-					id, err = t.as.UpsertApp(db.UpsertAppReq{
-						Name:        item.AppName,
-						BundleID:    item.BundleID,
-						Category:    item.Category,
-						Description: item.Description,
-						ICP:         item.AppICP,
-						CompanyID:   item.CompanyID,
-						TaskID:      taskID,
-					})
-
-				case "service":
-					// distinguish HTTP vs other by presence of url
-					if item.URL != "" {
-						// agent may send "ip" or "service_ip" for the enrichment IP; accept both
-						svcIP := item.ServiceIP
-						if svcIP == "" {
-							svcIP = item.IP
-						}
-						id, err = t.as.UpsertHTTPService(db.UpsertHTTPServiceReq{
-							URL:           item.URL,
-							Technologies:  item.Technologies,
-							StatusCode:    item.StatusCode,
-							ContentLength: item.ContentLength,
-							PageTitle:     item.PageTitle,
-							FaviconMMH3:   item.FaviconMMH3,
-							Auth:          item.Auth,
-							IP:            svcIP,
-							TaskID:        taskID,
+				id, err := t.as.WithTaskAssetMutation(taskID, func(scoped *db.AssetStore) (int64, error) {
+					var id int64
+					var err error
+					switch typ {
+					case "root_domain":
+						id, err = scoped.UpsertRootDomain(db.UpsertRootDomainReq{
+							Domain: item.Domain,
+							ICP:    item.ICP,
+							TaskID: taskID,
 						})
-					} else {
-						id, err = t.as.UpsertOtherService(db.UpsertOtherServiceReq{
+
+					case "ip":
+						id, err = scoped.UpsertIP(db.UpsertIPReq{
+							IP:           item.IP,
+							BoundDomains: item.BoundDomains,
+							OpenPorts:    item.OpenPorts,
+							TaskID:       taskID,
+						})
+
+					case "subdomain":
+						id, err = scoped.UpsertSubdomain(db.UpsertSubdomainReq{
 							Domain:      item.Domain,
-							IP:          item.IP,
-							Port:        item.Port,
-							ServiceName: item.ServiceName,
-							Auth:        item.Auth,
+							RecordType:  item.RecordType,
+							RecordValue: item.RecordValue,
+							ICP:         item.ICP,
 							TaskID:      taskID,
 						})
+
+					case "app":
+						id, err = scoped.UpsertApp(db.UpsertAppReq{
+							Name:        item.AppName,
+							BundleID:    item.BundleID,
+							Category:    item.Category,
+							Description: item.Description,
+							ICP:         item.AppICP,
+							CompanyID:   item.CompanyID,
+							TaskID:      taskID,
+						})
+
+					case "service":
+						// distinguish HTTP vs other by presence of url
+						if item.URL != "" {
+							// agent may send "ip" or "service_ip" for the enrichment IP; accept both
+							svcIP := item.ServiceIP
+							if svcIP == "" {
+								svcIP = item.IP
+							}
+							id, err = scoped.UpsertHTTPService(db.UpsertHTTPServiceReq{
+								URL:           item.URL,
+								Technologies:  item.Technologies,
+								StatusCode:    item.StatusCode,
+								ContentLength: item.ContentLength,
+								PageTitle:     item.PageTitle,
+								FaviconMMH3:   item.FaviconMMH3,
+								Auth:          item.Auth,
+								IP:            svcIP,
+								TaskID:        taskID,
+							})
+						} else {
+							id, err = scoped.UpsertOtherService(db.UpsertOtherServiceReq{
+								Domain:      item.Domain,
+								IP:          item.IP,
+								Port:        item.Port,
+								ServiceName: item.ServiceName,
+								Auth:        item.Auth,
+								TaskID:      taskID,
+							})
+						}
+
+					case "endpoint":
+						id, err = scoped.UpsertEndpoint(db.UpsertEndpointReq{
+							URL:    item.URL,
+							Method: item.Method,
+							Params: item.Params,
+							IP:     item.ServiceIP,
+							TaskID: taskID,
+						})
+
+					default:
+						return 0, fmt.Errorf("unknown type: %s", typ)
 					}
 
-				case "endpoint":
-					id, err = t.as.UpsertEndpoint(db.UpsertEndpointReq{
-						URL:    item.URL,
-						Method: item.Method,
-						Params: item.Params,
-						IP:     item.ServiceIP,
-						TaskID: taskID,
-					})
-
-				default:
-					errs = append(errs, errEntry{Index: i, Error: "unknown type: " + typ})
-					continue
-				}
-
+					if err != nil {
+						return 0, err
+					}
+					if taskID > 0 {
+						var sourceNodeID *int64
+						if t.ownerNode > 0 {
+							nodeID := t.ownerNode
+							sourceNodeID = &nodeID
+						}
+						summary := "Agent 通过 insert_assets 登记"
+						if t.ownerNode > 0 {
+							summary = fmt.Sprintf("Worker 意图 #%d 通过 insert_assets 登记", t.ownerNode)
+						}
+						if err := scoped.SetTaskAssetSource(taskID, id, "agent", summary, sourceNodeID); err != nil {
+							return 0, err
+						}
+					}
+					// Only this explicit item declares auto scope; derived assets do not.
+					svcIP := item.ServiceIP
+					if svcIP == "" {
+						svcIP = item.IP
+					}
+					if err := scoped.AddAutoScope(taskID, typ, item.Domain, item.URL, svcIP); err != nil {
+						return 0, err
+					}
+					if t.ts != nil && t.ownerNode > 0 {
+						if err := scoped.AnchorAsset(t.ownerNode, id); err != nil {
+							return 0, err
+						}
+					}
+					return id, nil
+				})
 				if err != nil {
 					errs = append(errs, errEntry{Index: i, Error: err.Error()})
 					continue
 				}
 				results = append(results, result{Index: i, ID: id, Type: typ})
 				t.writes.Assets++
-				t.anchorOwner(id)
-				if taskID > 0 {
-					var sourceNodeID *int64
-					if t.ownerNode > 0 {
-						nodeID := t.ownerNode
-						sourceNodeID = &nodeID
-					}
-					summary := "Agent 通过 insert_assets 登记"
-					if t.ownerNode > 0 {
-						summary = fmt.Sprintf("Worker 意图 #%d 通过 insert_assets 登记", t.ownerNode)
-					}
-					_ = t.as.SetTaskAssetSource(taskID, id, "agent", summary, sourceNodeID)
-				}
-				// 自动入测试范围(source='auto')：只对 worker 顶层显式插入的这一项，按其
-				// 类型加保守范围；side-effect 派生的资产不经此处，故范围不盲目扩大。taskID=0 时无操作。
-				// 与覆盖度开关无关：task_scope 是任务的范围边界(list/查询的过滤基准)，
-				// 覆盖度开关只决定要不要把它当分母去算指标，不决定要不要累积范围本身。
-				{
-					svcIP := item.ServiceIP
-					if svcIP == "" {
-						svcIP = item.IP
-					}
-					_ = t.as.AddAutoScope(taskID, typ, item.Domain, item.URL, svcIP)
-				}
+
 			}
 
 			return jsonResult(map[string]any{

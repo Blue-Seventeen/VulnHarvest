@@ -15,7 +15,7 @@ import (
 )
 
 func openExplorationTestDB(t *testing.T) (*DB, error) {
-	if strings.HasPrefix(t.Name(), "TestPortableExplorationContract/") {
+	if strings.HasPrefix(t.Name(), "TestPortableExplorationContract/") || strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/") {
 		return taskContractDB(t), nil
 	}
 	return Open(testDSN(t))
@@ -24,7 +24,7 @@ func openExplorationTestDB(t *testing.T) (*DB, error) {
 // Contract factories own Close through Cleanup, after all test cleanups. Legacy
 // directly invoked tests retain their original deferred close ordering.
 func closeExplorationTestDB(t *testing.T, d *DB) {
-	if !strings.HasPrefix(t.Name(), "TestPortableExplorationContract/") {
+	if !(strings.HasPrefix(t.Name(), "TestPortableExplorationContract/") || strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/")) {
 		d.Close()
 	}
 }
@@ -199,19 +199,13 @@ func testExplorationPeerControlBarrier(t *testing.T) {
 	if _, err = tx.Exec(`UPDATE exploration_nodes SET state='paused', blocked_reason='preserved' WHERE id=$1`, intent); err != nil {
 		t.Fatal(err)
 	}
-	started := make(chan struct{})
+	pid := prepareTaskPeerObservation(t, peer)
 	done := make(chan error, 1)
 	go func() {
-		close(started)
 		_, err := peer.Exploration(exp).SoftDeleteIntent(intent, "operator reason")
 		done <- err
 	}()
-	<-started
-	select {
-	case err := <-done:
-		t.Fatalf("peer control escaped native transaction: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitTaskPeerObservation(t, d, peer, pid, done)
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +325,8 @@ func testExplorationMetrics(t *testing.T) {
 		t.Fatal(ok, err)
 	}
 	input := 2147483647
-	id, err := s.AppendActivity(Activity{NodeID: &intent, Kind: "result", InputTokens: &input})
+	output, read, write := 11, 17, 23
+	id, err := s.AppendActivity(Activity{NodeID: &intent, Kind: "result", InputTokens: &input, OutputTokens: &output, CacheReadTokens: &read, CacheWriteTokens: &write})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,14 +334,14 @@ func testExplorationMetrics(t *testing.T) {
 	if _, err = d.Exec(`UPDATE activity SET created_at=$1 WHERE id=$2`, at, id); err != nil {
 		t.Fatal(err)
 	}
-	id2, err := s.AppendActivity(Activity{NodeID: &intent, Kind: "result", InputTokens: &input})
+	id2, err := s.AppendActivity(Activity{NodeID: &intent, Kind: "result", InputTokens: &input, OutputTokens: &output, CacheReadTokens: &read, CacheWriteTokens: &write})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.Exec(`UPDATE activity SET created_at=$1 WHERE id=$2`, at, id2); err != nil {
 		t.Fatal(err)
 	}
-	ignored, err := s.AppendActivity(Activity{Kind: "tool_result", InputTokens: &input})
+	ignored, err := s.AppendActivity(Activity{Kind: "tool_result", InputTokens: &input, OutputTokens: &output, CacheReadTokens: &read, CacheWriteTokens: &write})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +360,7 @@ func testExplorationMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := got[task.ExplorationID]
-	if m.Tokens.InputTokens != input*2 || m.LastActivity != at.Unix()+1 || m.Goals != (GoalCounts{1, 1}) || m.RunningIntents != 1 || m.Findings.High != 1 {
+	if m.Tokens.InputTokens != input*2 || m.Tokens.OutputTokens != output*2 || m.Tokens.CacheReadTokens != read*2 || m.Tokens.CacheWriteTokens != write*2 || m.LastActivity != at.Unix()+1 || m.Goals != (GoalCounts{1, 1}) || m.RunningIntents != 1 || m.Findings.High != 1 {
 		t.Fatalf("metrics=%+v", m)
 	}
 	if got[empty.ExplorationID] != (TaskListMetrics{}) {
@@ -384,7 +379,7 @@ func testExplorationMetrics(t *testing.T) {
 		t.Fatal(goals, err)
 	}
 	daily, err := d.TokenDailyAll(2)
-	if err != nil || len(daily) != 1 || daily[0].InputTokens != input*2 || daily[0].Day != at.Format(time.DateOnly) {
+	if err != nil || len(daily) != 1 || daily[0].InputTokens != input*2 || daily[0].OutputTokens != output*2 || daily[0].CacheReadTokens != read*2 || daily[0].Day != at.Format(time.DateOnly) {
 		t.Fatalf("daily=%+v / %v", daily, err)
 	}
 	// A recent UTC midnight instant expressed in a non-UTC timezone retains its UTC bucket.

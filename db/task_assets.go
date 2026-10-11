@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
+	"net/netip"
 	"strings"
 	"unicode/utf8"
 )
@@ -22,6 +22,53 @@ var (
 	ErrTaskAssetTaskNotFound  = errors.New("task not found")
 	ErrTaskAssetAssetNotFound = errors.New("asset not found")
 )
+
+// WithTaskAssetMutation binds one task-aware tool item atomically. Raw Upsert
+// APIs retain their importer contract; this boundary verifies a live task before
+// writing its assets, provenance, scope and anchors. Lock order is company scope,
+// task, then assets/anchors, matching coordinated deletion.
+func (s *AssetStore) WithTaskAssetMutation(taskID int64, fn func(*AssetStore) (int64, error)) (int64, error) {
+	return s.withCompanyScopeMutation(func(scoped *AssetStore) (int64, error) {
+		// An existing caller transaction has not necessarily taken this lock;
+		// the owning withCompanyScopeMutation path already has it.
+		if s.tx != nil {
+			if err := lockCompanyScopeMutation(scoped.tx, scoped.db); err != nil {
+				return 0, err
+			}
+		}
+		if taskID > 0 {
+			var live bool
+			if err := scoped.tx.QueryRow(scoped.db.SQL(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL FOR KEY SHARE)`, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`), taskID).Scan(&live); err != nil {
+				return 0, err
+			}
+			if !live {
+				return 0, ErrTaskAssetTaskNotFound
+			}
+		}
+		return fn(scoped)
+	})
+}
+
+// AnchorAsset keeps owner lineage inside the task-aware asset transaction.
+func (s *AssetStore) AnchorAsset(nodeID, assetID int64) error {
+	if nodeID <= 0 || assetID <= 0 {
+		return nil
+	}
+	_, err := s.exec(`INSERT INTO exploration_anchors(node_id,asset_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, nodeID, assetID)
+	return err
+}
+
+// TaskOriginFactID resolves the task's authoritative begin node with transaction
+// precedence, so task seeding never returns to the independent writer pool.
+func (s *AssetStore) TaskOriginFactID(taskID int64) (int64, error) {
+	var id int64
+	err := s.readQueryRow(`SELECT n.id FROM tasks t JOIN exploration_nodes n ON n.exploration_id=t.exploration_id
+WHERE t.id=$1 AND n.kind='fact' AND n.state='origin' ORDER BY n.id LIMIT 1`, taskID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}
 
 // TaskAssetMutation summarizes one attach request. Attached counts newly added
 // associations; Existing counts requested assets that were already on the task.
@@ -99,7 +146,7 @@ func (s *AssetStore) SetTaskAssetSource(taskID, assetID int64, source, summary s
 	if err != nil {
 		return err
 	}
-	query := `
+	query := s.db.SQL(`
 INSERT INTO task_asset_links(task_id, asset_id, source, source_summary, source_node_id)
 SELECT task.id, asset.id, $3, $4, $5
 FROM tasks task
@@ -108,7 +155,14 @@ WHERE task.id=$1 AND task.deleted_at IS NULL
 ON CONFLICT (task_id, asset_id) DO UPDATE
 SET source=EXCLUDED.source,
     source_summary=EXCLUDED.source_summary,
-    source_node_id=COALESCE(EXCLUDED.source_node_id, task_asset_links.source_node_id)`
+    source_node_id=COALESCE(EXCLUDED.source_node_id, task_asset_links.source_node_id)`, `
+INSERT INTO task_asset_links(task_id, asset_id, source, source_summary, source_node_id)
+SELECT task.id, asset.id, $3, $4, $5 FROM tasks task
+JOIN assets asset ON asset.id=$2 AND EXISTS(SELECT 1 FROM json_each(asset.task_ids) WHERE value=task.id)
+WHERE task.id=$1 AND task.deleted_at IS NULL
+ON CONFLICT (task_id, asset_id) DO UPDATE SET source=excluded.source,
+ source_summary=excluded.source_summary,
+ source_node_id=COALESCE(excluded.source_node_id,task_asset_links.source_node_id)`)
 	var result sql.Result
 	if s.tx != nil {
 		result, err = s.tx.Exec(query, taskID, assetID, source, summary, sourceNodeID)
@@ -154,16 +208,21 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 		return mutation, fmt.Errorf("%w: %v", ErrTaskAssetInvalid, err)
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return mutation, err
+	var err error
+	tx := s.tx
+	ownTx := tx == nil
+	if ownTx {
+		tx, err = s.db.Begin()
+		if err != nil {
+			return mutation, err
+		}
+		defer tx.Rollback() //nolint:errcheck
 	}
-	defer tx.Rollback() //nolint:errcheck
 	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return mutation, err
 	}
 	var taskExists bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`, taskID).Scan(&taskExists); err != nil {
+	if err := tx.QueryRow(s.db.SQL(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL FOR KEY SHARE)`, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`), taskID).Scan(&taskExists); err != nil {
 		return mutation, err
 	}
 	if !taskExists {
@@ -183,7 +242,7 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 			taskScope.Kind = "root_domain"
 			taskScope.Domain = rule.Domain
 			var alreadyLinked bool
-			err := tx.QueryRow(`SELECT id, $2=ANY(task_ids) FROM assets WHERE type='root_domain' AND domain=$1`, rule.Domain, taskID).
+			err := tx.QueryRow(s.db.SQL(`SELECT id, $2=ANY(task_ids) FROM assets WHERE type='root_domain' AND domain=$1`, `SELECT id, EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$2) FROM assets WHERE type='root_domain' AND domain=$1`), rule.Domain, taskID).
 				Scan(&assetID, &alreadyLinked)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return mutation, err
@@ -200,13 +259,13 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 		case "ip":
 			taskScope.Kind = "ip"
 			taskScope.Net = rule.Net
-			ip, _, parseErr := net.ParseCIDR(rule.Net)
+			prefix, parseErr := netip.ParsePrefix(rule.Net)
 			if parseErr != nil {
 				return mutation, fmt.Errorf("%w: 无效 IP: %s", ErrTaskAssetInvalid, rule.Raw)
 			}
-			ipValue := ip.String()
+			ipValue := prefix.Addr().String()
 			var alreadyLinked bool
-			err := tx.QueryRow(`SELECT id, $2=ANY(task_ids) FROM assets WHERE type='ip' AND ip=$1`, ipValue, taskID).
+			err := tx.QueryRow(s.db.SQL(`SELECT id, $2=ANY(task_ids) FROM assets WHERE type='ip' AND ip=$1`, `SELECT id, EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$2) FROM assets WHERE type='ip' AND ip=$1`), ipValue, taskID).
 				Scan(&assetID, &alreadyLinked)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return mutation, err
@@ -245,8 +304,10 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 			mutation.ScopesExisting++
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return mutation, err
+	if ownTx {
+		if err := tx.Commit(); err != nil {
+			return mutation, err
+		}
 	}
 	return mutation, nil
 }
@@ -267,23 +328,37 @@ func (s *AssetStore) AttachAssetsToTask(taskID int64, assetIDs []int64, sourceSu
 		return mutation, fmt.Errorf("%w: source_summary is required", ErrTaskAssetInvalid)
 	}
 	mutation.Requested = len(assetIDs)
-	tx, err := s.db.Begin()
-	if err != nil {
-		return mutation, err
+	tx := s.tx
+	ownTx := tx == nil
+	if ownTx {
+		tx, err = s.db.Begin()
+		if err != nil {
+			return mutation, err
+		}
+		defer tx.Rollback() //nolint:errcheck
 	}
-	defer tx.Rollback() //nolint:errcheck
+	var idsValue any = assetIDs
+	if s.db.IsSQLite() {
+		raw, err := json.Marshal(assetIDs)
+		if err != nil {
+			return mutation, err
+		}
+		idsValue = string(raw)
+	}
 
 	var taskExists bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`, taskID).Scan(&taskExists); err != nil {
+	if err := tx.QueryRow(s.db.SQL(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL FOR KEY SHARE)`, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`), taskID).Scan(&taskExists); err != nil {
 		return mutation, err
 	}
 	if !taskExists {
 		return mutation, ErrTaskAssetTaskNotFound
 	}
 	var found, existing int
-	if err := tx.QueryRow(`
+	if err := tx.QueryRow(s.db.SQL(`
 SELECT count(*), count(*) FILTER (WHERE $1=ANY(task_ids))
-FROM assets WHERE id=ANY($2::bigint[])`, taskID, assetIDs).Scan(&found, &existing); err != nil {
+FROM assets WHERE id=ANY($2::bigint[])`, `
+SELECT count(*), count(*) FILTER (WHERE EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1))
+FROM assets WHERE id IN (SELECT value FROM json_each($2))`), taskID, idsValue).Scan(&found, &existing); err != nil {
 		return mutation, err
 	}
 	if found != len(assetIDs) {
@@ -293,23 +368,33 @@ FROM assets WHERE id=ANY($2::bigint[])`, taskID, assetIDs).Scan(&found, &existin
 	// link rows with the generic source='system'. The INSERT below must stay
 	// after it so the operator-authored 'manual' provenance wins; swapping the
 	// two statements silently degrades every manual attach back to 'system'.
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(s.db.SQL(`
 UPDATE assets
 SET task_ids=CASE WHEN $1=ANY(task_ids) THEN task_ids ELSE array_append(task_ids,$1) END
-WHERE id=ANY($2::bigint[])`, taskID, assetIDs); err != nil {
+WHERE id=ANY($2::bigint[])`, `
+UPDATE assets SET task_ids=CASE WHEN EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1)
+THEN task_ids ELSE json_insert(task_ids,'$[#]',$1) END
+WHERE id IN (SELECT value FROM json_each($2))`), taskID, idsValue); err != nil {
 		return mutation, err
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(s.db.SQL(`
 INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
 SELECT $1, id, 'manual', $3 FROM assets WHERE id=ANY($2::bigint[])
 ON CONFLICT (task_id, asset_id) DO UPDATE
-SET source='manual', source_summary=EXCLUDED.source_summary, source_node_id=NULL`,
-		taskID, assetIDs, sourceSummary); err != nil {
+SET source='manual', source_summary=EXCLUDED.source_summary, source_node_id=NULL`, `
+INSERT INTO task_asset_links(task_id,asset_id,source,source_summary)
+SELECT $1,id,'manual',$3 FROM assets WHERE id IN (SELECT value FROM json_each($2))
+ON CONFLICT(task_id,asset_id) DO UPDATE
+SET source='manual',source_summary=excluded.source_summary,source_node_id=NULL`),
+		taskID, idsValue, sourceSummary); err != nil {
 		return mutation, err
 	}
 	mutation.Existing = existing
 	mutation.Attached = len(assetIDs) - existing
-	return mutation, tx.Commit()
+	if ownTx {
+		return mutation, tx.Commit()
+	}
+	return mutation, nil
 }
 
 // DetachAssetFromTask removes only the task association. The global asset and
@@ -319,10 +404,12 @@ func (s *AssetStore) DetachAssetFromTask(taskID, assetID int64) (bool, error) {
 		return false, fmt.Errorf("%w: task and asset ids must be positive", ErrTaskAssetInvalid)
 	}
 	var detachedID int64
-	err := s.db.QueryRow(`
+	err := s.queryRow(s.db.SQL(`
 UPDATE assets SET task_ids=array_remove(task_ids,$1)
 WHERE id=$2 AND $1=ANY(task_ids)
-RETURNING id`, taskID, assetID).Scan(&detachedID)
+RETURNING id`, `
+UPDATE assets SET task_ids=(SELECT json_group_array(value) FROM json_each(task_ids) WHERE value<>$1)
+WHERE id=$2 AND EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1) RETURNING id`), taskID, assetID).Scan(&detachedID)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -384,7 +471,7 @@ WHERE task_id=$1 AND asset_id IN (SELECT value FROM json_each($2))`), taskID, id
 // task's direct sources. Inherited non-terminal intents remain hidden, matching
 // the existing source-aware session contract.
 func (s *AssetStore) IntentAssets(taskID int64) ([]IntentAsset, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.readQuery(s.db.SQL(`
 WITH context AS (
     SELECT task.id AS task_id, task.exploration_id, false AS inherited
     FROM tasks task
@@ -414,7 +501,37 @@ JOIN exploration_anchors anchor ON anchor.node_id=intent.id
 JOIN assets asset ON asset.id=anchor.asset_id
 LEFT JOIN task_asset_links link ON link.task_id=context.task_id AND link.asset_id=asset.id
 WHERE NOT context.inherited OR intent.state IN ('done','blocked','exhausted','stopped')
-ORDER BY context.inherited, intent.id DESC, asset.id`, taskID)
+ORDER BY context.inherited, intent.id DESC, asset.id`, `
+WITH context AS (
+    SELECT task.id AS task_id, task.exploration_id, false AS inherited
+    FROM tasks task
+    WHERE task.id=$1 AND task.deleted_at IS NULL
+    UNION ALL
+    SELECT source.id, source.exploration_id, true
+    FROM task_relations relation
+    JOIN tasks source ON source.id=relation.source_task_id AND source.deleted_at IS NULL
+    WHERE relation.task_id=$1
+)
+SELECT intent.id, asset.id, asset.type,
+       CASE asset.type
+         WHEN 'root_domain' THEN COALESCE(asset.domain,'')
+         WHEN 'subdomain' THEN COALESCE(asset.domain,'')
+         WHEN 'ip' THEN COALESCE(asset.ip,'')
+         WHEN 'app' THEN COALESCE(asset.app_name,'')
+		 WHEN 'service' THEN COALESCE(NULLIF(asset.url,''), NULLIF(concat_ws(':', COALESCE(NULLIF(asset.domain,''), NULLIF(asset.ip,'')), CAST(asset.port AS TEXT)),''), NULLIF(asset.service_name,''), '#' || CAST(asset.id AS TEXT))
+         WHEN 'endpoint' THEN COALESCE(NULLIF(asset.url,''), '#' || CAST(asset.id AS TEXT))
+         ELSE '#' || CAST(asset.id AS TEXT)
+       END,
+       COALESCE(link.source,'anchor'),
+       COALESCE(NULLIF(link.source_summary,''), '意图在黑板中锚定该资产'),
+       link.source_node_id, context.task_id, context.inherited
+FROM context
+JOIN exploration_nodes intent ON intent.exploration_id=context.exploration_id AND intent.kind='intent'
+JOIN exploration_anchors anchor ON anchor.node_id=intent.id
+JOIN assets asset ON asset.id=anchor.asset_id
+LEFT JOIN task_asset_links link ON link.task_id=context.task_id AND link.asset_id=asset.id
+WHERE NOT context.inherited OR intent.state IN ('done','blocked','exhausted','stopped')
+ORDER BY context.inherited, intent.id DESC, asset.id`), taskID)
 	if err != nil {
 		return nil, err
 	}

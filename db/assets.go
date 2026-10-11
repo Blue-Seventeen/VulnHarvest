@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -137,27 +138,15 @@ func (s *AssetStore) resolveCompanyWithICP(rootDomain, ipStr, icp string) (*int6
 
 // calcCSegment computes the /24 (IPv4) or /48 (IPv6) network for an IP string.
 func calcCSegment(ipStr string) string {
-	if ipStr == "" {
+	addr, err := netip.ParseAddr(ipStr)
+	if err != nil || addr.Zone() != "" {
 		return ""
 	}
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return ""
+	bits := 48
+	if addr.Is4() {
+		bits = 24
 	}
-	if ip.To4() != nil {
-		// IPv4 /24
-		parts := strings.Split(ipStr, ".")
-		if len(parts) == 4 {
-			return parts[0] + "." + parts[1] + "." + parts[2] + ".0/24"
-		}
-		return ""
-	}
-	// IPv6 /48
-	_, ipnet, err := net.ParseCIDR(ipStr + "/48")
-	if err != nil {
-		return ""
-	}
-	return ipnet.String()
+	return netip.PrefixFrom(addr, bits).Masked().String()
 }
 
 // normalizeURL lowercases scheme and host, strips trailing slash from bare roots.
