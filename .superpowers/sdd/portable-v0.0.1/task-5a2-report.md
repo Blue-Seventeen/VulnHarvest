@@ -1,5 +1,7 @@
 # Task5a2 自动检测与实际执行选择报告
 
+最新 Fix1 生产源码为 `9f6af31cb96be73d8a4ed08f80e9abab67347899`，Windows 四路径 probe-owner 行为 gate 与 controller 固定 SHA Linux runtimeenv 全包 `-race` 均已 PASS，详见末尾 Fix1。后续补充仅 Windows Start-failure 测试和本报告，生产源码、SDK副本、manifest/patch保持不变。初轮审阅 I1 已实施修正，最终 verdict 待 scoped re-review。
+
 范围完成到分项实现与 Windows 行为 gate；Task5b 最终 portable 构造/启动/恢复/API/总生命周期，以及 controller 固定 SHA Linux native/race gate 尚需独立执行。本项不声明 Task5 完成。
 
 起点 `84e26dc7b00a1ca12af5de5fbde52bf1c0b063f6`。仅使用本 worktree、独立临时目录/loopback fixture。未读取旧 ARTEX 实例、任何旧配置/secret/Key，未修改模块缓存或代理实现，未触碰 controller implementation/verification.md。源提交 SHA 交接见本报告后续记录。
@@ -68,3 +70,32 @@ Close 顺序交 5b：禁止新调用/Check → 停并 join foreground/background
 - 最终 `git diff --cached --check` PASS；源码 commit 只包含本人 app/runtime/norma source+tests/provenance/doc，不包含 testlogs、生成构建产物、secret、controller verification。新增来源副本 210 files 属 provenance，不能把四万行 copied upstream 当作新写业务逻辑。
 - report 已提供 native runner 重点：`go test -race ./runtimeenv`；norma nested `go test -race ./tool ./mcp -run 'TestExecutionSnapshot|TestRipgrepNever|TestRuntimePTY|TestPrepared|TestStdioClientOverPipes'`；root `go test -race ./server -run 'TestRuntimePythonActual|TestRuntimeMCPAdapter|TestRuntimeMCPDynamic|TestRuntimeServerMCPHelper'`。Linux shell/PTY require bash，Python case要求真实 python/python3。unknown batch/Windows-specific cases在Linux按平台 skip，不能记为全平台无SKIP。
 - 5b 的必要 construction 顺序：保留实际 proxy listeners/CA → 建唯一 ToolManager（runtimeenv.New，无 probe/下载）→ 从 preserved config 读取 executable paths 和 MCP command 字符串 → Check/publish → 再允许 Agent/工具/MCP用户调用。startup/rescan禁止业务MCP discovery；用户手动新增/修改配置后 rescan，再连接或启动。关闭：先禁止新调用→所有 consumers stop+join→ToolManager.Close→后续 state/DB teardown。尚未发布 runtime 的 PG legacy 默认不改变。
+
+## Fix1（I1：probe 自己的派生进程归属）
+
+BASE `37b2d5fceacaa797a2edea7544fd4264419bf561`；修复生产源码 `9f6af31cb96be73d8a4ed08f80e9abab67347899`。初轮 review spec❌/Needs fixes 的唯一 Important I1 真实证明：默认 CommandContext 只杀版本候选父进程，WaitDelay 只限 pipe 等待，Check/Close 返回后派生 heartbeat child 仍写入。本轮只改 `runtimeenv` probe owner，不扩大 startup/Manager/Shutdown、MCP显式能力或SDK scope；controller `implementation/verification.md` 保持未暂存、未编辑。
+
+实现：
+
+- 版本探测仍只使用原 fixed harmless argv、原 timeout/output bounds、filtered PATH 和 sanitized version/failure。改为 `exec.Command`，由独立 owner 管取消；未增加 package业务调用、下载或版本限额修补。
+- Windows 为每次探测建独立 `KILL_ON_JOB_CLOSE` Job Object。候选以 `CREATE_SUSPENDED` 启动，先 assign 私有 Job，再只恢复该 owned PID 的暂停线程；杜绝 resume/派生在 job assignment 之前发生。停止用 `TerminateJobObject`，最多2秒查询 `ActiveProcesses` 至零再释放job；超限/查询失败显式报 cleanup failure，不能假称成功。Job归属不依赖父进程仍存活，所以覆盖父正常退出后遗留child。
+- Unix 为 probe 新建process group；取消/退出时 SIGKILL整个owned group，group在leader退出后仍可寻址。common runner join直接child（cmd.Wait），并 drain/close+join自己唯一bounded output copy goroutine。未知非child进程的OS收尸仍由平台parent/init负责；不声称Go能Wait不属于自己的任意grandchild。实际 fixture 证明return后无继续执行/文件写入。
+- stdout/stderr 改显式os.Pipe与owned copy goroutine，不让 cmd.Wait 自带output复制等待遮挡父正常退出；直接child退出即stop owner，随后join root+output。输出drain有2秒兜底，异常关闭reader也join copier并返回cleanup失败。
+- Windows failure自审：CreateJob/SetLimit/Start失败都close已得job；Start后 Open/Assign/thread snapshot/owned thread/Resume失败都stop+drain Job→Kill+Wait尚未恢复的child。每个job/process/thread/snapshot handle有释放路径；没有修改父Codex/job、用户PATH、modulecache。
+
+TDD真实 RED：
+
+`go test -json ./runtimeenv -run TestProbeOwner -count=1 -timeout=50s` against `37b2d5f` 的生产probe：timeout、overflow、success-parent-exit三case都FAIL **owned probe descendant continued writing after probe and ToolManager.Close**（4.20/2.91/2.93秒，整体17.635秒）。同fixture外部cancel初次一次读取采样误判PASS；立即增强为非空heartbeat+120毫秒多次采样后，`-run TestProbeOwnerCancelled` 确认同一句真实FAIL，7.594秒。测试已清理自己的exact childPID，没有触碰无关进程。原始证据：`task-5a2-fix1-probe-red.jsonl`、`task-5a2-fix1-cancel-red.jsonl`。
+
+GREEN与最终gate：
+
+1. Windows owner修复初次 `go test -json ./runtimeenv -run TestProbeOwner -count=1 -timeout=50s` PASS **6.705秒**（timeout、overflow、success-parent-exit、externalcancel；外部cancel断言Check error=context.Canceled并保留旧generation/path/SDKpublication）。日志 `task-5a2-fix1-probe-green.jsonl`。
+2. fixture随后以临时file+rename原子发布heartbeat，防止强杀恰在truncate/write之间留下空marker；非空读取也有1秒显式失败界限。这是test-only强化，生产代码未改变。最终同命令 PASS **6.940秒**，4 leaves（timeout2.17秒、overflow0.98秒、success1.01秒、externalcancel2.21秒），0fail/0skip。每case都在probe和ToolManager.Close返回之后继续观测，真实断言无heartbeat变化。日志 `task-5a2-fix1-probe-final.jsonl`。
+3. Windows `go test -json ./runtimeenv -count=1 -timeout=120s` 全包 PASS **50.354秒**，14leaf（15个PASS events包括subtest父group）、0fail/0skip。日志 `task-5a2-fix1-runtime-windows.jsonl`。该full gate在最后test-only原子fixture强化前，生产代码与9f6af31相同；强化后focused gate已重新跑，不假称full日志含更新后的fixture。
+4. 追加Windows真实 OS Start-failure测试（生产不再改）：`go test ./runtimeenv -run TestProbeOwnerWindowsStartFailure -count=1 -timeout=20s` PASS **0.768秒**。warm后连续16次missing-executable探测均error/无child/无output，root Windows `GetProcessHandleCount` 无递增泄漏，验证已经创建的Job/pipes释放与copy join。未把Assign/Resume API failure注入当作实测；这些失败分支为上文自审。测试新增仅 `runtimeenv/probe_failure_windows_test.go`，Linux不编入。
+5. `go vet ./runtimeenv` PASS；`git diff --check -- runtimeenv` 与source staged diffcheck PASS。仅平台owner改动，额外 `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c -o <独立输出> ./runtimeenv` PASS。未无理由重跑完整root业务/SDK套件/五平台构建；SDK原字节、副本patch和provenance未改，无需重生成。
+6. Controller独立固定源码 **9f6af31**：Linux `go test -race ./runtimeenv` 全包 PASS **38.502秒**，四条owner heartbeat RUN→PASS且无race；仅Windows npm wrapper platformcase SKIP1。运行session96878 exit0，隔离container已删除。controller证据 `linux-environment-fix1-race.log`、fixed source tar，属于本fix新源码gate；Windows新增startfailure testcase不在该Linux源码包内，但production完全相同。
+
+前次6178c15的controller Linux gate是初轮source历史证据，不冒充Fix1 gate。补充纠正：review最初对norma两个日志是否含-race的陈述已由reviewer/controller核对原命令并纠正，这些旧gate确实使用-race；本fix没有改norma。既有pristine upstream Windows三项tool FAIL仍准确保留，没有修改上游测试或隐藏失败。
+
+交5b的唯一owner/Check/Close接口和先stop+join consumers再Close契约不变；本轮额外保证Check自己启动的probe在任何退出路径都stop/drain/join，不能将这一归属推给5b。没有接最终portable构造/HTTP/全应用关闭或LLM acceptance。最终需要controller基于Fix1 diff进行scoped re-review。
