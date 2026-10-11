@@ -26,6 +26,9 @@ func TestMain(m *testing.M) {
 	if err == nil {
 		var kind string
 		_ = json.Unmarshal(b, &kind)
+		if probeTreeSentinel(exe, kind) {
+			os.Exit(0)
+		}
 		if kind == "timeout" {
 			time.Sleep(time.Minute)
 			os.Exit(0)

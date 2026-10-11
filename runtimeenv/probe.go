@@ -116,13 +116,13 @@ func (w *boundedOutput) Write(p []byte) (int, error) {
 func (m *ToolManager) probe(ctx context.Context, spec tool.LaunchSpec, args []string) (string, string) {
 	probeCtx, cancel := context.WithTimeout(ctx, m.options.ProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(probeCtx, spec.Executable, append(append([]string(nil), spec.PrefixArgs...), args...)...)
+	cmd := exec.Command(spec.Executable, append(append([]string(nil), spec.PrefixArgs...), args...)...)
 	cmd.Env = tool.RuntimeEnv(os.Environ(), nil, m.filteredPATH())
-	cmd.WaitDelay = m.options.ProbeTimeout
 	out := &boundedOutput{limit: m.options.ProbeOutputLimit, cancel: cancel}
-	cmd.Stdout = out
-	cmd.Stderr = out
-	err := cmd.Run()
+	err, cleanupErr := runOwnedProbe(probeCtx, cmd, out)
+	if cleanupErr != nil {
+		return "", "version probe process cleanup failed"
+	}
 	if out.overflow {
 		return "", "version probe output limit exceeded"
 	}
