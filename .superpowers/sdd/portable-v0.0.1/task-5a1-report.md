@@ -1,8 +1,8 @@
 # Task5a1 实施与验证报告
 
-最新 Fix1 源码为 `93f4ddcb87aabe2bfa42480a737a4a2d8f91d919`；本轮 I1/M1/M2 修复、共享 transport 冷并发兼容修正与 Windows gate/provenance 已完成。自有 Linux1.27.2 最小 cold-start race 连续3次通过，controller 正对最新固定提交做完整 native race gate。下方初轮和 Fix1 中间提交的失败证据保留为历史记录，不能以普通 Windows 或最小 Linux gate 声称 I1 已最终验收关闭。
+最新 Fix1 源码为 `93f4ddcb87aabe2bfa42480a737a4a2d8f91d919`；本轮 I1/M1/M2 修复、共享 transport 冷并发兼容修正与 Windows gate/provenance 已完成。Controller 对该固定源码的完整 Linux1.27.2 nested proxy focused+原协议 `-race` PASS 7.993s，root traffic 全包 `-race` PASS 12.558s；I1 的真实 native race 关门条件已满足，最终 scoped review 仍由 controller 完成。下方初轮和 Fix1 中间提交的失败证据保留为历史记录。
 
-**验收状态：native Windows 普通 gate 已通过，controller Linux race gate 未通过；Task5a1 尚不能标记最终验收完成。** 固定源码 `f416cc2` 存在已经证明的 attacker HTTP server 初始化与 h2 ServeConn 竞态，见下方独立验证补充。按 controller 指示暂不修改源码，将该问题并入完整 review 后统一 fix1。
+**首轮历史验收状态：native Windows 普通 gate 已通过，controller Linux race gate 未通过；当时 Task5a1 不能标记最终验收完成。** 固定源码 `f416cc2` 存在已经证明的 attacker HTTP server 初始化与 h2 ServeConn 竞态，见下方独立验证补充。当时按 controller 指示暂不修改源码，将该问题并入完整 review 后统一 fix1；最新结果见本文开头及末尾。
 
 本子项实现代理保留 listener 与完整 stop/join，接入 traffic 索引关闭；不声明 Task5a/Task5 或完整便携启动完成。源码固定提交 `f416cc2b3adaff92668165582a48168964bc88c6`，起点 `faa57b7f92f0ae0750bb515bd5616586ff9d09c3`；之后的报告提交只增加本报告与验收日志，生产文件和测试保持固定源码提交一致。未修改 controller implementation/verification 文件。
 
@@ -150,3 +150,20 @@ Controller 对中间源码 `ffadaa4` 的 native Linux1.27.2 nested gate 没再�
 同一8请求shared transport fixture在owned Linux普通运行连续3次PASS，`-race` 连续3次PASS（1.359s，无WARNING）；最小命令 `go test -race -v ./proxy -run '^TestColdStartConcurrentH2Capture$' -count=3 -timeout=60s`，日志 `task-5a1-fix1-validation/linux-coldstart-singleconn-race.log`。该结果只证明最小回归；controller 对最新源码完整focused+原协议+traffic native race仍是关门条件。容器内gcc/musl仅用于自身测试，没有改宿主MinGW/PATH或cache。
 
 最终 Windows重新运行完全相同focused命令，lifecycle19top/33leaf/37events、原协议14/25/39、traffic44/47/48均0fail/0skip；nested proxy compile/vet及root full compile/vet全exit0。新日志为 `proxy-lifecycle-final.jsonl`、`proxy-upstream-final.jsonl`、`traffic-final.jsonl`、`root-compile-final.txt`、`summary-final.json`（在本轮忽略证据目录，不forceadd）。刷新patch/manifest仍104/98/6/2/0，latest固定Git archive经原zip+verifier以及实际git apply replay验证，106SDK原始byte完全等于native-tested worktree，见 `committed-provenance-final.txt`。Controller可对93f4ddc独立验收，无需测试未固定workingtree；随后报告commit仅文档。
+
+### 最终固定源码93f4ddc：controller完整native race GREEN
+
+Controller session `26265`（nested proxy）、`93089`（root traffic）均finished0，并已清理各自owned测试容器。我读取最终日志再次核对 package PASS，无WARNING DATA RACE/FAIL/SKIP；不是仅采用口头“已通过”结论。测试source来自固定 `93f4ddcb87aabe2bfa42480a737a4a2d8f91d919` 的source.tar，不是ffadaa4或workingtree：
+
+```text
+# nested third_party/go-mitmproxy，Go1.27.2 Linux，gcc/musl owned fixture
+go test -race ./proxy -run 'TestReserved|TestClose|TestClientDisconnect|TestConcurrentServe|TestListenerOwnership|TestAttackerListener|TestShutdownDeadline|TestTransparentCONNECT|TestServeFailure|TestTransferWaits|TestColdStart|TestClosing|TestRunning|TestLifecycleError|TestConnection|TestProxyClose|TestProxyShutdown|TestWebSocket|TestSSE|TestAttackerHTTP2' -count=1
+# root 同固定源码，完整traffic包
+go test -race ./traffic -count=1
+```
+
+最终日志 `.superpowers/sdd/portable-v0.0.1/linux-proxy-fix1-final-race.log`：`ok github.com/lqqyt2423/go-mitmproxy/proxy 7.993s`；`.superpowers/sdd/portable-v0.0.1/linux-traffic-fix1-final-race.log`：`ok github.com/Autumn-27/artex/traffic 12.558s`。Source包为对应 `linux-proxy-fix1-final-source.tar`/`linux-traffic-fix1-final-source.tar`（controller归属，不暂存修改）。原 `linux-proxy-listeners-race.log`（f416cc2 DATA RACE）及 `linux-proxy-fix1-race.log`（ffadaa4冷并发功能FAIL）继续保留，不被最新GREEN覆盖。
+
+Windows证据映射准确指向最终修订，不把前ffadaa4的JSON计数冒充新source：完整根路径 `C:/Users/cy/.codex/worktrees/portable-v0-0-1/Hack3rX_2026_011_ARTEX/.superpowers/sdd/portable-v0.0.1/task-5a1-fix1-validation/` 下 `proxy-lifecycle-final.jsonl`、`proxy-upstream-final.jsonl`、`traffic-final.jsonl`、`root-compile-final.txt`、`summary-final.json`、`committed-provenance-final.txt` 对应93f4ddc最终生产/测试字节；同目录无-final旧文件只作为ffadaa4中间证据。最新验收均无fail/skip，计数与上段最终表一致。原始base和license/doc/source未被规范化，最新verifier/archive再PASS104baseline/6changed/2added；原zip+committedpatch实际apply得到106源文件等于93f4ddc tested SDK。
+
+自有诊断容器 `task5a1-fix1-debug` 已按精确名称删除，保留所有必要trace/最小race日志；宿主SDK/cache源未修改，没有处理宿主已有lock例外。I1功能+racy初始化门槛已实际GREEN，M1真实日志分类与M2来源陈述测试/文档已完成；最终Task5a1验收仍待controller scoped review批准，不声明Task5a/Task5整体完成。本段后报告提交只改本文，生产源保持93f4ddc。
