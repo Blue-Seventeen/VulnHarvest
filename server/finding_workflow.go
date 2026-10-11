@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 
 	"github.com/Autumn-27/artex/agent"
@@ -42,8 +45,8 @@ func (s *Server) seedFindingWorkflowTools() {
 		if row == nil || !row.System {
 			continue
 		}
-		var schema map[string]any
-		if err := json.Unmarshal(row.Schema, &schema); err != nil {
+		schema, err := decodeFindingToolSchema(row.Schema)
+		if err != nil {
 			log.Printf("[evidence] invalid schema for %s: %v", key, err)
 			return
 		}
@@ -76,7 +79,8 @@ func (s *Server) seedFindingWorkflowTools() {
 			}
 		}
 		raw, _ := json.Marshal(schema)
-		result, err := s.m.pg.Exec(`UPDATE tools SET schema=$2::jsonb,updated_at=now() WHERE key=$1 AND system AND schema=$3::jsonb`, key, string(raw), string(row.Schema))
+		result, err := s.m.pg.Exec(s.m.pg.SQL(`UPDATE tools SET schema=$2::jsonb,updated_at=now() WHERE key=$1 AND system AND schema=$3::jsonb`,
+			`UPDATE tools SET schema=$2,updated_at=now() WHERE key=$1 AND system AND schema=$3`), key, string(raw), string(row.Schema))
 		if err != nil {
 			log.Printf("[evidence] upgrade %s: %v", key, err)
 			return
@@ -87,23 +91,66 @@ func (s *Server) seedFindingWorkflowTools() {
 	}
 	// Upgrade only the original default binding. Customized lists and enabled
 	// flags survive; the one-time flag also preserves future user unbinding.
-	readers := `["worker","reporter"]`
+	legacyWorkers := []string{"worker", "planner", "mainagent", "auto", "pentest"}
 	for _, key := range []string{"traffic_search", "traffic_get", "traffic_blob"} {
-		if _, err := s.m.pg.Exec(`UPDATE tools SET agents=$2::jsonb WHERE key=$1 AND system AND (agents='["worker"]'::jsonb OR (agents @> '["worker","planner","mainagent","auto","pentest"]'::jsonb AND jsonb_array_length(agents)=5))`, key, readers); err != nil {
+		if err := s.upgradeFindingToolBinding(key, [][]string{{"worker"}, legacyWorkers}, []string{"worker", "reporter"}); err != nil {
 			return
 		}
 	}
-	if _, err := s.m.pg.Exec(`UPDATE tools SET agents=$1::jsonb WHERE key='get_finding_traffic' AND system AND agents @> '["auto","reporter"]'::jsonb AND jsonb_array_length(agents)=2`, `["auto","reporter","worker","planner","mainagent","pentest"]`); err != nil {
+	if err := s.upgradeFindingToolBinding("get_finding_traffic", [][]string{{"auto", "reporter"}}, []string{"auto", "reporter", "worker", "planner", "mainagent", "pentest"}); err != nil {
 		return
 	}
 	// Replace the previous code default only; preserve customized binding lists.
-	if _, err := s.m.pg.Exec(`UPDATE tools SET agents='["reporter"]'::jsonb WHERE key='bind_finding_traffic' AND system AND agents @> '["worker","planner","mainagent","auto","pentest"]'::jsonb AND jsonb_array_length(agents)=5`); err != nil {
-		return
-	}
-	if err := s.m.pg.AddAgentToToolBinding("reporter", []string{"bind_finding_traffic"}); err != nil {
+	if err := s.upgradeFindingToolBinding("bind_finding_traffic", [][]string{legacyWorkers}, []string{"reporter"}); err != nil {
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
+}
+
+func decodeFindingToolSchema(raw json.RawMessage) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber() // preserve arbitrary user schema constants/constraints
+	var schema map[string]any
+	err := decoder.Decode(&schema)
+	return schema, err
+}
+
+// Compare decoded bindings as sets; JSON serialization/order is not evidence of
+// customization. The update still CASes the exact loaded value to preserve a
+// concurrent user edit, including whitespace/order differences in SQLite TEXT.
+func (s *Server) upgradeFindingToolBinding(key string, legacy [][]string, replacement []string) error {
+	var raw json.RawMessage
+	err := s.m.pg.QueryRow(`SELECT agents FROM tools WHERE key=$1 AND system`, key).Scan(db.JSONScanner{Target: &raw})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var current []string
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return err
+	}
+	slices.Sort(current)
+	match := false
+	for _, old := range legacy {
+		old = slices.Clone(old)
+		slices.Sort(old)
+		if slices.Equal(old, current) {
+			match = true
+			break
+		}
+	}
+	if !match {
+		return nil
+	}
+	updated, err := json.Marshal(replacement)
+	if err != nil {
+		return err
+	}
+	_, err = s.m.pg.Exec(s.m.pg.SQL(`UPDATE tools SET agents=$2::jsonb WHERE key=$1 AND system AND agents=$3::jsonb`,
+		`UPDATE tools SET agents=$2 WHERE key=$1 AND system AND agents=$3`), key, string(updated), string(raw))
+	return err
 }
 
 func objectProperty(parent map[string]any, key string) map[string]any {

@@ -1,17 +1,23 @@
 package db
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
 )
 
 // cleanupTreeFixtures 删除一个用例造出来的资产与发现。必须用 defer 注册(而不是
-// t.Cleanup):t.Cleanup 跑在测试函数返回之后,那时 defer d.Close() 已经把连接关了,
+// t.Cleanup):t.Cleanup 跑在测试函数返回之后,那时 defer closeFindingTestDB(t, d) 已经把连接关了,
 // 清理会静默失败并把脏数据留在共享开发库里。
 func cleanupTreeFixtures(d *DB, taskID int64, rootDomains ...string) {
-	d.Exec(`DELETE FROM assets WHERE root_domain = ANY($1::text[])`, rootDomains) //nolint:errcheck
-	d.DeleteFindingsByTask(taskID)                                                //nolint:errcheck
+	value := any(rootDomains)
+	if d.IsSQLite() {
+		raw, _ := json.Marshal(rootDomains)
+		value = string(raw)
+	}
+	d.Exec(d.SQL(`DELETE FROM assets WHERE root_domain = ANY($1::text[])`, `DELETE FROM assets WHERE root_domain IN (SELECT value FROM json_each($1))`), value) //nolint:errcheck
+	d.DeleteFindingsByTask(taskID)                                                                                                                              //nolint:errcheck
 }
 
 // seedTreeAsset inserts one asset row.
@@ -49,11 +55,11 @@ func nodeByKey(tree *FindingAssetTree, key string) *FindingAssetNode {
 // finding stay out, and a finding whose asset row is gone lands in the
 // unassigned bucket.
 func TestBuildFindingAssetTree(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openFindingTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
+	defer closeFindingTestDB(t, d)
 
 	tk, err := d.CreateTask("资产树测试", "目标", nil, 0, 0)
 	if err != nil {
@@ -155,11 +161,11 @@ func TestBuildFindingAssetTree(t *testing.T) {
 // TestFindingAssetScopeFilter verifies选中一个节点 narrows the findings list to
 // that node's whole subtree, and that the unassigned sentinel works too.
 func TestFindingAssetScopeFilter(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openFindingTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
+	defer closeFindingTestDB(t, d)
 
 	tk, err := d.CreateTask("资产筛选测试", "目标", nil, 0, 0)
 	if err != nil {

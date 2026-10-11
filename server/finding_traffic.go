@@ -64,15 +64,44 @@ func (s *Server) seedFindingTrafficTools() {
 		if len(properties[name]) == 0 {
 			return
 		}
-		_, err = s.m.pg.Exec(`UPDATE tools SET schema=jsonb_set(schema,ARRAY['properties',$2::text],$3::jsonb,true),updated_at=now()
-WHERE key=$1 AND system AND NOT(COALESCE(schema->'properties','{}'::jsonb) ? $2)`, key, name, string(properties[name]))
+		row, err := s.m.pg.GetTool(key)
+		if err != nil {
+			log.Printf("[evidence] load tool %s: %v", key, err)
+			return
+		}
+		if row == nil || !row.System {
+			continue
+		}
+		existingSchema, err := decodeFindingToolSchema(row.Schema)
+		if err != nil || existingSchema == nil {
+			return
+		}
+		props := objectProperty(existingSchema, "properties")
+		if _, exists := props[name]; exists {
+			continue
+		}
+		props[name] = properties[name]
+		updated, err := json.Marshal(existingSchema)
+		if err != nil {
+			return
+		}
+		// SQLite's raw equality is a CAS against exactly the read bytes, not a
+		// semantic JSON comparison. PostgreSQL keeps its native JSONB CAS.
+		res, err := s.m.pg.Exec(s.m.pg.SQL(`UPDATE tools SET schema=$2::jsonb,updated_at=now() WHERE key=$1 AND system AND schema=$3::jsonb`,
+			`UPDATE tools SET schema=$2,updated_at=now() WHERE key=$1 AND system AND schema=$3`), key, string(updated), string(row.Schema))
 		if err != nil {
 			log.Printf("[evidence] upgrade tool %s: %v", key, err)
 			return
 		}
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return
+		}
 	}
 	if reporter, _ := s.m.pg.GetAgentByKey("reporter"); reporter != nil {
-		if err := s.m.pg.AddAgentToToolBinding("reporter", []string{"get_finding_traffic"}); err != nil {
+		if err := s.upgradeFindingToolBinding("get_finding_traffic", [][]string{{"auto"}}, []string{"auto", "reporter"}); err != nil {
+			return
+		}
+		if err := s.upgradeFindingToolBinding("get_finding_traffic", [][]string{{"worker"}}, []string{"worker", "reporter"}); err != nil {
 			return
 		}
 	}

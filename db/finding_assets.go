@@ -138,10 +138,10 @@ func (d *DB) BuildFindingAssetTree(f FindingFilter) (*FindingAssetTree, error) {
 func (d *DB) buildFindingAssetTree(f FindingFilter, maxNodes int) (*FindingAssetTree, error) {
 	f.AssetScope = ""
 	f.assetIDs, f.assetNone, f.assetMiss = nil, false, false
-	where, args := f.where()
+	where, args := f.where(d)
 
 	rows, err := d.Query(`SELECT COALESCE(f.severity,''), f.created_at,
-       COALESCE(f.asset_ids::text,'[]')
+       COALESCE(CAST(f.asset_ids AS TEXT),'[]')
 FROM findings f LEFT JOIN tasks t ON f.task_id = t.id`+where, args...)
 	if err != nil {
 		return nil, err
@@ -255,7 +255,13 @@ func (d *DB) loadFindingAssetRows(ids map[int64]bool) (map[int64]*assetRow, erro
 	for id := range ids {
 		idList = append(idList, id)
 	}
-	rows, err := d.Query(`SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.id = ANY($1::bigint[])`, idList)
+	arg := any(idList)
+	if d.IsSQLite() {
+		raw, _ := json.Marshal(idList)
+		arg = string(raw)
+	}
+	rows, err := d.Query(d.SQL(`SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.id = ANY($1::bigint[])`,
+		`SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.id IN (SELECT value FROM json_each($1))`), arg)
 	if err != nil {
 		return nil, err
 	}
@@ -388,11 +394,16 @@ func isIPLiteral(host string) bool {
 // loadAssetsByHost 按宿主标识批量补齐资产行,返回本轮新增的行数。
 func (d *DB) loadAssetsByHost(want missingHosts, byID map[int64]*assetRow) (int, error) {
 	added := 0
-	load := func(q string, arg []string) error {
+	load := func(q, sq string, arg []string) error {
 		if len(arg) == 0 {
 			return nil
 		}
-		rows, err := d.Query(q, arg)
+		value := any(arg)
+		if d.IsSQLite() {
+			raw, _ := json.Marshal(arg)
+			value = string(raw)
+		}
+		rows, err := d.Query(d.SQL(q, sq), value)
 		if err != nil {
 			return err
 		}
@@ -410,19 +421,19 @@ func (d *DB) loadAssetsByHost(want missingHosts, byID map[int64]*assetRow) (int,
 		return nil
 	}
 	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='service' AND (a.domain = ANY($1::text[]) OR a.ip = ANY($1::text[]))`, want.services); err != nil {
+WHERE a.type='service' AND (a.domain = ANY($1::text[]) OR a.ip = ANY($1::text[]))`, `SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.type='service' AND (a.domain IN (SELECT value FROM json_each($1)) OR a.ip IN (SELECT value FROM json_each($1)))`, want.services); err != nil {
 		return 0, err
 	}
 	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='subdomain' AND a.domain = ANY($1::text[])`, want.domains); err != nil {
+WHERE a.type='subdomain' AND a.domain = ANY($1::text[])`, `SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.type='subdomain' AND a.domain IN (SELECT value FROM json_each($1))`, want.domains); err != nil {
 		return 0, err
 	}
 	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='ip' AND a.ip = ANY($1::text[])`, want.ips); err != nil {
+WHERE a.type='ip' AND a.ip = ANY($1::text[])`, `SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.type='ip' AND a.ip IN (SELECT value FROM json_each($1))`, want.ips); err != nil {
 		return 0, err
 	}
 	if err := load(`SELECT `+findingAssetSelectCols+` FROM assets a
-WHERE a.type='root_domain' AND a.domain = ANY($1::text[])`, want.roots); err != nil {
+WHERE a.type='root_domain' AND a.domain = ANY($1::text[])`, `SELECT `+findingAssetSelectCols+` FROM assets a WHERE a.type='root_domain' AND a.domain IN (SELECT value FROM json_each($1))`, want.roots); err != nil {
 		return 0, err
 	}
 	return added, nil
@@ -533,7 +544,13 @@ func (d *DB) attachCompanyNodes(nodes map[string]*FindingAssetNode, parentOf map
 	for id := range want {
 		ids = append(ids, id)
 	}
-	rows, err := d.Query(`SELECT id, COALESCE(name,'') FROM companies WHERE id = ANY($1::bigint[])`, ids)
+	arg := any(ids)
+	if d.IsSQLite() {
+		raw, _ := json.Marshal(ids)
+		arg = string(raw)
+	}
+	rows, err := d.Query(d.SQL(`SELECT id, COALESCE(name,'') FROM companies WHERE id = ANY($1::bigint[])`,
+		`SELECT id, COALESCE(name,'') FROM companies WHERE id IN (SELECT value FROM json_each($1))`), arg)
 	if err != nil {
 		return err
 	}

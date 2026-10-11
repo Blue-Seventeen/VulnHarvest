@@ -19,26 +19,37 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// isFKViolation reports whether err is a Postgres foreign-key violation (SQLSTATE
-// 23503) — e.g. an activity insert whose exploration_id has no parent row.
+// isFKViolation recognizes both drivers, including SQLite's native RESTRICT.
 func isFKViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+	return db.IsForeignKeyViolation(err)
 }
 
 // dropReason classifies why an activity write was dropped, so the log can be
 // grouped/analysed by cause rather than by raw error text.
 func dropReason(err error) string {
 	var pgErr *pgconn.PgError
+	var code string
 	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23503":
+		code = pgErr.Code
+	}
+	switch {
+	case db.IsForeignKeyViolation(err):
+		if code == "23503" {
 			return "fk_violation(23503,父exploration不存在)"
-		case "23505":
-			return "unique_violation(23505)"
-		default:
-			return "pg_error(" + pgErr.Code + ")"
 		}
+		return "fk_violation(sqlite)"
+	case db.IsUniqueViolation(err):
+		if code != "" {
+			return "unique_violation(" + code + ")"
+		}
+		return "unique_violation(sqlite)"
+	case db.IsCheckViolation(err):
+		return "check_violation"
+	case db.IsBusyError(err):
+		return "busy_error"
+	}
+	if code != "" {
+		return "pg_error(" + code + ")"
 	}
 	return "write_error"
 }

@@ -11,7 +11,7 @@ import (
 
 func retestDB(t *testing.T) (*DB, int64) {
 	t.Helper()
-	d, err := Open(testDSN(t))
+	d, err := openFindingTestDB(t)
 	if err != nil {
 		t.Fatalf("open test database: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 func ArchiveEvidenceSnapshots(snapshot *TaskArchiveSnapshot) ([]TrafficEvidenceSnapshot, error) {
@@ -60,11 +61,24 @@ func restoreFindingTrafficTx(tx *sql.Tx, snapshot *TaskArchiveSnapshot) error {
 		}
 	}
 	if len(rows) > 0 {
-		raw, _ := json.Marshal(rows)
-		if _, err = tx.Exec(`INSERT INTO finding_traffic_bindings SELECT * FROM json_populate_recordset(NULL::finding_traffic_bindings,$1::json)`, string(raw)); err != nil {
-			return err
+		// A fixed column whitelist works in both engines and does not depend on
+		// recordset coercions or SQL assembled from untrusted archive keys.
+		for _, row := range rows {
+			id, idOK := jsonInt64(row["id"])
+			fid, _ := jsonInt64(row["finding_id"])
+			position, positionOK := jsonInt64(row["position"])
+			note, noteOK := row["note"].(string)
+			stamp, stampOK := row["created_at"].(string)
+			created, parseErr := time.Parse(time.RFC3339Nano, stamp)
+			if !idOK || !positionOK || !noteOK || !stampOK || parseErr != nil {
+				return errors.New("invalid archived evidence binding columns")
+			}
+			if _, err = tx.Exec(`INSERT INTO finding_traffic_bindings(id,finding_id,snapshot_id,role,note,position,created_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7)`, id, fid, row["snapshot_id"], row["role"], note, position, created.UTC()); err != nil {
+				return err
+			}
 		}
-		_, err = tx.Exec(`UPDATE traffic_evidence_snapshots s SET unreferenced_at=NULL WHERE EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=s.id)`)
+		_, err = tx.Exec(`UPDATE traffic_evidence_snapshots AS s SET unreferenced_at=NULL WHERE EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=s.id)`)
 	}
 	return err
 }

@@ -22,6 +22,9 @@ import (
 
 func trafficEvidenceServer(t *testing.T) (*Server, *db.RecordedFinding, func(string, string, string) *httptest.ResponseRecorder) {
 	t.Helper()
+	if strings.HasPrefix(t.Name(), "TestPortableFindingServerContract/") {
+		return portableTrafficEvidenceServer(t)
+	}
 	m, err := NewManager(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,13 +21,19 @@ import (
 
 func evidenceFixture(t *testing.T) (*Store, db.RecordFindingInput, string) {
 	t.Helper()
-	dsn := os.Getenv("ARTEX_PG_DSN")
-	if dsn == "" {
-		t.Skip("ARTEX_PG_DSN is required for evidence integration tests")
-	}
-	pg, err := db.Open(dsn)
-	if err != nil {
-		t.Fatal(err)
+	var pg *db.DB
+	var err error
+	if strings.HasPrefix(t.Name(), "TestPortableEvidenceContract/") {
+		pg = portableEvidenceDB(t)
+	} else {
+		dsn := os.Getenv("ARTEX_PG_DSN")
+		if dsn == "" {
+			t.Skip("ARTEX_PG_DSN is required for evidence integration tests")
+		}
+		pg, err = db.Open(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() { pg.Close() })
 	task, err := pg.CreateTask("evidence integration "+t.Name(), "local fixtures", nil, 0, 0)

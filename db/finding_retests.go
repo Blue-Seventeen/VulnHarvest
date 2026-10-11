@@ -82,11 +82,15 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 	defer tx.Rollback()
 	var title string
 	var snapshot []byte
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(f.name,''), NULLIF(f.vulnclass,''), '未分类'),
+	if d.IsSQLite() {
+		title, snapshot, err = sqliteRetestSnapshot(ctx, tx, findingID)
+	} else {
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(f.name,''), NULLIF(f.vulnclass,''), '未分类'),
 	jsonb_build_object('finding', to_jsonb(f),
 	 'assets', COALESCE((SELECT jsonb_agg(to_jsonb(a)) FROM assets a WHERE f.asset_ids @> to_jsonb(ARRAY[a.id])), '[]'::jsonb),
 	 'constraints', COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM task_constraints c JOIN tasks t ON t.exploration_id=c.exploration_id WHERE t.id=f.task_id), '[]'::jsonb))
 	FROM findings f WHERE f.id=$1 FOR UPDATE OF f`, findingID).Scan(&title, &snapshot)
+	}
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -107,7 +111,7 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 		return nil, nil, false, err
 	}
 	r, err = scanRetest(tx.QueryRowContext(ctx, `INSERT INTO finding_retests(finding_id,conversation_id,notes,snapshot) VALUES ($1,$2,$3,$4) RETURNING `+retestCols,
-		findingID, c.ID, strings.TrimSpace(notes), snapshot))
+		findingID, c.ID, strings.TrimSpace(notes), d.jsonValue(snapshot)))
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -153,7 +157,7 @@ func (d *DB) FindingRetestForConversation(ctx context.Context, conversationID in
 	if err != nil || r == nil {
 		return r, err
 	}
-	err = d.QueryRowContext(ctx, `SELECT snapshot FROM finding_retests WHERE id=$1`, r.ID).Scan(&r.Snapshot)
+	err = d.QueryRowContext(ctx, `SELECT snapshot FROM finding_retests WHERE id=$1`, r.ID).Scan(JSONScanner{&r.Snapshot})
 	return r, err
 }
 
@@ -218,7 +222,8 @@ func (d *DB) FinishFindingRetest(id int64, status, reason string) error {
 	defer tx.Rollback()
 	// Lock the finding before the retest, matching creation and cascading deletion.
 	var findingID int64
-	err = tx.QueryRow(`SELECT f.id FROM findings f WHERE f.id=(SELECT finding_id FROM finding_retests WHERE id=$1) FOR UPDATE OF f`, id).Scan(&findingID)
+	err = tx.QueryRow(d.SQL(`SELECT f.id FROM findings f WHERE f.id=(SELECT finding_id FROM finding_retests WHERE id=$1) FOR UPDATE OF f`,
+		`SELECT f.id FROM findings f WHERE f.id=(SELECT finding_id FROM finding_retests WHERE id=$1)`), id).Scan(&findingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // Finding/retest already deleted.
 	}
@@ -246,7 +251,7 @@ func (d *DB) FinishFindingRetest(id int64, status, reason string) error {
 		// 用 context.Background()：本函数整条都是无 ctx 的旧风格（d.Begin()/
 		// tx.QueryRow/tx.Exec），没有可传递的取消信号，硬加一个 ctx 参数会
 		// 牵动 server 侧调用点与多处测试，超出本次改动的范围。
-		if _, _, _, _, err := SetFindingStatusTx(context.Background(), tx, findingID, FindingFixed); err != nil {
+		if _, _, _, _, err := SetFindingStatusTx(context.Background(), tx, findingID, FindingFixed, d); err != nil {
 			return err
 		}
 	}

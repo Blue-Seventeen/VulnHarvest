@@ -104,15 +104,7 @@ func (s *Store) writeBody(r io.Reader, expectedLength int64, expectedHash string
 	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return "", err
-	}
-	d, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return "", err
-	}
-	defer d.Close()
-	return hash, d.Sync()
+	return hash, publishBody(f.Name(), path)
 }
 
 // StageFindingsExport freezes bindings/report versions and makes private body
@@ -121,7 +113,7 @@ func (s *Store) StageFindingsExport(ctx context.Context, findings []*db.DBFindin
 	return s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
 		var snapshots []db.TrafficEvidenceSnapshot
 		for _, f := range findings {
-			list, err := db.FindingTrafficTx(tx, f.ID)
+			list, err := db.FindingTrafficTx(tx, f.ID, s.DB)
 			if err != nil {
 				return err
 			}
@@ -181,14 +173,14 @@ func (s *Store) prepare(ctx context.Context, refs []db.TrafficRef) ([]db.Prepare
 
 func (s *Store) Record(ctx context.Context, in db.RecordFindingInput, refs []db.TrafficRef) (out *db.RecordedFinding, err error) {
 	err = s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
-		if err := db.LockTaskEvidenceTx(tx, in.TaskID); err != nil {
+		if err := db.LockTaskEvidenceTx(tx, in.TaskID, s.DB); err != nil {
 			return err
 		}
 		prepared, err := s.prepare(ctx, refs)
 		if err != nil {
 			return err
 		}
-		out, err = db.RecordFindingTx(ctx, tx, in, prepared)
+		out, err = db.RecordFindingTx(ctx, tx, in, prepared, s.DB)
 		return err
 	})
 	return
@@ -196,7 +188,7 @@ func (s *Store) Record(ctx context.Context, in db.RecordFindingInput, refs []db.
 
 func (s *Store) Bind(ctx context.Context, findingID int64, refs []db.TrafficRef) (out *db.FindingTraffic, err error) {
 	err = s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
-		if err := db.LockFindingEvidenceTx(tx, findingID, nil); err != nil {
+		if err := db.LockFindingEvidenceTx(tx, findingID, nil, s.DB); err != nil {
 			return err
 		}
 		prepared, err := s.prepare(ctx, refs)
@@ -206,7 +198,7 @@ func (s *Store) Bind(ctx context.Context, findingID int64, refs []db.TrafficRef)
 		if err = db.AddFindingTrafficTx(tx, findingID, prepared); err != nil {
 			return err
 		}
-		out, err = db.FindingTrafficTx(tx, findingID)
+		out, err = db.FindingTrafficTx(tx, findingID, s.DB)
 		return err
 	})
 	return
@@ -214,7 +206,7 @@ func (s *Store) Bind(ctx context.Context, findingID int64, refs []db.TrafficRef)
 
 func (s *Store) WithBinding(ctx context.Context, findingID, bindingID int64, fn func(db.FindingTrafficBinding) error) error {
 	return s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
-		list, err := db.FindingTrafficTx(tx, findingID)
+		list, err := db.FindingTrafficTx(tx, findingID, s.DB)
 		if err != nil {
 			return err
 		}
@@ -314,7 +306,15 @@ func (s *Store) InstallSnapshots(ctx context.Context, snapshots []db.TrafficEvid
 // WithInstalledSnapshots pins installed bodies until the metadata restore finishes.
 // The callback must not acquire another evidence advisory lock.
 func (s *Store) WithInstalledSnapshots(ctx context.Context, snapshots []db.TrafficEvidenceSnapshot, source string, restore func() error) error {
-	return s.DB.WithEvidenceTx(ctx, func(*sql.Tx) error {
+	return s.WithInstalledSnapshotsTx(ctx, snapshots, source, func(*sql.Tx) error { return restore() })
+}
+
+// WithInstalledSnapshotsTx pins bodies through metadata commit and exposes the
+// same transaction to archive restore. The callback must use tx for all database
+// writes: SQLite has one immediate writer, and reacquiring it would deadlock.
+// The legacy wrapper is suitable only for callbacks without additional writes.
+func (s *Store) WithInstalledSnapshotsTx(ctx context.Context, snapshots []db.TrafficEvidenceSnapshot, source string, restore func(*sql.Tx) error) error {
+	return s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
 		for _, v := range snapshots {
 			if v.ID != db.TrafficSnapshotID(v) {
 				return errors.New("归档证据快照元数据哈希不匹配")
@@ -340,17 +340,17 @@ func (s *Store) WithInstalledSnapshots(ctx context.Context, snapshots []db.Traff
 				}
 			}
 		}
-		return restore()
+		return restore(tx)
 	})
 }
 
 func (s *Store) Collect(ctx context.Context, now time.Time) error {
 	return s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`UPDATE traffic_evidence_snapshots s SET unreferenced_at=$1
+		if _, err := tx.Exec(`UPDATE traffic_evidence_snapshots AS s SET unreferenced_at=$1
 WHERE unreferenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=s.id)`, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM traffic_evidence_snapshots s WHERE unreferenced_at<$1
+		if _, err := tx.Exec(`DELETE FROM traffic_evidence_snapshots AS s WHERE unreferenced_at<$1
 AND NOT EXISTS(SELECT 1 FROM finding_traffic_bindings b WHERE b.snapshot_id=s.id)`, now.Add(-24*time.Hour)); err != nil {
 			return err
 		}

@@ -206,8 +206,10 @@ func (s *Server) seedFindingRetester() error {
 	}
 	defer tx.Rollback()
 	// Lock this migration, including concurrent server initialization.
-	if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(7337741010)`); err != nil {
-		return err
+	if !s.m.pg.IsSQLite() {
+		if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(7337741010)`); err != nil {
+			return err
+		}
 	}
 	var done string
 	err = tx.QueryRow(`SELECT value FROM settings WHERE key=$1`, flag).Scan(&done)

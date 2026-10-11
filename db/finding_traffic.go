@@ -24,6 +24,15 @@ var (
 // processes sharing the database use it, including readers, exports and GC.
 const findingEvidenceLockKey int64 = 7337741004
 
+// Legacy callers default to PostgreSQL. Portable callers pass the transaction's
+// owner explicitly; no SQL inspection or global transaction registry is needed.
+func evidenceSQL(dialect []*DB, postgres, sqlite string) string {
+	if len(dialect) > 0 {
+		return dialect[0].SQL(postgres, sqlite)
+	}
+	return postgres
+}
+
 func (d *DB) WithEvidenceTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
@@ -141,12 +150,12 @@ func TrafficSnapshotID(snapshot TrafficEvidenceSnapshot) string {
 
 // LockTaskEvidenceTx serializes writes with archive queueing (which locks the
 // same task row). Once queued, its snapshot must not acquire new evidence.
-func LockTaskEvidenceTx(tx *sql.Tx, taskID int64) error {
+func LockTaskEvidenceTx(tx *sql.Tx, taskID int64, dialect ...*DB) error {
 	if taskID == 0 {
 		return nil
 	}
 	var deleted sql.NullTime
-	if err := tx.QueryRow(`SELECT deleted_at FROM tasks WHERE id=$1 FOR UPDATE`, taskID).Scan(&deleted); err != nil {
+	if err := tx.QueryRow(evidenceSQL(dialect, `SELECT deleted_at FROM tasks WHERE id=$1 FOR UPDATE`, `SELECT deleted_at FROM tasks WHERE id=$1`), taskID).Scan(&deleted); err != nil {
 		return err
 	}
 	if deleted.Valid {
@@ -163,7 +172,7 @@ func LockTaskEvidenceTx(tx *sql.Tx, taskID int64) error {
 	return nil
 }
 
-func LockFindingEvidenceTx(tx *sql.Tx, findingID int64, version *int64) error {
+func LockFindingEvidenceTx(tx *sql.Tx, findingID int64, version *int64, dialect ...*DB) error {
 	var taskID sql.NullInt64
 	if err := tx.QueryRow(`SELECT task_id FROM findings WHERE id=$1`, findingID).Scan(&taskID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -171,11 +180,16 @@ func LockFindingEvidenceTx(tx *sql.Tx, findingID int64, version *int64) error {
 		}
 		return err
 	}
-	if err := LockTaskEvidenceTx(tx, taskID.Int64); err != nil {
+	// A concurrent task deletion can commit after the lookup above, before its
+	// row lock is acquired. Its FK actions either delete this finding or retain
+	// it with task_id=NULL. Read/lock the authoritative finding below to decide;
+	// a stale parent lookup alone must not defeat retained/global findings or
+	// the idempotent delete contract. All other parent-query errors still fail.
+	if err := LockTaskEvidenceTx(tx, taskID.Int64, dialect...); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	var current int64
-	if err := tx.QueryRow(`SELECT evidence_version FROM findings WHERE id=$1 FOR UPDATE`, findingID).Scan(&current); err != nil {
+	if err := tx.QueryRow(evidenceSQL(dialect, `SELECT evidence_version FROM findings WHERE id=$1 FOR UPDATE`, `SELECT evidence_version FROM findings WHERE id=$1`), findingID).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrFindingNotFound
 		}
@@ -243,7 +257,7 @@ func bumpEvidenceVersionTx(tx *sql.Tx, findingID int64) error {
 	return err
 }
 
-func FindingTrafficTx(tx *sql.Tx, findingID int64) (*FindingTraffic, error) {
+func FindingTrafficTx(tx *sql.Tx, findingID int64, dialect ...*DB) (*FindingTraffic, error) {
 	out := &FindingTraffic{FindingID: findingID, Bindings: []FindingTrafficBinding{}}
 	if err := tx.QueryRow(`SELECT evidence_version,report_evidence_version FROM findings WHERE id=$1`, findingID).Scan(&out.Version, &out.ReportVersion); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -251,7 +265,8 @@ func FindingTrafficTx(tx *sql.Tx, findingID int64) (*FindingTraffic, error) {
 		}
 		return nil, err
 	}
-	rows, err := tx.Query(`SELECT b.id,b.finding_id,b.snapshot_id,b.role,b.note,b.position,b.created_at,to_jsonb(s)
+	rows, err := tx.Query(`SELECT b.id,b.finding_id,b.snapshot_id,b.role,b.note,b.position,b.created_at,
+s.id,s.source_traffic_id,s.captured_at,s.url,s.method,s.status,s.content_type,s.req_head,s.resp_head,s.req_hash,s.resp_hash,s.req_len,s.resp_len,s.created_at
 FROM finding_traffic_bindings b JOIN traffic_evidence_snapshots s ON s.id=b.snapshot_id WHERE b.finding_id=$1 ORDER BY b.position,b.id`, findingID)
 	if err != nil {
 		return nil, err
@@ -259,20 +274,19 @@ FROM finding_traffic_bindings b JOIN traffic_evidence_snapshots s ON s.id=b.snap
 	defer rows.Close()
 	for rows.Next() {
 		var b FindingTrafficBinding
-		var raw []byte
-		if err := rows.Scan(&b.ID, &b.FindingID, &b.SnapshotID, &b.Role, &b.Note, &b.Position, &b.CreatedAt, &raw); err != nil {
+		s := &b.Snapshot
+		if err := rows.Scan(&b.ID, &b.FindingID, &b.SnapshotID, &b.Role, &b.Note, &b.Position, &b.CreatedAt,
+			&s.ID, &s.SourceTrafficID, &s.CapturedAt, &s.URL, &s.Method, &s.Status, &s.ContentType, &s.ReqHead, &s.RespHead, &s.ReqHash, &s.RespHash, &s.ReqLen, &s.RespLen, &s.CreatedAt); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(raw, &b.Snapshot); err != nil {
-			return nil, err
-		}
+		b.CreatedAt, s.CreatedAt = b.CreatedAt.UTC(), s.CreatedAt.UTC()
 		out.Bindings = append(out.Bindings, b)
 	}
 	return out, rows.Err()
 }
 
 func (d *DB) GetFindingTraffic(ctx context.Context, findingID int64) (out *FindingTraffic, err error) {
-	err = d.WithEvidenceTx(ctx, func(tx *sql.Tx) error { var e error; out, e = FindingTrafficTx(tx, findingID); return e })
+	err = d.WithEvidenceTx(ctx, func(tx *sql.Tx) error { var e error; out, e = FindingTrafficTx(tx, findingID, d); return e })
 	return
 }
 
@@ -281,11 +295,11 @@ func (d *DB) EditFindingTraffic(ctx context.Context, findingID, bindingID, versi
 		return errors.New("无效的流量用途")
 	}
 	return d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
-		if err := LockFindingEvidenceTx(tx, findingID, &version); err != nil {
+		if err := LockFindingEvidenceTx(tx, findingID, &version, d); err != nil {
 			return err
 		}
 		if order != nil {
-			current, err := FindingTrafficTx(tx, findingID)
+			current, err := FindingTrafficTx(tx, findingID, d)
 			if err != nil {
 				return err
 			}
@@ -342,8 +356,8 @@ type RecordedFinding struct {
 
 // ctx 由调用方传入本次事务所用的上下文（而非在内部取 context.Background）：
 // 事务内新加的推送事件写入同样应受调用方的取消与超时约束。
-func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput, prepared []PreparedTrafficEvidence) (*RecordedFinding, error) {
-	if err := LockTaskEvidenceTx(tx, in.TaskID); err != nil {
+func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput, prepared []PreparedTrafficEvidence, dialect ...*DB) (*RecordedFinding, error) {
+	if err := LockTaskEvidenceTx(tx, in.TaskID, dialect...); err != nil {
 		return nil, err
 	}
 	if in.TaskID > 0 {
@@ -406,14 +420,14 @@ VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, in.TaskID, out.NodeI
 		return nil, err
 	}
 	var err error
-	out.Traffic, err = FindingTrafficTx(tx, out.FindingID)
+	out.Traffic, err = FindingTrafficTx(tx, out.FindingID, dialect...)
 	return out, err
 }
 
 // RecordFinding is the atomic legacy/no-recorder path used by tools and tests.
 func (s *ExplorationStore) RecordFinding(ctx context.Context, in RecordFindingInput) (out *RecordedFinding, err error) {
 	in.ExplorationID = s.expID
-	err = s.db.WithEvidenceTx(ctx, func(tx *sql.Tx) error { var e error; out, e = RecordFindingTx(ctx, tx, in, nil); return e })
+	err = s.db.WithEvidenceTx(ctx, func(tx *sql.Tx) error { var e error; out, e = RecordFindingTx(ctx, tx, in, nil, s.db); return e })
 	return
 }
 
@@ -465,10 +479,10 @@ func (d *DB) SetFindingReportVersionByNodeID(ctx context.Context, nodeID int64, 
 			}
 			return err
 		}
-		if err := LockFindingEvidenceTx(tx, id, version); err != nil {
+		if err := LockFindingEvidenceTx(tx, id, version, d); err != nil {
 			return err
 		}
-		res, err := tx.Exec(`UPDATE findings SET report=$2,report_evidence_version=COALESCE($3::bigint,CASE WHEN evidence_version=0 THEN 0 ELSE -1 END) WHERE id=$1`, id, report, version)
+		res, err := tx.Exec(d.SQL(`UPDATE findings SET report=$2,report_evidence_version=COALESCE($3::bigint,CASE WHEN evidence_version=0 THEN 0 ELSE -1 END) WHERE id=$1`, `UPDATE findings SET report=$2,report_evidence_version=COALESCE($3,CASE WHEN evidence_version=0 THEN 0 ELSE -1 END) WHERE id=$1`), id, report, version)
 		if err != nil {
 			return err
 		}
