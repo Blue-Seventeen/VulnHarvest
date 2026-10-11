@@ -1,5 +1,7 @@
 # Task5a1 实施与验证报告
 
+最新 Fix1 源码为 `ffadaa4857eaf48cf6d85fec8aa2d50fce338eda`；本轮 I1/M1/M2 修复与 Windows gate/provenance 已完成，I1 的 Linux native race 复验由 controller 对该固定提交进行。下方原始失败证据与首轮结论保留为历史记录，不能以普通 Windows gate 声称 I1 已验收关闭。
+
 **验收状态：native Windows 普通 gate 已通过，controller Linux race gate 未通过；Task5a1 尚不能标记最终验收完成。** 固定源码 `f416cc2` 存在已经证明的 attacker HTTP server 初始化与 h2 ServeConn 竞态，见下方独立验证补充。按 controller 指示暂不修改源码，将该问题并入完整 review 后统一 fix1。
 
 本子项实现代理保留 listener 与完整 stop/join，接入 traffic 索引关闭；不声明 Task5a/Task5 或完整便携启动完成。源码固定提交 `f416cc2b3adaff92668165582a48168964bc88c6`，起点 `faa57b7f92f0ae0750bb515bd5616586ff9d09c3`；之后的报告提交只增加本报告与验收日志，生产文件和测试保持固定源码提交一致。未修改 controller implementation/verification 文件。
@@ -94,3 +96,43 @@ Root 全包 compile、root 全包 vet、嵌套 proxy compile/vet 均 exit 0；`r
 - Self-review 分来源层/完整 module-relative patch/app integration 三层完成：确认同一 closing gate 禁止 Wait 期间 Add；普通/hijacked、TLS/h2、copy/WS 与 disconnect callbacks 都有实际等待；callback 不在 registry 锁内执行；accepted-before-close 的 sink 在 index.Close 前完成；mutation barrier 与 reaping enrollments 共用 wmu；重复 Close 返回保存结果；listener reject/failure 不遗留 owner；PG 裸端口兼容已用真实 HTTP 验证。没有把 98 个未改 upstream 文件当作新增原创逻辑，也没有扩大到 5a2/5b 的生命周期归属。
 
 本报告与验证日志的后续 commit 不改变 `f416cc2` 的生产/测试字节，controller 对该 fixed source 的 review/race 结论可直接应用。剩余验收是 controller 的独立来源/补丁/application review、统一 fix1 修复已证实的 h2 竞态及 Linux race 复验；5b 组合关闭时须遵循上述 ownership 和 stage 完成边界。
+
+## Fix round1/5：I1、M1、M2
+
+起点 `14ad19f944b761f96bb1629df8ee6229f5d75fdd`，完整阅读 `task-5a1-review.md`，使用 systematic-debugging/TDD，未扩展 CLI/env/norma/旧实例，未修改 controller 的 implementation/verification.md。Fix1 源码提交 `ffadaa4857eaf48cf6d85fec8aa2d50fce338eda`；后续报告提交仅更新本文，不改变该固定源码。
+
+I1 根因与修复：沿独立 Linux race 栈读取 x/net/http2 v0.55.0/v0.58.0 `server_wrap.go` 与 Go HTTP server 初始化路径。x/net BaseConfig 分支读取 `a.server.TLSConfig`/`HTTP2` 创建 one-off server，同时 attacker.start 的 `http.Server.Serve` 初始化相同字段。`a.server` 的配置只有 handler/owned BaseContext/ConnContext，没有自定义 timeout、limit、TLS 或 HTTP2 字段；h2 早已显式传入 owned `Context` 和 `Handler`，因此最小修复是删除共享 `BaseConfig: a.server`，使用 x/net 自身的独立 per-connection 默认配置。没有添加 sleep/轮询猜测、改变 timeout/limit、修改依赖版本或用“通常先启动”掩盖竞态。主 RED 证据为原始固定源码的 Linux race FAIL，两组读写栈与真实 h2 失败仍原样保留；新增 `TestColdStartConcurrentH2Capture` 在冷启动时发 8 个并发真实请求，验证全部取得 `HTTP/2.0` 正文与 8 个 capture。该普通回归证明协议不回退，不能替代 race GREEN。
+
+M1 RED/GREEN：新真实 CONNECT 关闭日志测试在修复前失败，具体输出为 `Proxy.entry.httpsDialLazyAttack` 的 error 级 `use of closed network connection`。SDK 增加集中分类：只有生命周期已经 closing **且**错误是 context cancel/deadline、已关闭 socket/pipe、EOF/reset/broken-pipe 或 WS close 才降 debug；运行中的相同断连仍 error，closing 时真实 TLS certificate/capture persistence 故障也仍 error。替换 entry/TLS/WSS/WS 转发及 attack 的相关日志入口，没有全局关闭 logger，也没有让所有 WS 1006 无条件变成无害。真实关闭 CONNECT/WSS 断言不再产生 error；运行中构造完整畸形 TLS record 和真实 WSS upstream 异常断连，等 error hook 事件后才 Close，证明真实故障不被关闭竞态掩盖；10 个 classification 子测试另检查 closing=false/true 下 cancel、socket、WS1006、TLS/capture 故障的真实 logger level。完整畸形 TLS fixture 先前不完整 record 仅触发等待，已修正测试输入；WSS fixture 改为等待 error hook，而不是读到客户端断连就抢先 Close。
+
+M2 文档：`third_party/PATCHES.md` 改成“两个 scoped SDK module-cache **source files** 未写入/补丁”；显式保留初轮缺失 transitive module 下载超时留下 `samber/lo/@v/v1.53.0.lock` 的例外。没有删除/修改宿主 cache 或声称所有缓存零变化；本轮成功 gates 仅进程范围 `GOPROXY=off`，没有再次下载或 Windows race 宿主排障。
+
+Fix1 Windows 最终 focused gate（2026-10-12，Go1.26.3，0 fail/0 skip）：
+
+| 范围 | top-level | leaf | test pass events |
+|---|---:|---:|---:|
+| SDK lifecycle（含 Fix1 5 个新增 top-level） | 19 | 33 | 37 |
+| SDK 原 HTTP/TLS/h2/WS/SSE 协议 | 14 | 25 | 39 |
+| root traffic 全包 | 44 | 47 | 48 |
+
+准确命令：
+
+```text
+# cwd third_party/go-mitmproxy
+go test -json ./proxy -run 'TestReserved|TestClose|TestClientDisconnect|TestConcurrentServe|TestListenerOwnership|TestAttackerListener|TestShutdownDeadline|TestTransparentCONNECT|TestServeFailure|TestTransferWaits|TestColdStart|TestClosing|TestRunning|TestLifecycleError' -count=1 -timeout=60s
+go test -json ./proxy -run 'TestConnection|TestProxyClose|TestProxyShutdown|TestWebSocket|TestSSE|TestAttackerHTTP2' -count=1 -timeout=120s
+go test ./proxy -run '^$' -count=1 -timeout=60s
+go vet ./proxy
+# cwd root
+go test -json ./traffic -count=1 -timeout=90s
+go test ./... -run '^$' -count=1 -timeout=120s
+go vet ./...
+python third_party/verify_upstream.py --archive <original-v1.9.2.zip>
+git diff --cached --check
+```
+
+上述 compile/vet/diffcheck 均 exit0。原协议 command 仍只在测试进程内覆盖 USERPROFILE 到新 temp 并 finally 恢复，避免触碰原默认 CA；新测试均独立 temp/loopback targets。JSONL、root-compile.txt、summary.json、committed-provenance.txt 放在 `task-5a1-fix1-validation/`，按 controller 授权不强制提交本轮忽略目录证据；原始首轮失败及 controller Linux日志没有覆盖/重写。
+
+Fix1 provenance 仍为 104 upstream、98 unchanged、6 changed、2 added、0 deleted。刷新 module-relative patch/manifest 的 patched/new SHA-256；baseline/license/docs/go.mod/go.sum/version 原字节不动。原 zip 应用刷新后的 git apply patch 得到 106 SDK 文件，全部与 native-tested source byte相等；fixed `ffadaa4` 的 Git archive 再经 verifier/archive 校验，106源文件也全部与 tested worktree相等。没有把 log/tests 修复当成未改 upstream，manifest按原baseline准确累计本项目变更。
+
+Fix1 self-review：确认 h2 路径没有再读取 Serve 会写的 BaseConfig；h2 Handler/context、max concurrent streams、socket/callback/WG gate与既有关闭所有权保留；日志降级同时受 closing 和 typed-cause 两条件约束，真实TLS/WS/capture fault仍可观察；测试logger只在串行case使用，hook事件等待真实error而非sleep竞态；来源陈述与已披露lock例外一致；仅本人 SDK/patch/manifest/PATCHES.md 暂存，controller 未提交文件保持原样。尚须 controller 固定修复 SHA Linux race GREEN 与完整复审通过，才能关闭 I1 和标记 Task5a1 验收完成。
