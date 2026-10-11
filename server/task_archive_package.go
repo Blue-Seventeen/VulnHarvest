@@ -89,7 +89,11 @@ func taskArchivePath(dataDir string, archiveID int64, taskID string) string {
 	return filepath.Join(taskArchiveRoot(dataDir), fmt.Sprintf("task-%s-%d.tar.zst", taskID, archiveID))
 }
 
-func stageTaskArchiveFiles(dataDir string, archiveID int64, taskID string, explorationID int64) (*taskArchiveFileStage, error) {
+func stageTaskArchiveFiles(dataDir string, archiveID int64, taskID string, explorationID int64, conversationIDs ...int64) (*taskArchiveFileStage, error) {
+	return stageTaskArchiveFilesWithSideRequests(dataDir, archiveID, taskID, explorationID, conversationIDs, nil)
+}
+
+func stageTaskArchiveFilesWithSideRequests(dataDir string, archiveID int64, taskID string, explorationID int64, conversationIDs []int64, sideRequestIDs []string) (*taskArchiveFileStage, error) {
 	root := filepath.Join(taskArchiveRoot(dataDir), ".staging", strconv.FormatInt(archiveID, 10))
 	stage := &taskArchiveFileStage{root: root, payload: filepath.Join(root, "payload")}
 	journalPath := filepath.Join(root, "journal.json")
@@ -105,8 +109,7 @@ func stageTaskArchiveFiles(dataDir string, archiveID int64, taskID string, explo
 			return nil, err
 		}
 		if err := stage.applyMoves(); err != nil {
-			_ = stage.rollback()
-			return nil, err
+			return nil, errors.Join(err, stage.rollback())
 		}
 		return stage, nil
 	} else if !os.IsNotExist(err) {
@@ -129,25 +132,58 @@ func stageTaskArchiveFiles(dataDir string, archiveID int64, taskID string, explo
 		return nil, err
 	}
 	prefix := fmt.Sprintf("exp%d-", explorationID)
+	conversations := map[string]bool{}
+	sideTranscripts := map[string]bool{}
+	for _, id := range sideRequestIDs {
+		if !safeChatID.MatchString(id) {
+			return nil, errors.New("invalid archived side request ID")
+		}
+		name := "exp0-btw-" + id
+		sideTranscripts[name], sideTranscripts[name+".jsonl"] = true, true
+	}
+	for _, id := range conversationIDs {
+		if id <= 0 {
+			return nil, errors.New("invalid archive conversation id")
+		}
+		name := "conv-" + strconv.FormatInt(id, 10)
+		conversations[name], conversations[name+".jsonl"] = true, true
+	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasPrefix(name, prefix) || (!entry.IsDir() && !strings.HasSuffix(name, ".jsonl")) {
+		if (!strings.HasPrefix(name, prefix) && !conversations[name] && !sideTranscripts[name]) || (!entry.IsDir() && !strings.HasSuffix(name, ".jsonl")) {
 			continue
 		}
 		targets = append(targets, archiveFileMove{
 			Source: filepath.Join(transcriptDir, name), Relative: filepath.Join("files", "transcripts", name),
 		})
 	}
+	// Chat uploads/tool output and NOA context use independent roots. Only the
+	// task's exploration prefix and exact retest conversation IDs are staged.
+	for _, root := range []string{"sessions", "noa"} {
+		entries, err := os.ReadDir(filepath.Join(dataDir, root))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			conversationName := name
+			if root == "noa" {
+				conversationName = strings.TrimPrefix(name, "chat-")
+			}
+			if !strings.HasPrefix(name, prefix) && !conversations[conversationName] {
+				continue
+			}
+			targets = append(targets, archiveFileMove{Source: filepath.Join(dataDir, root, name), Relative: filepath.Join("files", root, name)})
+		}
+	}
 	// Persist the complete plan before the first rename. Recovery can therefore
 	// roll back any prefix of the moves after an abrupt process termination.
 	stage.journal.Moves = targets
 	if err := writeArchiveJournal(journalPath, stage.journal); err != nil {
-		_ = stage.rollback()
-		return nil, err
+		return nil, errors.Join(err, stage.rollback())
 	}
 	if err := stage.applyMoves(); err != nil {
-		_ = stage.rollback()
-		return nil, err
+		return nil, errors.Join(err, stage.rollback())
 	}
 	return stage, nil
 }
@@ -227,7 +263,7 @@ func (s *taskArchiveFileStage) commit() error {
 	return os.RemoveAll(s.root)
 }
 
-func installTaskArchiveFiles(dataDir, extractedDir, taskID string, archiveID int64) (*taskArchiveRestoreFiles, error) {
+func installTaskArchiveFiles(dataDir, extractedDir, taskID string, archiveID int64, snapshots ...*pgdb.TaskArchiveSnapshot) (*taskArchiveRestoreFiles, error) {
 	stage := &taskArchiveRestoreFiles{extracted: extractedDir}
 	numericTaskID, err := strconv.ParseInt(taskID, 10, 64)
 	if err != nil || numericTaskID <= 0 {
@@ -250,6 +286,40 @@ func installTaskArchiveFiles(dataDir, extractedDir, taskID string, archiveID int
 			Source: filepath.Join(transcripts, entry.Name()), Destination: filepath.Join(dataDir, "transcripts", entry.Name()),
 		})
 	}
+	for _, root := range []string{"sessions", "noa"} {
+		entries, err := os.ReadDir(filepath.Join(extractedDir, "files", root))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if len(snapshots) != 1 || snapshots[0] == nil {
+				return nil, errors.New("session files require archive ownership metadata")
+			}
+			name := entry.Name()
+			checkName := name
+			if root == "noa" {
+				checkName = strings.TrimPrefix(name, "chat-")
+			}
+			owned := strings.HasPrefix(name, fmt.Sprintf("exp%d-", snapshots[0].ExplorationID))
+			var conversations []struct {
+				ID int64 `json:"id"`
+			}
+			if raw := snapshots[0].Tables["conversations"]; len(raw) > 0 {
+				if err := json.Unmarshal(raw, &conversations); err != nil {
+					return nil, err
+				}
+			}
+			for _, conversation := range conversations {
+				if checkName == "conv-"+strconv.FormatInt(conversation.ID, 10) {
+					owned = true
+				}
+			}
+			if !owned {
+				return nil, fmt.Errorf("session file is outside archived task: %s/%s", root, name)
+			}
+			sources = append(sources, restoredArchivePath{Source: filepath.Join(extractedDir, "files", root, entry.Name()), Destination: filepath.Join(dataDir, root, entry.Name())})
+		}
+	}
 	for _, move := range sources {
 		if _, err := os.Lstat(move.Destination); err == nil {
 			return nil, fmt.Errorf("restore destination already exists: %s", move.Destination)
@@ -264,12 +334,10 @@ func installTaskArchiveFiles(dataDir, extractedDir, taskID string, archiveID int
 	}
 	for _, move := range sources {
 		if err := os.MkdirAll(filepath.Dir(move.Destination), 0o755); err != nil {
-			_ = stage.rollback()
-			return nil, err
+			return nil, errors.Join(err, stage.rollback())
 		}
 		if err := os.Rename(move.Source, move.Destination); err != nil {
-			_ = stage.rollback()
-			return nil, err
+			return nil, errors.Join(err, stage.rollback())
 		}
 	}
 	return stage, nil

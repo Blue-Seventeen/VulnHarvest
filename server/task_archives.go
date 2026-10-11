@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,90 @@ import (
 	pgdb "github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/traffic"
 )
+
+// The caller holds archiveConversationMu until its write/run admission completes.
+// Revalidate the row: a handler may have loaded it before a successful compaction.
+func (s *Server) archiveConversationWritable(w http.ResponseWriter, id int64) bool {
+	if s.archiveConversationPins[id] {
+		writeErr(w, 409, "会话正在归档，请稍后重试")
+		return false
+	}
+	conversation, err := s.m.pg.GetConversation(id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return false
+	}
+	if conversation == nil {
+		writeErr(w, 404, "conversation not found")
+		return false
+	}
+	return true
+}
+
+func (s *Server) pinArchiveConversations(taskID int64) ([]int64, func(), error) {
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	ids, err := s.m.pg.TaskArchiveConversationIDs(taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, id := range ids {
+		if s.archiveConversationWrites[id] > 0 {
+			return nil, nil, errors.New("任务关联会话附件仍在写入，请完成后重试归档")
+		}
+	}
+	s.chatMu.Lock()
+	for _, id := range ids {
+		if s.chatBusy[s.convBusyKey(id)] {
+			s.chatMu.Unlock()
+			return nil, nil, errors.New("任务关联复测会话仍在运行，请结束后重试归档")
+		}
+	}
+	s.chatMu.Unlock()
+	if s.side != nil {
+		s.side.mu.Lock()
+		for _, run := range s.side.runs {
+			for _, id := range ids {
+				if run.parent.ConversationID == id {
+					s.side.mu.Unlock()
+					return nil, nil, errors.New("任务关联复测旁路问答仍在运行，请结束后重试归档")
+				}
+			}
+		}
+		s.side.mu.Unlock()
+	}
+	if s.archiveConversationPins == nil {
+		s.archiveConversationPins = map[int64]bool{}
+	}
+	for _, id := range ids {
+		s.archiveConversationPins[id] = true
+	}
+	unpin := func() {
+		s.archiveConversationMu.Lock()
+		defer s.archiveConversationMu.Unlock()
+		for _, id := range ids {
+			delete(s.archiveConversationPins, id)
+		}
+	}
+	return ids, unpin, nil
+}
+
+func (s *Server) flushArchiveConversationContexts(ids []int64) error {
+	if s.side == nil {
+		return nil
+	}
+	s.flushSideSnapshots()
+	s.side.mu.Lock()
+	defer s.side.mu.Unlock()
+	for _, snap := range s.side.pending {
+		for _, id := range ids {
+			if snap.Parent.ConversationID == id {
+				return errors.New("复测会话旁路上下文尚未保存，请重试")
+			}
+		}
+	}
+	return nil
+}
 
 const taskArchivePollInterval = 2 * time.Second
 
@@ -142,7 +227,19 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 		return pgdb.ErrTaskArchiveNotFound
 	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "stage_files", 10)
-	fileStage, err := stageTaskArchiveFiles(s.m.dir, job.ID, taskID, task.ExplorationID)
+	conversationIDs, unpin, err := s.pinArchiveConversations(job.TaskID)
+	if err != nil {
+		return err
+	}
+	defer unpin()
+	if err = s.flushArchiveConversationContexts(conversationIDs); err != nil {
+		return err
+	}
+	sideRequestIDs, err := s.m.pg.TaskArchiveConversationSideRequestIDs(job.TaskID)
+	if err != nil {
+		return err
+	}
+	fileStage, err := stageTaskArchiveFilesWithSideRequests(s.m.dir, job.ID, taskID, task.ExplorationID, conversationIDs, sideRequestIDs)
 	if err != nil {
 		return err
 	}
@@ -247,6 +344,9 @@ func (s *Server) restoreTaskArchive(job *pgdb.TaskArchive) (runErr error) {
 	if restored, err := s.m.pg.IsTaskArchiveRestored(job.ID); err != nil {
 		return err
 	} else if restored {
+		if err := recoverTaskArchiveRestoreStages(s.m.dir, s.m.pg); err != nil {
+			return err
+		}
 		if err := os.Remove(job.ArchivePath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -265,7 +365,12 @@ func (s *Server) restoreTaskArchive(job *pgdb.TaskArchive) (runErr error) {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(extracted) }()
+	// Preserve an unresolved file journal for startup/retry recovery.
+	defer func() {
+		if _, err := os.Stat(filepath.Join(extracted, "restore-journal.json")); os.IsNotExist(err) {
+			runErr = errors.Join(runErr, os.RemoveAll(extracted))
+		}
+	}()
 	if err := extractTaskArchivePackage(job.ArchivePath, job.SHA256, extracted); err != nil {
 		return err
 	}
@@ -284,12 +389,10 @@ func (s *Server) restoreTaskArchive(job *pgdb.TaskArchive) (runErr error) {
 	if err != nil {
 		return err
 	}
-	return s.evidenceStore().WithInstalledSnapshots(s.ctx, evidenceSnapshots, filepath.Join(extracted, "evidence"), func() error {
-		return s.restoreTaskArchivePayload(job, &snapshot, extracted)
-	})
+	return s.restoreTaskArchivePayload(job, &snapshot, extracted, evidenceSnapshots)
 }
 
-func (s *Server) restoreTaskArchivePayload(job *pgdb.TaskArchive, snapshot *pgdb.TaskArchiveSnapshot, extracted string) (runErr error) {
+func (s *Server) restoreTaskArchivePayload(job *pgdb.TaskArchive, snapshot *pgdb.TaskArchiveSnapshot, extracted string, evidenceSnapshots []pgdb.TrafficEvidenceSnapshot) (runErr error) {
 	var err error
 	var llmRecordsFile *os.File
 	relative, hasStreamedLLMRecords := snapshot.StreamedTables["llm_records"]
@@ -316,31 +419,37 @@ func (s *Server) restoreTaskArchivePayload(job *pgdb.TaskArchive, snapshot *pgdb
 		}
 	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "restore_files", 55)
-	files, err := installTaskArchiveFiles(s.m.dir, extracted, strconv.FormatInt(job.TaskID, 10), job.ID)
+	files, err := installTaskArchiveFiles(s.m.dir, extracted, strconv.FormatInt(job.TaskID, 10), job.ID, snapshot)
 	if err != nil {
 		return err
 	}
 	databaseRestored := false
 	defer func() {
 		if !databaseRestored {
-			runErr = errors.Join(runErr, files.rollback())
+			rollbackErr := files.rollback()
+			runErr = errors.Join(runErr, rollbackErr)
+			if rollbackErr == nil {
+				runErr = errors.Join(runErr, os.RemoveAll(extracted))
+			}
 		}
 	}()
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "restore_database", 70)
 	var warnings []string
-	if llmRecordsFile != nil {
-		warnings, err = s.m.pg.RestoreTaskArchiveWithLLMRecords(
-			job.ID, snapshot, job.RemainingTimeoutSeconds, llmRecordsFile,
-		)
-		closeErr := llmRecordsFile.Close()
-		llmRecordsFile = nil
-		err = errors.Join(err, closeErr)
-	} else {
-		warnings, err = s.m.pg.RestoreTaskArchive(job.ID, snapshot, job.RemainingTimeoutSeconds)
-	}
+	err = s.evidenceStore().WithInstalledSnapshotsTx(s.ctx, evidenceSnapshots, filepath.Join(extracted, "evidence"), func(tx *sql.Tx) error {
+		var restoreErr error
+		warnings, restoreErr = s.m.pg.RestoreTaskArchiveTx(tx, job.ID, snapshot, job.RemainingTimeoutSeconds, llmRecordsFile)
+		if llmRecordsFile != nil {
+			restoreErr = errors.Join(restoreErr, llmRecordsFile.Close())
+			llmRecordsFile = nil
+		}
+		return restoreErr
+	})
 	if err != nil {
 		return err
 	}
+	// Evidence GC/body pinning has ended only after SQL commit. Auxiliary DB
+	// writes and task loads must remain outside that sole SQLite writer.
+	databaseRestored = true
 	for _, warning := range warnings {
 		log.Printf("[task-archive] restored task %d with warning: %s", job.TaskID, warning)
 	}
@@ -351,7 +460,6 @@ func (s *Server) restoreTaskArchivePayload(job *pgdb.TaskArchive, snapshot *pgdb
 			log.Printf("[task-archive] persist restore warnings for task %d: %v", job.TaskID, err)
 		}
 	}
-	databaseRestored = true
 	if err := files.commit(); err != nil {
 		return err
 	}

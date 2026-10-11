@@ -128,6 +128,11 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	if !s.archiveConversationWritable(w, c.ID) {
+		return
+	}
 	var req struct {
 		LLMProfileID *int64 `json:"llm_profile_id"` // null clears the override
 	}
@@ -175,6 +180,11 @@ func (s *Server) pgRenameConversation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	if !s.archiveConversationWritable(w, c.ID) {
+		return
+	}
 	var req struct {
 		Title  *string `json:"title"`
 		Pinned *bool   `json:"pinned"`
@@ -213,6 +223,11 @@ func (s *Server) pgRenameConversation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) pgDeleteConversation(w http.ResponseWriter, r *http.Request) {
 	pg, c, ok := s.convByID(w, r)
 	if !ok {
+		return
+	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	if !s.archiveConversationWritable(w, c.ID) {
 		return
 	}
 	s.cancelConversation(c.ID)
@@ -272,6 +287,14 @@ func (s *Server) pgDeleteConversationsBatch(w http.ResponseWriter, r *http.Reque
 	if len(ids) == 0 || len(ids) > maxConversationDeleteBatch {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("ids 数量必须为 1-%d", maxConversationDeleteBatch))
 		return
+	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	for _, id := range ids {
+		if s.archiveConversationPins[id] {
+			writeErr(w, 409, "会话正在归档，请稍后重试")
+			return
+		}
 	}
 	for _, id := range ids {
 		s.cancelConversation(id)
@@ -388,6 +411,11 @@ func (s *Server) pgStopConversation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Request) {
 	pg, c, ok := s.convByID(w, r)
 	if !ok {
+		return
+	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	if !s.archiveConversationWritable(w, c.ID) {
 		return
 	}
 	var req struct {

@@ -254,3 +254,102 @@ func TestTaskArchivePackageRejectsTraversal(t *testing.T) {
 		t.Fatalf("traversal wrote outside destination: %v", err)
 	}
 }
+
+func TestTaskArchiveRetestTranscriptStage(t *testing.T) {
+	dir := t.TempDir()
+	transcripts := filepath.Join(dir, "transcripts")
+	if err := os.MkdirAll(transcripts, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"exp3-main.jsonl", "conv-7.jsonl", "conv-8.jsonl", "exp0-btw-side-7.jsonl", "exp0-btw-side-8.jsonl"} {
+		if err := os.WriteFile(filepath.Join(transcripts, name), []byte("原始 transcript"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, root := range []string{"sessions", "noa"} {
+		name := "conv-7"
+		if root == "noa" {
+			name = "chat-" + name
+		}
+		path := filepath.Join(dir, root, name, "中文 context.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("context"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stage, err := stageTaskArchiveFilesWithSideRequests(dir, 1, "42", 3, []int64{7}, []string{"side-7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stage.journal.Moves) != 5 {
+		t.Fatalf("transcript moves %d", len(stage.journal.Moves))
+	}
+	if _, err = os.Stat(filepath.Join(transcripts, "conv-8.jsonl")); err != nil {
+		t.Fatal("unrelated transcript moved", err)
+	}
+	if err = stage.rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(transcripts, "conv-7.jsonl")); err != nil || string(raw) != "原始 transcript" {
+		t.Fatalf("rollback %q %v", raw, err)
+	}
+	if err = stage.commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskArchiveOwnedContextFilesRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{"tasks/42/中文 空格.txt", "sessions/conv-7/uploads/ctx.txt", "noa/chat-conv-7/archive.txt", "noa/exp73-main/archive.txt", "transcripts/exp0-btw-side-7.jsonl"}
+	for _, relative := range paths {
+		path := filepath.Join(dir, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("原始 context"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stage, err := stageTaskArchiveFilesWithSideRequests(dir, 1, "42", 73, []int64{7}, []string{"side-7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := &pgdb.TaskArchiveSnapshot{TaskID: 42, ExplorationID: 73, FormatVersion: pgdb.TaskArchiveFormatVersion, Tables: map[string]json.RawMessage{"conversations": json.RawMessage(`[{"id":7}]`)}}
+	archive := taskArchivePath(dir, 1, "42")
+	_, _, hash, err := writeTaskArchivePackage(archive, stage.payload, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stage.commit(); err != nil {
+		t.Fatal(err)
+	}
+	extracted := t.TempDir()
+	if err = extractTaskArchivePackage(archive, hash, extracted); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(extracted, "files", "sessions", "conv-8")
+	if err = os.MkdirAll(foreign, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = installTaskArchiveFiles(dir, extracted, "42", 1, snapshot); err == nil {
+		t.Fatal("unowned session file installed")
+	}
+	if err = os.RemoveAll(foreign); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := installTaskArchiveFiles(dir, extracted, "42", 1, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range paths {
+		raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(relative)))
+		if err != nil || string(raw) != "原始 context" {
+			t.Fatalf("context %s %q %v", relative, raw, err)
+		}
+	}
+	if err = installed.commit(); err != nil {
+		t.Fatal(err)
+	}
+}

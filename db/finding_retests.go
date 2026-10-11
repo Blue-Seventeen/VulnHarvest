@@ -80,6 +80,11 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 		return nil, nil, false, err
 	}
 	defer tx.Rollback()
+	// Share task->finding lock order with evidence writes. Archive queueing seals
+	// new retest creation before its consistent snapshot is taken.
+	if err := LockFindingEvidenceTx(tx, findingID, nil, d); err != nil {
+		return nil, nil, false, err
+	}
 	var title string
 	var snapshot []byte
 	if d.IsSQLite() {

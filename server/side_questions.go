@@ -286,6 +286,13 @@ func (s *Server) registerSideRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) handleSideQuestions(w http.ResponseWriter, r *http.Request, p sidequestion.Parent) {
+	if p.ConversationID > 0 && r.Method != "GET" {
+		s.archiveConversationMu.Lock()
+		defer s.archiveConversationMu.Unlock()
+		if !s.archiveConversationWritable(w, p.ConversationID) {
+			return
+		}
+	}
 	key := p.Key()
 	if r.Method == "DELETE" {
 		s.side.commands.Lock()

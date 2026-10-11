@@ -73,6 +73,10 @@ type Server struct {
 	// cleared alongside chatBusy under chatMu. Aborting a run does NOT touch the P3
 	// trigger queue — the drain goroutine simply proceeds to the next queued fire.
 	chatCancel map[string]context.CancelCauseFunc
+	// Archive pin admission order: archiveConversationMu -> chatMu / side.commands / side.mu.
+	archiveConversationMu     sync.Mutex
+	archiveConversationPins   map[int64]bool
+	archiveConversationWrites map[int64]int
 
 	// triggerQ buffers P3 trigger fires PER AGENT. A per-agent "pump" launches runs up
 	// to a concurrency limit derived from the agent's策略: serial → limit 1 (+ optional

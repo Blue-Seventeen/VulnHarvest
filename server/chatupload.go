@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Autumn-27/artex/db"
@@ -62,6 +63,31 @@ func (s *Server) chatUpload(w http.ResponseWriter, r *http.Request) {
 	if !safeChatID.MatchString(id) {
 		writeErr(w, 400, "非法 id")
 		return
+	}
+	if sub == "sessions" && strings.HasPrefix(id, "conv-") {
+		conversationID, err := strconv.ParseInt(strings.TrimPrefix(id, "conv-"), 10, 64)
+		if err != nil || conversationID <= 0 {
+			writeErr(w, 400, "非法会话 id")
+			return
+		}
+		s.archiveConversationMu.Lock()
+		if !s.archiveConversationWritable(w, conversationID) {
+			s.archiveConversationMu.Unlock()
+			return
+		}
+		if s.archiveConversationWrites == nil {
+			s.archiveConversationWrites = map[int64]int{}
+		}
+		s.archiveConversationWrites[conversationID]++
+		s.archiveConversationMu.Unlock()
+		defer func() {
+			s.archiveConversationMu.Lock()
+			defer s.archiveConversationMu.Unlock()
+			s.archiveConversationWrites[conversationID]--
+			if s.archiveConversationWrites[conversationID] == 0 {
+				delete(s.archiveConversationWrites, conversationID)
+			}
+		}()
 	}
 	if taskScoped {
 		if s.m.ResolveTask(id) == nil {

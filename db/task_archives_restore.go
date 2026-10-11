@@ -37,14 +37,17 @@ func (d *DB) CompleteTaskArchive(
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := coordinateWithSchemaMigration(tx); err != nil {
+	if err := d.archiveSchemaLock(tx); err != nil {
+		return err
+	}
+	if err := lockCompanyScopeMutation(tx, d); err != nil {
 		return err
 	}
 	var taskID, expID int64
 	var state string
 	if err := tx.QueryRow(`SELECT archive.task_id,task.exploration_id,archive.state
 FROM task_archives archive JOIN tasks task ON task.id=archive.task_id
-WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID, &state); err != nil {
+WHERE archive.id=$1`+d.archiveLockSuffix(` FOR UPDATE OF archive,task`), archiveID).Scan(&taskID, &expID, &state); err != nil {
 		return err
 	}
 	if state != Archiving || taskID != snapshot.TaskID || expID != snapshot.ExplorationID {
@@ -61,24 +64,32 @@ WHERE relation.source_task_id=$1 LIMIT 1`, taskID).Scan(&dependent)
 		return err
 	}
 	// Prevent task/asset ownership from changing while exclusivity is rechecked.
-	if _, err := tx.Exec(`LOCK TABLE assets, exploration_anchors IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+	if !d.IsSQLite() {
+		if _, err := tx.Exec(`LOCK TABLE assets, exploration_anchors IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM intercept_pending WHERE COALESCE(task_id,'')=$1 OR conversation_id IN (SELECT r.conversation_id FROM finding_retests r JOIN findings f ON f.id=r.finding_id WHERE CAST(f.task_id AS TEXT)=$1)`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM intercept_pending WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(taskID, 10)); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(taskID, 10)); err != nil {
+	if _, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1 OR session_id IN (`+archiveRetestSessionsSQL()+`)`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2`, strconv.FormatInt(taskID, 10), expID); err != nil {
 		return err
 	}
 	for _, table := range []string{"skill_usage", "tool_usage"} {
-		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE task_id=$1 OR exploration_id=$2`, taskID, expID); err != nil {
+		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE task_id=$1 OR exploration_id=$2 OR session_id IN (`+archiveRetestNumericSessionsSQL()+`)`, taskID, expID); err != nil {
 			return err
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM side_question_sessions WHERE task_id=$1`, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM conversations WHERE id IN (SELECT conversation_id FROM finding_retests r JOIN findings f ON f.id=r.finding_id WHERE f.task_id=$1)`, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM main_sessions WHERE exploration_id=$1`, expID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM findings WHERE task_id=$1`, taskID); err != nil {
@@ -92,6 +103,7 @@ WHERE relation.source_task_id=$1 LIMIT 1`, taskID).Scan(&dependent)
 		{`DELETE FROM task_asset_links WHERE task_id=$1`, []any{taskID}},
 		{`DELETE FROM task_llm_profiles WHERE task_id=$1`, []any{taskID}},
 		{`DELETE FROM task_scope WHERE task_id=$1`, []any{taskID}},
+		{`DELETE FROM task_intercept_rules WHERE task_id=$1`, []any{taskID}},
 		{`DELETE FROM task_constraints WHERE exploration_id=$1`, []any{expID}},
 		{`DELETE FROM activity WHERE exploration_id=$1`, []any{expID}},
 		{`DELETE FROM exploration_nodes WHERE exploration_id=$1`, []any{expID}},
@@ -100,18 +112,20 @@ WHERE relation.source_task_id=$1 LIMIT 1`, taskID).Scan(&dependent)
 			return err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE assets SET task_ids=array_remove(task_ids,$1) WHERE $1=ANY(task_ids)`, taskID); err != nil {
+	removeOwner := d.SQL(`UPDATE assets SET task_ids=array_remove(task_ids,$1) WHERE $1=ANY(task_ids)`, `UPDATE assets SET task_ids=COALESCE((SELECT json_group_array(value) FROM json_each(assets.task_ids) WHERE value<>$1),'[]') WHERE EXISTS(SELECT 1 FROM json_each(assets.task_ids) WHERE value=$1)`)
+	if _, err := tx.Exec(removeOwner, taskID); err != nil {
 		return err
 	}
 	if len(snapshot.ExclusiveAssetIDs) > 0 {
-		if _, err := tx.Exec(`DELETE FROM assets asset
-WHERE asset.id=ANY($2::bigint[]) AND asset.company_id IS NULL
-AND NOT EXISTS (SELECT 1 FROM tasks task WHERE task.id<>$1 AND task.deleted_at IS NULL AND task.id=ANY(asset.task_ids))
+		idsPredicate := d.SQL(`asset.id=ANY($2::bigint[])`, `asset.id IN (SELECT value FROM json_each($2))`)
+		if _, err := tx.Exec(`DELETE FROM assets AS asset
+WHERE `+idsPredicate+` AND asset.company_id IS NULL
+AND NOT (`+d.archiveOtherAssetOwners()+`)
 AND NOT EXISTS (
  SELECT 1 FROM exploration_anchors anchor JOIN exploration_nodes node ON node.id=anchor.node_id
  JOIN tasks task ON task.exploration_id=node.exploration_id
  WHERE anchor.asset_id=asset.id AND task.id<>$1 AND task.deleted_at IS NULL
-)`, taskID, snapshot.ExclusiveAssetIDs); err != nil {
+)`, taskID, d.archiveArray(snapshot.ExclusiveAssetIDs)); err != nil {
 			return err
 		}
 	}
@@ -180,22 +194,64 @@ func (d *DB) restoreTaskArchive(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback() //nolint:errcheck
-	if err := coordinateWithSchemaMigration(tx); err != nil {
+	defer tx.Rollback()
+	warnings, err := d.RestoreTaskArchiveTx(tx, archiveID, snapshot, remainingTimeoutSeconds, llmRecords)
+	if err != nil {
+		return nil, err
+	}
+	return warnings, tx.Commit()
+}
+
+// RestoreTaskArchiveTx shares the caller's evidence/write transaction. It never commits.
+func (d *DB) RestoreTaskArchiveTx(tx *sql.Tx, archiveID int64, snapshot *TaskArchiveSnapshot, remainingTimeoutSeconds int64, llmRecords io.Reader) ([]string, error) {
+	if snapshot == nil || !IsTaskArchiveFormatSupported(snapshot.FormatVersion) {
+		return nil, ErrTaskArchiveFormatMismatch
+	}
+	streamedLLMRecords := snapshot.StreamedTables["llm_records"]
+	if len(snapshot.StreamedTables) > 1 || (len(snapshot.StreamedTables) > 0 && (snapshot.FormatVersion < 2 || streamedLLMRecords != TaskArchiveLLMRecordsPath || llmRecords == nil)) {
+		return nil, ErrTaskArchiveFormatMismatch
+	}
+	for table, raw := range snapshot.Tables {
+		if _, err := archiveColumnTypes(table); err != nil {
+			return nil, err
+		}
+		rows, err := decodeArchiveRows(raw)
+		if err != nil {
+			return nil, fmt.Errorf("archive %s: %w", table, err)
+		}
+		if table == "llm_records" && streamedLLMRecords != "" {
+			if len(rows) != 0 {
+				return nil, errors.New("streamed LLM records also present in manifest")
+			}
+			continue
+		}
+		if count, exists := snapshot.DataCounts[table]; exists && count != int64(len(rows)) {
+			return nil, fmt.Errorf("archive %s: row count %d does not match manifest %d", table, len(rows), count)
+		}
+	}
+	if err := d.archiveSchemaLock(tx); err != nil {
+		return nil, err
+	}
+	if err := lockCompanyScopeMutation(tx, d); err != nil {
 		return nil, err
 	}
 	var taskID, expID int64
 	var state string
 	if err := tx.QueryRow(`SELECT archive.task_id,task.exploration_id,archive.state
 FROM task_archives archive JOIN tasks task ON task.id=archive.task_id
-WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID, &state); err != nil {
+WHERE archive.id=$1`+d.archiveLockSuffix(` FOR UPDATE OF archive,task`), archiveID).Scan(&taskID, &expID, &state); err != nil {
 		return nil, err
 	}
 	if state != Restoring || taskID != snapshot.TaskID || expID != snapshot.ExplorationID {
 		return nil, fmt.Errorf("%w: restore snapshot identity/state mismatch", ErrTaskArchiveState)
 	}
+	if !d.IsSQLite() {
+		if _, err := tx.Exec(`LOCK TABLE assets, exploration_anchors IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+			return nil, err
+		}
+	}
 	warnings := []string{}
-	assetMap, assetWarnings, err := restoreArchiveAssets(tx, taskID, snapshot.Tables["assets"])
+	assetMap, assetWarnings, err := restoreArchiveAssets(tx, taskID, snapshot.Tables["assets"], d)
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +264,9 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 		return nil, fmt.Errorf("restore task row: expected one row: %w", err)
 	}
 	taskRow := taskRows[0]
+	if archivedID, ok := jsonInt64(taskRow["id"]); !ok || archivedID != taskID {
+		return nil, errors.New("archive task row identity mismatch")
+	}
 	categoryID, _ := jsonInt64(taskRow["category_id"])
 	if categoryID > 0 && !rowExists(tx, "task_categories", categoryID) {
 		taskRow["category_id"] = nil
@@ -225,10 +284,10 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 			warnings = append(warnings, fmt.Sprintf("LLM 配置 %d 已删除，已从任务配置中移除", profileID))
 		}
 	}
-	if err := restoreExplorationStub(tx, snapshot.Tables["explorations"], expID); err != nil {
+	if err := restoreExplorationStub(tx, snapshot.Tables["explorations"], expID, d); err != nil {
 		return nil, err
 	}
-	if err := restoreTaskStub(tx, taskRow, taskID, remainingTimeoutSeconds); err != nil {
+	if err := restoreTaskStub(tx, taskRow, taskID, remainingTimeoutSeconds, d); err != nil {
 		return nil, err
 	}
 
@@ -242,75 +301,126 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 	}
 	// Insert graph rows in foreign-key order. The archived stub has no graph rows,
 	// so an ID conflict signals external corruption and must stop the restore.
-	for _, table := range []string{"exploration_nodes", "exploration_edges", "exploration_anchors", "task_constraints", "activity"} {
-		if err := insertArchiveRows(tx, table, remappedTables[table]); err != nil {
+	for _, table := range []string{"exploration_nodes", "exploration_edges", "exploration_anchors", "task_constraints", "task_intercept_rules", "activity", "main_sessions"} {
+		if err := insertArchiveRows(tx, table, remappedTables[table], d); err != nil {
 			return nil, fmt.Errorf("restore %s: %w", table, err)
 		}
 	}
-	if warning, err := restoreTaskRelations(tx, taskID, remappedTables["task_relations"]); err != nil {
+	if warning, err := restoreTaskRelations(tx, taskID, remappedTables["task_relations"], d); err != nil {
 		return nil, err
 	} else {
 		warnings = append(warnings, warning...)
 	}
-	for _, table := range []string{"side_question_sessions", "side_question_requests"} {
-		if err := insertArchiveRows(tx, table, remappedTables[table]); err != nil {
-			return nil, fmt.Errorf("restore %s: %w", table, err)
-		}
-	}
-	if warning, err := restoreTaskScopes(tx, remappedTables["task_scope"]); err != nil {
+	if warning, err := restoreTaskScopes(tx, remappedTables["task_scope"], d); err != nil {
 		return nil, err
 	} else {
 		warnings = append(warnings, warning...)
 	}
-	if warning, err := restoreTaskLLMProfiles(tx, remappedTables["task_llm_profiles"]); err != nil {
+	if warning, err := restoreTaskLLMProfiles(tx, remappedTables["task_llm_profiles"], d); err != nil {
 		return nil, err
 	} else {
 		warnings = append(warnings, warning...)
 	}
 	for _, table := range []string{"task_asset_links", "findings"} {
-		if err := insertArchiveRows(tx, table, remappedTables[table]); err != nil {
+		if err := insertArchiveRows(tx, table, remappedTables[table], d); err != nil {
 			return nil, fmt.Errorf("restore %s: %w", table, err)
+		}
+	}
+	conversations, err := decodeArchiveRows(remappedTables["conversations"])
+	if err != nil {
+		return nil, err
+	}
+	for _, conversation := range conversations {
+		if profileID, ok := jsonInt64(conversation["llm_profile_id"]); ok && profileID > 0 && !rowExists(tx, "llm_profiles", profileID) {
+			conversation["llm_profile_id"] = nil
+			warnings = append(warnings, fmt.Sprintf("复测会话 LLM 配置 %d 已删除，已清除配置引用", profileID))
+		}
+	}
+	remappedTables["conversations"], err = json.Marshal(conversations)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range []string{"conversations", "conversation_activities", "finding_retests"} {
+		if err := insertArchiveRows(tx, table, remappedTables[table], d); err != nil {
+			return nil, fmt.Errorf("restore %s: %w", table, err)
+		}
+	}
+	for _, table := range []string{"side_question_sessions", "side_question_requests"} {
+		if err := insertArchiveRows(tx, table, remappedTables[table], d); err != nil {
+			return nil, fmt.Errorf("restore %s: %w", table, err)
+		}
+	}
+	if d.IsSQLite() {
+		if _, err := tx.Exec(`INSERT INTO portable_sequences(name,value) SELECT 'side_request_ordinal',COALESCE(MAX(ordinal),0) FROM side_question_requests WHERE true ON CONFLICT(name) DO UPDATE SET value=MAX(value,EXCLUDED.value)`); err != nil {
+			return nil, err
 		}
 	}
 	if err := restoreFindingTrafficTx(tx, snapshot); err != nil {
 		return nil, fmt.Errorf("restore finding traffic: %w", err)
 	}
 	if streamedLLMRecords != "" {
-		count, err := insertArchiveJSONSequenceRows(tx, "llm_records", llmRecords)
+		count, err := insertArchiveJSONSequenceRows(tx, "llm_records", llmRecords, d)
 		if err != nil {
 			return nil, fmt.Errorf("restore llm_records: %w", err)
 		}
 		if expected := snapshot.DataCounts["llm_records"]; count != expected {
 			return nil, fmt.Errorf("restore llm_records: row count %d does not match manifest %d", count, expected)
 		}
-	} else if err := insertArchiveRows(tx, "llm_records", remappedTables["llm_records"]); err != nil {
+	} else if err := insertArchiveRows(tx, "llm_records", remappedTables["llm_records"], d); err != nil {
 		return nil, fmt.Errorf("restore llm_records: %w", err)
 	}
 	for _, table := range []string{"llm_usage", "skill_usage", "tool_usage"} {
-		if err := insertArchiveRows(tx, table, remappedTables[table]); err != nil {
+		if err := insertArchiveRows(tx, table, remappedTables[table], d); err != nil {
 			return nil, fmt.Errorf("restore %s: %w", table, err)
 		}
 	}
-	if err := restoreInterceptRows(tx, remappedTables["intercept_pending"]); err != nil {
+	if err := restoreInterceptRows(tx, remappedTables["intercept_pending"], d); err != nil {
 		return nil, err
 	}
 	warningsRaw, _ := json.Marshal(warnings)
 	if _, err := tx.Exec(`UPDATE task_archives SET warnings=$2,phase='database_restored',progress=85,error='' WHERE id=$1`, archiveID, string(warningsRaw)); err != nil {
 		return nil, err
 	}
-	return warnings, tx.Commit()
+	return warnings, nil
 }
 
-func restoreExplorationStub(tx *sql.Tx, raw json.RawMessage, expID int64) error {
-	_, err := tx.Exec(`UPDATE explorations current SET
+func restoreExplorationStub(tx *sql.Tx, raw json.RawMessage, expID int64, dialect ...*DB) error {
+	identityRows, err := decodeArchiveRows(raw)
+	if err != nil {
+		return err
+	}
+	if len(identityRows) != 1 {
+		return errors.New("expected one exploration")
+	}
+	if id, ok := jsonInt64(identityRows[0]["id"]); !ok || id != expID {
+		return errors.New("archive exploration row identity mismatch")
+	}
+	if sqliteDialect(dialect) {
+		rows, err := decodeArchiveRows(raw)
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 {
+			return errors.New("expected one exploration")
+		}
+		return sqliteUpdateArchiveStub(tx, "explorations", expID, rows[0], strings.Fields("description goal status created_at updated_at round_no"))
+	}
+	_, err = tx.Exec(`UPDATE explorations current SET
  description=archived.description,goal=archived.goal,status=archived.status,
- created_at=archived.created_at,updated_at=archived.updated_at
+ created_at=archived.created_at,updated_at=archived.updated_at,round_no=COALESCE(archived.round_no,current.round_no)
 FROM json_populate_record(NULL::explorations,$2::json) archived
 WHERE current.id=$1 AND archived.id=$1`, expID, string(firstArchiveRow(raw)))
 	return err
 }
 
-func restoreTaskStub(tx *sql.Tx, row map[string]any, taskID, remaining int64) error {
+func restoreTaskStub(tx *sql.Tx, row map[string]any, taskID, remaining int64, dialect ...*DB) error {
+	if sqliteDialect(dialect) {
+		row["queued"], row["queued_at"], row["queue_mode"], row["deleted_at"], row["archived_at"] = false, nil, "", nil, nil
+		if row["paused"] == true && remaining > 0 {
+			row["deadline_at"] = time.Now().UTC().Add(time.Duration(remaining) * time.Second)
+		}
+		return sqliteUpdateArchiveStub(tx, "tasks", taskID, row, strings.Fields("name category_id description goal status paused queued queued_at queue_mode llm_profile_id active_llm_profile_id llm_chain_revision company_id parent_ref timeout_seconds plan_heartbeat_seconds coverage_enabled pinned_at first_run_at deadline_at deleted_at archived_at completed_at created_at updated_at"))
+	}
 	raw, err := json.Marshal(row)
 	if err != nil {
 		return err
@@ -349,6 +459,12 @@ func decodeArchiveRows(raw json.RawMessage) ([]map[string]any, error) {
 	if err := decoder.Decode(&rows); err != nil {
 		return nil, err
 	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("multiple archive JSON values")
+		}
+		return nil, err
+	}
 	return rows, nil
 }
 
@@ -361,7 +477,7 @@ func rowExists(tx *sql.Tx, table string, id int64) bool {
 	return exists
 }
 
-func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
+func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage, dialect ...*DB) error {
 	// json_populate_recordset inserts NULL for absent columns, bypassing SQL
 	// defaults. Preserve compatibility with v3 archives predating side memory.
 	if (table == "side_question_sessions" || table == "side_question_requests") && len(raw) > 0 {
@@ -388,7 +504,7 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 		"exploration_nodes": true, "exploration_edges": true, "exploration_anchors": true,
 		"task_constraints": true, "activity": true, "task_asset_links": true, "findings": true,
 		"llm_records": true, "llm_usage": true, "skill_usage": true, "tool_usage": true,
-		"side_question_sessions": true, "side_question_requests": true,
+		"task_intercept_rules": true, "main_sessions": true, "side_question_sessions": true, "side_question_requests": true, "finding_retests": true, "conversations": true, "conversation_activities": true,
 	}
 	if !allowed[table] {
 		return fmt.Errorf("archive restore table %q is not allowed", table)
@@ -396,13 +512,58 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 	if rawRowCount(raw) == 0 {
 		return nil
 	}
+	if sqliteDialect(dialect) {
+		return sqliteInsertArchiveRows(tx, table, raw, "")
+	}
 	_, err := tx.Exec(`INSERT INTO `+table+` SELECT * FROM json_populate_recordset(NULL::`+table+`,$1::json)`, string(raw))
 	return err
 }
 
-func insertArchiveJSONSequenceRows(tx *sql.Tx, table string, reader io.Reader) (int64, error) {
+func insertArchiveJSONSequenceRows(tx *sql.Tx, table string, reader io.Reader, dialect ...*DB) (int64, error) {
 	if table != "llm_records" {
 		return 0, fmt.Errorf("archive streamed restore table %q is not allowed", table)
+	}
+	if sqliteDialect(dialect) {
+		decoder := json.NewDecoder(reader)
+		decoder.UseNumber()
+		var count int64
+		var statement *sql.Stmt
+		var prepared string
+		defer func() {
+			if statement != nil {
+				_ = statement.Close()
+			}
+		}()
+		for {
+			var row map[string]any
+			err := decoder.Decode(&row)
+			if errors.Is(err, io.EOF) {
+				return count, nil
+			}
+			if err != nil {
+				return 0, err
+			}
+			query, values, err := sqliteArchiveInsert(table, row, "")
+			if err != nil {
+				return 0, err
+			}
+			if statement == nil || query != prepared {
+				if statement != nil {
+					if err = statement.Close(); err != nil {
+						return 0, err
+					}
+				}
+				statement, err = tx.Prepare(query)
+				if err != nil {
+					return 0, err
+				}
+				prepared = query
+			}
+			if _, err = statement.Exec(values...); err != nil {
+				return 0, err
+			}
+			count++
+		}
 	}
 	statement, err := tx.Prepare(`INSERT INTO llm_records SELECT * FROM json_populate_record(NULL::llm_records,$1::json)`)
 	if err != nil {
@@ -430,7 +591,7 @@ func insertArchiveJSONSequenceRows(tx *sql.Tx, table string, reader io.Reader) (
 	return count, nil
 }
 
-func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[int64]int64, []string, error) {
+func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage, dialect ...*DB) (map[int64]int64, []string, error) {
 	rows, err := decodeArchiveRows(raw)
 	if err != nil {
 		return nil, nil, err
@@ -451,14 +612,14 @@ func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[in
 			return nil, nil, err
 		} else if found {
 			mapping[oldID] = existing
-			if _, err := tx.Exec(`UPDATE assets SET task_ids=CASE WHEN $1=ANY(task_ids) THEN task_ids ELSE array_append(task_ids,$1) END WHERE id=$2`, taskID, existing); err != nil {
+			if _, err := tx.Exec(evidenceSQL(dialect, `UPDATE assets SET task_ids=CASE WHEN $1=ANY(task_ids) THEN task_ids ELSE array_append(task_ids,$1) END WHERE id=$2`, `UPDATE assets SET task_ids=CASE WHEN EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1) THEN task_ids ELSE json_insert(task_ids,'$[#]',$1) END WHERE id=$2`), taskID, existing); err != nil {
 				return nil, nil, err
 			}
 			continue
 		}
 		candidate := oldID
 		if rowExists(tx, "assets", oldID) {
-			if err := tx.QueryRow(`SELECT nextval(pg_get_serial_sequence('assets','id'))`).Scan(&candidate); err != nil {
+			if err := tx.QueryRow(evidenceSQL(dialect, `SELECT nextval(pg_get_serial_sequence('assets','id'))`, `SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name='assets'),0),COALESCE((SELECT MAX(id) FROM assets),0))+1`)).Scan(&candidate); err != nil {
 				return nil, nil, err
 			}
 			row["id"] = candidate
@@ -466,7 +627,12 @@ func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[in
 		}
 		row["task_ids"] = mergeJSONTaskID(row["task_ids"], taskID)
 		assetRaw, _ := json.Marshal(row)
-		res, err := tx.Exec(`INSERT INTO assets SELECT * FROM json_populate_record(NULL::assets,$1::json) ON CONFLICT DO NOTHING`, string(assetRaw))
+		var res sql.Result
+		if sqliteDialect(dialect) {
+			res, err = sqliteInsertArchiveRow(tx, "assets", row, " ON CONFLICT DO NOTHING")
+		} else {
+			res, err = tx.Exec(`INSERT INTO assets SELECT * FROM json_populate_record(NULL::assets,$1::json) ON CONFLICT DO NOTHING`, string(assetRaw))
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -477,7 +643,7 @@ func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[in
 				return nil, nil, errors.Join(findErr, fmt.Errorf("could not restore asset %d", oldID))
 			}
 			candidate = existing
-			if _, err := tx.Exec(`UPDATE assets SET task_ids=CASE WHEN $1=ANY(task_ids) THEN task_ids ELSE array_append(task_ids,$1) END WHERE id=$2`, taskID, existing); err != nil {
+			if _, err := tx.Exec(evidenceSQL(dialect, `UPDATE assets SET task_ids=CASE WHEN $1=ANY(task_ids) THEN task_ids ELSE array_append(task_ids,$1) END WHERE id=$2`, `UPDATE assets SET task_ids=CASE WHEN EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1) THEN task_ids ELSE json_insert(task_ids,'$[#]',$1) END WHERE id=$2`), taskID, existing); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -591,10 +757,48 @@ func remapArchiveAssetReferences(tables map[string]json.RawMessage, mapping map[
 		}
 		out[table], _ = json.Marshal(rows)
 	}
+	// Retest snapshots contain typed finding/asset records. Keep their historical
+	// text/context intact while remapping only the stored asset reference fields.
+	rows, err := decodeArchiveRows(tables["finding_retests"])
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		snapshot, ok := row["snapshot"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if assets, ok := snapshot["assets"].([]any); ok {
+			for _, value := range assets {
+				if asset, ok := value.(map[string]any); ok {
+					if old, ok := jsonInt64(asset["id"]); ok {
+						if replacement, exists := mapping[old]; exists {
+							asset["id"] = replacement
+						}
+					}
+				}
+			}
+		}
+		if finding, ok := snapshot["finding"].(map[string]any); ok {
+			if ids, ok := finding["asset_ids"].([]any); ok {
+				for i, value := range ids {
+					if old, ok := jsonInt64(value); ok {
+						if replacement, exists := mapping[old]; exists {
+							ids[i] = replacement
+						}
+					}
+				}
+			}
+		}
+	}
+	out["finding_retests"], err = json.Marshal(rows)
+	if err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
-func restoreTaskRelations(tx *sql.Tx, taskID int64, raw json.RawMessage) ([]string, error) {
+func restoreTaskRelations(tx *sql.Tx, taskID int64, raw json.RawMessage, dialect ...*DB) ([]string, error) {
 	rows, err := decodeArchiveRows(raw)
 	if err != nil {
 		return nil, err
@@ -607,14 +811,14 @@ func restoreTaskRelations(tx *sql.Tx, taskID int64, raw json.RawMessage) ([]stri
 			continue
 		}
 		created, _ := row["created_at"].(string)
-		if _, err := tx.Exec(`INSERT INTO task_relations(task_id,source_task_id,created_at) VALUES($1,$2,COALESCE($3::timestamptz,now())) ON CONFLICT DO NOTHING`, taskID, sourceID, nilIfEmptyString(created)); err != nil {
+		if _, err := tx.Exec(evidenceSQL(dialect, `INSERT INTO task_relations(task_id,source_task_id,created_at) VALUES($1,$2,COALESCE($3::timestamptz,now())) ON CONFLICT DO NOTHING`, `INSERT INTO task_relations(task_id,source_task_id,created_at) VALUES($1,$2,COALESCE($3,now())) ON CONFLICT DO NOTHING`), taskID, sourceID, nilIfEmptyString(created)); err != nil {
 			return nil, err
 		}
 	}
 	return warnings, nil
 }
 
-func restoreTaskScopes(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
+func restoreTaskScopes(tx *sql.Tx, raw json.RawMessage, dialect ...*DB) ([]string, error) {
 	rows, err := decodeArchiveRows(raw)
 	if err != nil {
 		return nil, err
@@ -632,11 +836,14 @@ func restoreTaskScopes(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 		return warnings, nil
 	}
 	encoded, _ := json.Marshal(kept)
+	if sqliteDialect(dialect) {
+		return warnings, sqliteInsertArchiveRows(tx, "task_scope", encoded, " ON CONFLICT DO NOTHING")
+	}
 	_, err = tx.Exec(`INSERT INTO task_scope SELECT * FROM json_populate_recordset(NULL::task_scope,$1::json) ON CONFLICT DO NOTHING`, string(encoded))
 	return warnings, err
 }
 
-func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
+func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage, dialect ...*DB) ([]string, error) {
 	rows, err := decodeArchiveRows(raw)
 	if err != nil {
 		return nil, err
@@ -655,9 +862,10 @@ func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 		exhaustedAt, _ := row["exhausted_at"].(string)
 		createdAt, _ := row["created_at"].(string)
 		updatedAt, _ := row["updated_at"].(string)
-		if _, err := tx.Exec(`INSERT INTO task_llm_profiles(task_id,profile_id,position,status,last_error,exhausted_at,created_at,updated_at)
+		query := evidenceSQL(dialect, `INSERT INTO task_llm_profiles(task_id,profile_id,position,status,last_error,exhausted_at,created_at,updated_at)
 	VALUES($1,$2,$3,$4,NULLIF($5,''),$6::timestamptz,COALESCE($7::timestamptz,now()),COALESCE($8::timestamptz,now()))
-	ON CONFLICT DO NOTHING`, taskID, profileID, position, status, lastError,
+	ON CONFLICT DO NOTHING`, `INSERT INTO task_llm_profiles(task_id,profile_id,position,status,last_error,exhausted_at,created_at,updated_at) VALUES($1,$2,$3,$4,NULLIF($5,''),$6,COALESCE($7,now()),COALESCE($8,now())) ON CONFLICT DO NOTHING`)
+		if _, err := tx.Exec(query, taskID, profileID, position, status, lastError,
 			nilIfEmptyString(exhaustedAt), nilIfEmptyString(createdAt), nilIfEmptyString(updatedAt)); err != nil {
 			return nil, err
 		}
@@ -666,7 +874,7 @@ func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 	return warnings, nil
 }
 
-func restoreInterceptRows(tx *sql.Tx, raw json.RawMessage) error {
+func restoreInterceptRows(tx *sql.Tx, raw json.RawMessage, dialect ...*DB) error {
 	rows, err := decodeArchiveRows(raw)
 	if err != nil {
 		return err
@@ -700,6 +908,9 @@ func restoreInterceptRows(tx *sql.Tx, raw json.RawMessage) error {
 		return nil
 	}
 	encoded, _ := json.Marshal(rows)
+	if sqliteDialect(dialect) {
+		return sqliteInsertArchiveRows(tx, "intercept_pending", encoded, "")
+	}
 	_, err = tx.Exec(`INSERT INTO intercept_pending SELECT * FROM json_populate_recordset(NULL::intercept_pending,$1::json)`, string(encoded))
 	return err
 }
@@ -720,8 +931,7 @@ func nilIfEmptyString(value string) any {
 // CompleteTaskArchiveRestore removes compact metadata after every external
 // component has been verified and the package has been consumed.
 func (d *DB) CompleteTaskArchiveRestore(archiveID int64) error {
-	res, err := d.Exec(`DELETE FROM task_archives archive USING tasks task
-WHERE archive.id=$1 AND archive.task_id=task.id AND task.deleted_at IS NULL AND task.archived_at IS NULL`, archiveID)
+	res, err := d.Exec(d.SQL(`DELETE FROM task_archives archive USING tasks task WHERE archive.id=$1 AND archive.task_id=task.id AND task.deleted_at IS NULL AND task.archived_at IS NULL`, `DELETE FROM task_archives WHERE id=$1 AND EXISTS(SELECT 1 FROM tasks WHERE tasks.id=task_archives.task_id AND deleted_at IS NULL AND archived_at IS NULL)`), archiveID)
 	if err != nil {
 		return err
 	}
@@ -740,21 +950,24 @@ func (d *DB) DeleteTaskArchiveStub(archiveID int64) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := coordinateWithSchemaMigration(tx); err != nil {
+	if err := d.archiveSchemaLock(tx); err != nil {
+		return err
+	}
+	if err := lockCompanyScopeMutation(tx, d); err != nil {
 		return err
 	}
 	var taskID, expID int64
 	var state string
 	if err := tx.QueryRow(`SELECT archive.task_id,task.exploration_id,archive.state
 FROM task_archives archive JOIN tasks task ON task.id=archive.task_id
-WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID, &state); err != nil {
+WHERE archive.id=$1`+d.archiveLockSuffix(` FOR UPDATE OF archive,task`), archiveID).Scan(&taskID, &expID, &state); err != nil {
 		return err
 	}
 	if state != Deleting {
 		return ErrTaskArchiveState
 	}
 	var dependent int64
-	err = tx.QueryRow(`SELECT task_id FROM task_archives WHERE id<>$1 AND $2=ANY(source_task_ids) LIMIT 1`, archiveID, taskID).Scan(&dependent)
+	err = tx.QueryRow(d.SQL(`SELECT task_id FROM task_archives WHERE id<>$1 AND $2=ANY(source_task_ids) LIMIT 1`, `SELECT task_id FROM task_archives WHERE id<>$1 AND EXISTS(SELECT 1 FROM json_each(source_task_ids) WHERE value=$2) LIMIT 1`), archiveID, taskID).Scan(&dependent)
 	if err == nil {
 		return fmt.Errorf("%w: task %d", ErrTaskArchiveDeleteBlocked, dependent)
 	}
