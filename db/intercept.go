@@ -87,7 +87,7 @@ func (d *DB) UpdateInterceptRule(id int64, name, matchTarget, matchType, pattern
 UPDATE intercept_rules
    SET name=$2, enabled=$3, priority=$4, match_target=$5,
        match_type=$6, pattern=$7, action=$8, message=$9,
-       timeout_enabled=$10, timeout_seconds=$11, timeout_action=$12
+       timeout_enabled=$10, timeout_seconds=$11, timeout_action=$12, updated_at=now()
 WHERE id=$1
 RETURNING `+interceptRuleCols,
 		id, name, enabled, priority, matchTarget, matchType, pattern, action, message, timeoutEnabled, timeoutSeconds, timeoutAction)
@@ -131,7 +131,7 @@ func (d *DB) CreateInterceptPending(ruleID, convID int64, taskID, agentName, too
 	err := d.QueryRow(`
 INSERT INTO intercept_pending(rule_id, conversation_id, task_id, agent_name, tool_name, tool_input, reason, decision_source, audit)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-		ruleIDPtr, convIDPtr, taskIDPtr, agentName, toolName, raw, reason, interceptSource(ruleID, reason), firstAudit(audits)).Scan(&id)
+		ruleIDPtr, convIDPtr, taskIDPtr, agentName, toolName, d.jsonValue(raw), reason, interceptSource(ruleID, reason), d.firstAudit(audits)).Scan(&id)
 	return id, err
 }
 
@@ -167,7 +167,7 @@ func (d *DB) CreateDecidedIntercept(ruleID, convID int64, taskID, agentName, too
 	err := d.QueryRow(`
 INSERT INTO intercept_pending(rule_id, conversation_id, task_id, agent_name, tool_name, tool_input, status, reason, decided_at, decision_source, audit)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10) RETURNING id`,
-		ruleIDPtr, convIDPtr, taskIDPtr, agentName, toolName, raw, status, reason, interceptSource(ruleID, reason), firstAudit(audits)).Scan(&id)
+		ruleIDPtr, convIDPtr, taskIDPtr, agentName, toolName, d.jsonValue(raw), status, reason, interceptSource(ruleID, reason), d.firstAudit(audits)).Scan(&id)
 	return id, err
 }
 
@@ -175,7 +175,7 @@ const interceptPendingCols = `id, rule_id, conversation_id, task_id, agent_name,
 
 func scanInterceptPending(s interface{ Scan(...any) error }, p *InterceptPending) error {
 	return s.Scan(&p.ID, &p.RuleID, &p.ConversationID, &p.TaskID, &p.AgentName,
-		&p.ToolName, &p.ToolInput, &p.Status, &p.Reason, &p.DecidedAt, &p.CreatedAt, &p.DecisionSource)
+		&p.ToolName, JSONScanner{&p.ToolInput}, &p.Status, &p.Reason, &p.DecidedAt, &p.CreatedAt, &p.DecisionSource)
 }
 
 // ListPendingIntercepts returns all unresolved approval requests, newest first.
@@ -220,7 +220,7 @@ type InterceptApprovalRow struct {
 func scanInterceptApprovalRow(rows interface{ Scan(...any) error }, r *InterceptApprovalRow) error {
 	return rows.Scan(
 		&r.ID, &r.RuleID, &r.ConversationID, &r.TaskID, &r.AgentName,
-		&r.ToolName, &r.ToolInput, &r.Status, &r.Reason, &r.DecidedAt, &r.CreatedAt,
+		&r.ToolName, JSONScanner{&r.ToolInput}, &r.Status, &r.Reason, &r.DecidedAt, &r.CreatedAt,
 		&r.DecisionSource, &r.ConvTitle, &r.ConvAgentKey, &r.RuleName,
 	)
 }
@@ -254,7 +254,7 @@ func interceptSource(ruleID int64, reason string) string {
 	return "unknown"
 }
 
-func firstAudit(audits []*InterceptAudit) any {
+func (d *DB) firstAudit(audits []*InterceptAudit) any {
 	if len(audits) == 0 || audits[0] == nil {
 		return nil
 	}
@@ -262,7 +262,7 @@ func firstAudit(audits []*InterceptAudit) any {
 	if err != nil {
 		return nil
 	}
-	return raw
+	return d.jsonValue(raw)
 }
 
 // ListAllIntercepts returns up to limit intercept_pending rows (newest first)

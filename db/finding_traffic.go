@@ -30,8 +30,11 @@ func (d *DB) WithEvidenceTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, findingEvidenceLockKey); err != nil {
-		return err
+	// SQLite's immediate write transaction already serializes evidence writers.
+	if !d.IsSQLite() {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, findingEvidenceLockKey); err != nil {
+			return err
+		}
 	}
 	if err = fn(tx); err != nil {
 		return err

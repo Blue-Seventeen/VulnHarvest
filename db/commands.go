@@ -33,7 +33,7 @@ func (d *DB) commandFilter(expID *int64, q string) (string, []any, int) {
 		argN++
 	}
 	if q != "" {
-		where += fmt.Sprintf(d.SQL(` AND (u.tool ILIKE $%d OR u.detail ILIKE $%d)`, ` AND (LOWER(u.tool) LIKE LOWER($%d) OR LOWER(u.detail) LIKE LOWER($%d))`), argN, argN)
+		where += fmt.Sprintf(d.SQL(` AND (u.tool ILIKE $%d OR u.detail ILIKE $%d)`, ` AND (portable_lower(u.tool) LIKE portable_lower($%d) ESCAPE '\' OR portable_lower(u.detail) LIKE portable_lower($%d) ESCAPE '\')`), argN, argN)
 		args = append(args, "%"+q+"%")
 		argN++
 	}
@@ -240,7 +240,7 @@ func (d *DB) ListLLMRecords(model, session, task string, page, size int) ([]LLMR
 		argN++
 	}
 	if session != "" {
-		where += fmt.Sprintf(d.SQL(` AND session_id ILIKE $%d`, ` AND LOWER(session_id) LIKE LOWER($%d)`), argN)
+		where += fmt.Sprintf(d.SQL(` AND session_id ILIKE $%d`, ` AND portable_lower(session_id) LIKE portable_lower($%d) ESCAPE '\'`), argN)
 		args = append(args, "%"+session+"%")
 		argN++
 	}

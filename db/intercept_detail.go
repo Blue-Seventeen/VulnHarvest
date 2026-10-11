@@ -54,7 +54,7 @@ func (d *DB) GetInterceptDetail(id int64) (*InterceptDetail, error) {
 	var raw []byte
 	err := d.QueryRow(approvalRowSelectWithAudit+` WHERE ip.id=$1`, id).Scan(
 		&out.ID, &out.RuleID, &out.ConversationID, &out.TaskID, &out.AgentName,
-		&out.ToolName, &out.ToolInput, &out.Status, &out.Reason, &out.DecidedAt, &out.CreatedAt,
+		&out.ToolName, JSONScanner{&out.ToolInput}, &out.Status, &out.Reason, &out.DecidedAt, &out.CreatedAt,
 		&out.DecisionSource, &out.ConvTitle, &out.ConvAgentKey, &out.RuleName, &raw,
 	)
 	if err == sql.ErrNoRows {
@@ -84,11 +84,15 @@ func (d *DB) ResolveIntercept(id int64, status, action, reason string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	r, err := d.Exec(`UPDATE intercept_pending SET status=$2, decided_at=NOW(),
+	r, err := d.Exec(d.SQL(`UPDATE intercept_pending SET status=$2, decided_at=NOW(),
 		audit=CASE WHEN audit IS NULL THEN NULL ELSE audit || $3::jsonb ||
         CASE WHEN $4='allow' AND audit->>'correlation' IS DISTINCT FROM 'exact'
         THEN '{"execution_status":"unknown"}'::jsonb ELSE '{}'::jsonb END END
-        WHERE id=$1 AND status='pending'`, id, status, patch, action)
+        WHERE id=$1 AND status='pending'`, `UPDATE intercept_pending SET status=$2,decided_at=now(),
+ audit=CASE WHEN audit IS NULL THEN NULL ELSE portable_json_overlay(portable_json_overlay(audit,$3),
+ CASE WHEN $4='allow' AND json_extract(audit,'$.correlation') IS NOT 'exact'
+ THEN '{"execution_status":"unknown"}' ELSE '{}' END) END
+ WHERE id=$1 AND status='pending'`), id, status, d.jsonValue(patch), action)
 	if err != nil {
 		return false, err
 	}
@@ -106,9 +110,12 @@ func (d *DB) CompleteIntercept(id int64, runID, toolUseID, status, output string
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE intercept_pending SET audit=audit || $4::jsonb
+	_, err = d.Exec(d.SQL(`UPDATE intercept_pending SET audit=audit || $4::jsonb
 		WHERE id=$1 AND audit->>'run_id'=$2 AND audit->>'tool_use_id'=$3
 		AND audit->>'effective_action'='allow' AND audit->>'execution_status'='awaiting_result'`,
-		id, runID, toolUseID, patch)
+		`UPDATE intercept_pending SET audit=portable_json_overlay(audit,$4)
+ WHERE id=$1 AND json_extract(audit,'$.run_id')=$2 AND json_extract(audit,'$.tool_use_id')=$3
+ AND json_extract(audit,'$.effective_action')='allow' AND json_extract(audit,'$.execution_status')='awaiting_result'`),
+		id, runID, toolUseID, d.jsonValue(patch))
 	return err
 }

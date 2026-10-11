@@ -63,6 +63,15 @@ func (c *sqliteValueConn) Ping(ctx context.Context) error { return c.Conn.(drive
 // sharing driver-specific assumptions across DAO scan destinations.
 type JSONScanner struct{ Target *json.RawMessage }
 
+// DAO bind sites opt in explicitly. SQLite JSON columns store TEXT rather than
+// depending on the JSON extension's compatibility handling for JSON BLOBs.
+func (d *DB) jsonValue(raw []byte) any {
+	if d.IsSQLite() {
+		return string(raw)
+	}
+	return raw
+}
+
 func (s JSONScanner) Scan(value any) error {
 	switch v := value.(type) {
 	case nil:

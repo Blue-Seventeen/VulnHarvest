@@ -84,7 +84,7 @@ func scanNotificationDelivery(sc interface{ Scan(...any) error }) (*Notification
 	if err := sc.Scan(&dl.ID, &dl.EventID, &dl.ChannelID, &dl.State, &dl.Attempts, &dl.NextAttemptAt,
 		&lastErr, &batchID, &dl.CreatedAt, &sentAt,
 		&snapshot, &eventKind, &dl.FindingID,
-		&channel.ID, &channel.Name, &channel.Kind, &chEnabled, &channel.Config, &channel.Mode, &channel.Filter, &channel.RatePerMin); err != nil {
+		&channel.ID, &channel.Name, &channel.Kind, &chEnabled, JSONScanner{&channel.Config}, &channel.Mode, JSONScanner{&channel.Filter}, &channel.RatePerMin); err != nil {
 		return nil, err
 	}
 	dl.LastError = lastErr.String
@@ -126,13 +126,18 @@ func (d *DB) ClaimRealtimeDeliveries(ctx context.Context, channelID int64, limit
 		return nil, nil
 	}
 	return d.claimDeliveries(ctx, lease, claimQuery{
-		sql: `SELECT dd.id FROM notification_deliveries dd
+		sql: d.SQL(`SELECT dd.id FROM notification_deliveries dd
 JOIN notification_channels c ON c.id = dd.channel_id
 WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND dd.next_attempt_at <= now()
   AND c.enabled AND c.mode = $4
 ORDER BY dd.next_attempt_at, dd.id
 FOR UPDATE OF dd SKIP LOCKED
-LIMIT $5`,
+LIMIT $5`, `SELECT dd.id FROM notification_deliveries dd
+JOIN notification_channels c ON c.id = dd.channel_id
+WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND dd.next_attempt_at <= now()
+  AND c.enabled AND c.mode = $4
+ORDER BY dd.next_attempt_at, dd.id
+LIMIT $5`),
 		args: []any{channelID, NotifyStatePending, NotifyStateSending, NotifyModeRealtime, limit},
 	}, nil)
 }
@@ -148,13 +153,19 @@ LIMIT $5`,
 // 会被拆成多条消息，汇总就失去意义了。
 func (d *DB) DigestBatchDue(ctx context.Context, channelID int64, minAge time.Duration) (bool, error) {
 	var due bool
-	err := d.QueryRowContext(ctx, `SELECT EXISTS (
+	err := d.QueryRowContext(ctx, d.SQL(`SELECT EXISTS (
   SELECT 1 FROM notification_deliveries d
   JOIN notification_channels c ON c.id = d.channel_id
   WHERE d.channel_id = $1 AND d.state IN ($2,$3) AND c.enabled
   GROUP BY d.channel_id
   HAVING min(d.created_at) <= now() - make_interval(secs => $4)
-)`, channelID, NotifyStatePending, NotifyStateSending, int64(minAge.Seconds())).Scan(&due)
+)`, `SELECT EXISTS (
+  SELECT 1 FROM notification_deliveries d
+  JOIN notification_channels c ON c.id = d.channel_id
+  WHERE d.channel_id = $1 AND d.state IN ($2,$3) AND c.enabled
+  GROUP BY d.channel_id
+  HAVING min(d.created_at) <= portable_time_shift(now(),-$4)
+)`), channelID, NotifyStatePending, NotifyStateSending, int64(minAge.Seconds())).Scan(&due)
 	return due, err
 }
 
@@ -184,12 +195,16 @@ func (d *DB) ClaimDigestBatch(ctx context.Context, channelID int64, limit int, l
 		limit = MaxDigestBatchSize
 	}
 	out, err := d.claimDeliveries(ctx, lease, claimQuery{
-		sql: `SELECT dd.id FROM notification_deliveries dd
+		sql: d.SQL(`SELECT dd.id FROM notification_deliveries dd
 JOIN notification_channels c ON c.id = dd.channel_id
 WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND dd.next_attempt_at <= now() AND c.enabled
 ORDER BY dd.id
 FOR UPDATE OF dd SKIP LOCKED
-LIMIT $4`,
+LIMIT $4`, `SELECT dd.id FROM notification_deliveries dd
+JOIN notification_channels c ON c.id = dd.channel_id
+WHERE dd.channel_id = $1 AND dd.state IN ($2,$3) AND dd.next_attempt_at <= now() AND c.enabled
+ORDER BY dd.id
+LIMIT $4`),
 		args: []any{channelID, NotifyStatePending, NotifyStateSending, limit},
 	}, func(tx *sql.Tx, ids []int64) error {
 		batchID := ids[0]
@@ -225,9 +240,11 @@ func (d *DB) claimDeliveries(ctx context.Context, lease time.Duration, cq claimQ
 	// 置 sending 并把 next_attempt_at 推到未来：这个未来时刻即租约到期时间，
 	// 「租约未到期」与「未到重试时间」因此共用同一个条件表达，不需要新增列。
 	ph, idArgs := placeholders(3, ids)
-	if _, err := tx.ExecContext(ctx, `UPDATE notification_deliveries
+	if _, err := tx.ExecContext(ctx, d.SQL(`UPDATE notification_deliveries
 SET state=$1, attempts=attempts+1, next_attempt_at=now()+make_interval(secs => $2)
-WHERE id IN (`+ph+`)`,
+WHERE id IN (`, `UPDATE notification_deliveries
+SET state=$1, attempts=attempts+1, next_attempt_at=portable_time_shift(now(),$2)
+WHERE id IN (`)+ph+`)`,
 		append([]any{NotifyStateSending, lease.Seconds()}, idArgs...)...); err != nil {
 		return nil, err
 	}
@@ -298,9 +315,11 @@ func (d *DB) RescheduleDeliveries(ctx context.Context, ids []int64, delay time.D
 	if len(args) == 0 {
 		return nil
 	}
-	_, err := d.ExecContext(ctx, `UPDATE notification_deliveries
+	_, err := d.ExecContext(ctx, d.SQL(`UPDATE notification_deliveries
 SET state=$1, next_attempt_at=now()+make_interval(secs => $2), last_error=$3
-WHERE id IN (`+ph+`)`,
+WHERE id IN (`, `UPDATE notification_deliveries
+SET state=$1, next_attempt_at=portable_time_shift(now(),$2), last_error=$3
+WHERE id IN (`)+ph+`)`,
 		append([]any{NotifyStatePending, delay.Seconds(), truncateNotifyError(errMsg)}, args...)...)
 	return err
 }

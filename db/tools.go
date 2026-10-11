@@ -38,7 +38,7 @@ func (d *DB) SeedTool(key, desc string, schema, agents json.RawMessage) error {
 	_, err := d.Exec(`
 INSERT INTO tools(key, system, description, schema, agents, enabled)
 VALUES ($1, true, $2, $3, $4, true)
-ON CONFLICT (key) DO NOTHING`, key, desc, schema, agents)
+ON CONFLICT (key) DO NOTHING`, key, desc, d.jsonValue(schema), d.jsonValue(agents))
 	return err
 }
 
@@ -87,7 +87,7 @@ ON CONFLICT (key) DO UPDATE
   SET description = EXCLUDED.description,
       schema      = EXCLUDED.schema,
       agents      = EXCLUDED.agents,
-      enabled     = true`, key, desc, schema, agents)
+      enabled     = true`, key, desc, d.jsonValue(schema), d.jsonValue(agents))
 	return err
 }
 
@@ -100,7 +100,7 @@ func (d *DB) RefreshToolDefaults(key, desc string, schema json.RawMessage) error
 	if len(schema) == 0 {
 		schema = json.RawMessage("{}")
 	}
-	_, err := d.Exec(`UPDATE tools SET description=$2, schema=$3, updated_at=now() WHERE key=$1 AND system`, key, desc, schema)
+	_, err := d.Exec(`UPDATE tools SET description=$2, schema=$3, updated_at=now() WHERE key=$1 AND system`, key, desc, d.jsonValue(schema))
 	return err
 }
 
@@ -159,13 +159,13 @@ func (d *DB) CreateCustomTool(t *Tool) error {
 		exec = json.RawMessage("{}")
 	}
 	agents, _ := json.Marshal(t.Agents)
-	if len(agents) == 0 {
+	if len(t.Agents) == 0 {
 		agents = json.RawMessage("[]")
 	}
 	_, err := d.Exec(`
 INSERT INTO tools(key, system, description, schema, agents, enabled, kind, exec, deferred)
 VALUES ($1, false, $2, $3, $4, $5, $6, $7, $8)`,
-		t.Key, t.Description, schema, agents, t.Enabled, t.Kind, exec, t.Deferred)
+		t.Key, t.Description, d.jsonValue(schema), d.jsonValue(agents), t.Enabled, t.Kind, d.jsonValue(exec), t.Deferred)
 	return err
 }
 
@@ -181,13 +181,13 @@ func (d *DB) UpdateCustomTool(t *Tool) error {
 		exec = json.RawMessage("{}")
 	}
 	agents, _ := json.Marshal(t.Agents)
-	if len(agents) == 0 {
+	if len(t.Agents) == 0 {
 		agents = json.RawMessage("[]")
 	}
 	_, err := d.Exec(`
 UPDATE tools SET description=$2, schema=$3, agents=$4, enabled=$5, kind=$6, exec=$7, deferred=$8
 WHERE key=$1 AND system=false`,
-		t.Key, t.Description, schema, agents, t.Enabled, t.Kind, exec, t.Deferred)
+		t.Key, t.Description, d.jsonValue(schema), d.jsonValue(agents), t.Enabled, t.Kind, d.jsonValue(exec), t.Deferred)
 	return err
 }
 
@@ -227,6 +227,6 @@ func (d *DB) UpdateTool(key, desc string, schema, agents json.RawMessage, enable
 	}
 	_, err := d.Exec(`
 UPDATE tools SET description=$2, schema=$3, agents=$4, enabled=$5 WHERE key=$1`,
-		key, desc, schema, agents, enabled)
+		key, desc, d.jsonValue(schema), d.jsonValue(agents), enabled)
 	return err
 }

@@ -27,7 +27,7 @@ var sqliteFunctionsOnce sync.Once
 var sqliteFunctionsErr error
 
 // OpenSQLite opens an on-disk portable store. It never reads PostgreSQL config
-// and intentionally leaves builtin seeding to the startup initialization phase.
+// and seeds missing builtin configuration after versioned migration succeeds.
 func OpenSQLite(path string) (_ *DB, err error) {
 	if strings.TrimSpace(path) == "" || path == ":memory:" {
 		return nil, fmt.Errorf("SQLite requires an on-disk path")

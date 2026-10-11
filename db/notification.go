@@ -82,7 +82,7 @@ const notificationChannelCols = `id, name, kind, enabled, config, mode, filter, 
 func scanNotificationChannel(sc interface{ Scan(...any) error }) (*NotificationChannel, error) {
 	var c NotificationChannel
 	var enabled bool
-	if err := sc.Scan(&c.ID, &c.Name, &c.Kind, &enabled, &c.Config, &c.Mode, &c.Filter, &c.RatePerMin, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	if err := sc.Scan(&c.ID, &c.Name, &c.Kind, &enabled, JSONScanner{&c.Config}, &c.Mode, JSONScanner{&c.Filter}, &c.RatePerMin, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
 	}
 	c.Enabled = &enabled
@@ -286,8 +286,8 @@ func (d *DB) FanOutPendingEvents(ctx context.Context, limit int) (eventCount, de
 	if err != nil {
 		return 0, 0, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, kind, finding_id, snapshot FROM notification_events
-WHERE NOT fanned_out ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1`, limit)
+	rows, err := tx.QueryContext(ctx, d.SQL(`SELECT id, kind, finding_id, snapshot FROM notification_events
+WHERE NOT fanned_out ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1`, `SELECT id, kind, finding_id, snapshot FROM notification_events WHERE NOT fanned_out ORDER BY id LIMIT $1`), limit)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -297,7 +297,7 @@ WHERE NOT fanned_out ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1`, limit)
 	)
 	for rows.Next() {
 		var ev NotificationEvent
-		if err := rows.Scan(&ev.ID, &ev.Kind, &ev.FindingID, &ev.Snapshot); err != nil {
+		if err := rows.Scan(&ev.ID, &ev.Kind, &ev.FindingID, JSONScanner{&ev.Snapshot}); err != nil {
 			rows.Close()
 			return 0, 0, err
 		}
@@ -371,7 +371,7 @@ FROM notification_channels WHERE enabled ORDER BY id`)
 	out := []*NotificationChannel{}
 	for rows.Next() {
 		var c NotificationChannel
-		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Config, &c.Mode, &c.Filter, &c.RatePerMin); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, JSONScanner{&c.Config}, &c.Mode, JSONScanner{&c.Filter}, &c.RatePerMin); err != nil {
 			return nil, err
 		}
 		out = append(out, &c)
@@ -464,7 +464,7 @@ func assetDisplayName(typ, domain, ip, url, appName, bundleID string) string {
 func (d *DB) SetFindingStatusWithNotify(ctx context.Context, id int64, status string) (from string, found bool, notified bool, err error) {
 	err = d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
 		var txErr error
-		from, found, _, notified, txErr = SetFindingStatusTx(ctx, tx, id, status)
+		from, found, _, notified, txErr = SetFindingStatusTx(ctx, tx, id, status, d)
 		return txErr
 	})
 	return from, found, notified, err
@@ -480,14 +480,17 @@ func (d *DB) SetFindingStatusWithNotify(ctx context.Context, id int64, status st
 //
 // 返回 from=变更前状态、found=漏洞是否存在、changed=状态是否真的变了、
 // notified=事件是否登记成功（登记失败不影响状态更新，见 RecordNotificationEventTx）。
-func SetFindingStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string) (from string, found bool, changed bool, notified bool, err error) {
+func SetFindingStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string, dialect ...*DB) (from string, found bool, changed bool, notified bool, err error) {
 	var (
 		vulnclass, name, severity, summary string
 		taskID                             sql.NullInt64
 		assetIDs                           []byte
 	)
-	scanErr := tx.QueryRowContext(ctx, `SELECT vulnclass, name, severity, summary, task_id, asset_ids, status
-FROM findings WHERE id=$1 FOR UPDATE`, id).
+	query := `SELECT vulnclass, name, severity, summary, task_id, asset_ids, status FROM findings WHERE id=$1 FOR UPDATE`
+	if len(dialect) > 0 && dialect[0].IsSQLite() {
+		query = `SELECT vulnclass, name, severity, summary, task_id, asset_ids, status FROM findings WHERE id=$1`
+	}
+	scanErr := tx.QueryRowContext(ctx, query, id).
 		Scan(&vulnclass, &name, &severity, &summary, &taskID, &assetIDs, &from)
 	if scanErr == sql.ErrNoRows {
 		return "", false, false, false, nil
@@ -536,13 +539,19 @@ type NotificationStats struct {
 // 因为积压 3 条和积压 3 条的差别可以是从 3 秒到 3 小时。
 func (d *DB) NotificationStatsSnapshot(ctx context.Context) (*NotificationStats, error) {
 	var s NotificationStats
-	if err := d.QueryRowContext(ctx, `SELECT
+	if err := d.QueryRowContext(ctx, d.SQL(`SELECT
     (SELECT count(*) FROM notification_channels),
     (SELECT count(*) FROM notification_channels WHERE enabled),
     (SELECT count(*) FROM notification_deliveries WHERE state IN ($1,$2)),
     (SELECT count(*) FROM notification_deliveries WHERE state=$3),
     (SELECT count(*) FROM notification_deliveries WHERE state=$4 AND sent_at >= date_trunc('day', now())),
-    COALESCE((SELECT EXTRACT(EPOCH FROM (now() - min(created_at))) * 1000 FROM notification_deliveries WHERE state=$1), 0)::bigint`,
+    COALESCE((SELECT EXTRACT(EPOCH FROM (now() - min(created_at))) * 1000 FROM notification_deliveries WHERE state=$1), 0)::bigint`, `SELECT
+    (SELECT count(*) FROM notification_channels),
+    (SELECT count(*) FROM notification_channels WHERE enabled),
+    (SELECT count(*) FROM notification_deliveries WHERE state IN ($1,$2)),
+    (SELECT count(*) FROM notification_deliveries WHERE state=$3),
+    (SELECT count(*) FROM notification_deliveries WHERE state=$4 AND sent_at >= (substr(now(),1,10)||' 00:00:00.000000000')),
+    CAST(COALESCE((SELECT (julianday(now()) - julianday(min(created_at))) * 86400000 FROM notification_deliveries WHERE state=$1), 0) AS INTEGER)`),
 		NotifyStatePending, NotifyStateSending, NotifyStateFailed, NotifyStateSent).
 		Scan(&s.Channels, &s.ChannelsOn, &s.Pending, &s.Failed, &s.SentToday, &s.BacklogAgeMS); err != nil {
 		return nil, err

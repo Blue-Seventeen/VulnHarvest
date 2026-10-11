@@ -214,7 +214,7 @@ SELECT COALESCE(profile_name,'') AS profile_name,
        substr(ts,1,10) AS day,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0)
 FROM llm_usage
-WHERE ts >= datetime(now(), '-'||$1||' days')
+WHERE ts >= portable_time_shift(now(), -$1*86400)
 GROUP BY profile_name, day
 ORDER BY day`), days)
 	if err != nil {
@@ -318,7 +318,7 @@ ORDER BY day`, `
 SELECT substr(ts,1,10) AS day,
        COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0)
 FROM llm_usage
-WHERE worker = 'judge' AND ts >= datetime(now(), '-'||$1||' days')
+WHERE worker = 'judge' AND ts >= portable_time_shift(now(), -$1*86400)
 GROUP BY day
 ORDER BY day`), days)
 	if err != nil {

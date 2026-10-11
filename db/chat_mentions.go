@@ -66,7 +66,7 @@ func (d *DB) SearchChatMentionsPage(ctx context.Context, kind, query, cursor str
 		}
 	}
 	pattern := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(query) + "%"
-	rows, err := d.QueryContext(ctx, `
+	rows, err := d.QueryContext(ctx, d.SQL(`
 SELECT kind, id, left(label, 160), left(description, 240) FROM (
  (SELECT 'finding' AS kind, id, COALESCE(NULLIF(name,''), vulnclass) AS label,
          concat_ws(' · ', severity, status, left(summary, 160)) AS description
@@ -88,7 +88,33 @@ SELECT kind, id, left(label, 160), left(description, 240) FROM (
     ($2='' OR id::text=$2 OR concat_ws(' ',domain,root_domain,ip,url,app_name,bundle_id,page_title,service_name,method) ILIKE $3)
     AND ($4::bigint=0 OR (id::text=$2)<$6 OR ((id::text=$2)=$6 AND (id<$4 OR (id=$4 AND type>$5))))
   ORDER BY (id::text=$2) DESC, id DESC LIMIT 21)
-) matches ORDER BY (id::text=$2) DESC, id DESC, kind LIMIT 21`, kind, query, pattern, after.ID, after.Kind, after.Exact)
+) matches ORDER BY (id::text=$2) DESC, id DESC, kind LIMIT 21`, `
+SELECT kind,id,substr(label,1,160),substr(description,1,240) FROM (
+ SELECT * FROM (
+  SELECT 'finding' AS kind,id,COALESCE(NULLIF(name,''),vulnclass) AS label,
+    concat_ws(' · ',severity,status,substr(summary,1,160)) AS description
+  FROM findings WHERE ($1='' OR $1='finding') AND
+    ($2='' OR CAST(id AS TEXT)=$2 OR portable_lower(concat_ws(' ',name,vulnclass,summary)) LIKE portable_lower($3) ESCAPE '\')
+    AND ($4=0 OR (CAST(id AS TEXT)=$2)<$6 OR ((CAST(id AS TEXT)=$2)=$6 AND (id<$4 OR (id=$4 AND 'finding'>$5))))
+  ORDER BY (CAST(id AS TEXT)=$2) DESC,id DESC LIMIT 21
+ )
+ UNION ALL SELECT * FROM (
+  SELECT 'company',id,name,nkey FROM companies
+  WHERE ($1='' OR $1='company') AND ($2='' OR CAST(id AS TEXT)=$2 OR portable_lower(name) LIKE portable_lower($3) ESCAPE '\' OR portable_lower(nkey) LIKE portable_lower($3) ESCAPE '\')
+    AND ($4=0 OR (CAST(id AS TEXT)=$2)<$6 OR ((CAST(id AS TEXT)=$2)=$6 AND (id<$4 OR (id=$4 AND 'company'>$5))))
+  ORDER BY (CAST(id AS TEXT)=$2) DESC,id DESC LIMIT 21
+ )
+ UNION ALL SELECT * FROM (
+  SELECT type,id,
+    CASE WHEN type='endpoint' THEN concat_ws(' ',NULLIF(method,''),url)
+    ELSE COALESCE(NULLIF(app_name,''),NULLIF(url,''),NULLIF(domain,''),NULLIF(ip,''),NULLIF(bundle_id,''),'资产 #'||CAST(id AS TEXT)) END,
+    concat_ws(' · ',type,NULLIF(page_title,''),NULLIF(service_name,''),NULLIF(bundle_id,''),NULLIF(ip,''),CAST(port AS TEXT))
+  FROM assets WHERE ($1='' OR $1='asset' OR type=$1) AND
+    ($2='' OR CAST(id AS TEXT)=$2 OR portable_lower(concat_ws(' ',domain,root_domain,ip,url,app_name,bundle_id,page_title,service_name,method)) LIKE portable_lower($3) ESCAPE '\')
+    AND ($4=0 OR (CAST(id AS TEXT)=$2)<$6 OR ((CAST(id AS TEXT)=$2)=$6 AND (id<$4 OR (id=$4 AND type>$5))))
+  ORDER BY (CAST(id AS TEXT)=$2) DESC,id DESC LIMIT 21
+ )
+) matches ORDER BY (CAST(id AS TEXT)=$2) DESC,id DESC,kind LIMIT 21`), kind, query, pattern, after.ID, after.Kind, after.Exact)
 	if err != nil {
 		return page, err
 	}
