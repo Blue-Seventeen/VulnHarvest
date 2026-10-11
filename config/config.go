@@ -26,8 +26,29 @@ type Database struct {
 
 // Config is the on-disk config file shape.
 type Config struct {
+	Mode     string   `json:"mode"`
 	Database Database `json:"database"`
 	SkillDir string   `json:"skill_dir"`
+}
+
+// ResolveMode resolves the startup mode without inspecting the PostgreSQL DSN.
+// Only the highest-priority nonempty source is validated.
+func ResolveMode(cli string) (string, error) {
+	mode := strings.TrimSpace(cli)
+	if mode == "" {
+		mode = strings.TrimSpace(os.Getenv("VULNHARVEST_MODE"))
+	}
+	if mode == "" {
+		mode = strings.TrimSpace(Load().Mode)
+	}
+	if mode == "" {
+		mode = "postgres"
+	}
+	mode = strings.ToLower(mode)
+	if mode != "portable" && mode != "postgres" {
+		return "", fmt.Errorf("invalid runtime mode %q: expected portable or postgres", mode)
+	}
+	return mode, nil
 }
 
 // BaseDir is the directory that anchors all runtime artifacts (config.json and
