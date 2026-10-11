@@ -9,7 +9,7 @@ import (
 )
 
 func TestTaskLifecycleAndDeleteCascade(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
@@ -83,7 +83,7 @@ func TestTaskLifecycleAndDeleteCascade(t *testing.T) {
 }
 
 func TestTaskDeleteCascadeAssets(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
@@ -207,7 +207,7 @@ func TestTaskDeleteCascadeAssets(t *testing.T) {
 }
 
 func TestTaskRelationsAndLLMFailoverChain(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
@@ -465,7 +465,7 @@ func TestTaskRelationsAndLLMFailoverChain(t *testing.T) {
 }
 
 func TestTaskContextRejectsDuplicatesAndAllowsTerminalLLMEdits(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
@@ -518,7 +518,7 @@ func TestTaskContextRejectsDuplicatesAndAllowsTerminalLLMEdits(t *testing.T) {
 }
 
 func TestCreateTaskWithCompanyScopes(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
@@ -549,10 +549,11 @@ func TestCreateTaskWithCompanyScopes(t *testing.T) {
 	var companyAssetA, companyAssetB int64
 	domainA := fmt.Sprintf("task-company-a-%d.example.test", suffix)
 	domainB := fmt.Sprintf("task-company-b-%d.example.test", suffix)
-	if err := d.QueryRow(`
+	if err := d.QueryRow(d.SQL(`
 INSERT INTO assets(type, domain, root_domain, company_id, company_source, task_ids)
 VALUES ('root_domain',$1,$1,$2,'explicit',ARRAY[$3]::bigint[])
-RETURNING id`, domainA, companyA, existingTask.ID).Scan(&companyAssetA); err != nil {
+RETURNING id`, `INSERT INTO assets(type,domain,root_domain,company_id,company_source,task_ids)
+VALUES('root_domain',$1,$1,$2,'explicit',json_array($3)) RETURNING id`), domainA, companyA, existingTask.ID).Scan(&companyAssetA); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.QueryRow(`
@@ -612,7 +613,7 @@ RETURNING id`, domainB, companyB).Scan(&companyAssetB); err != nil {
 		}
 	}
 	var existingAssociation bool
-	if err := d.QueryRow(`SELECT $1=ANY(task_ids) FROM assets WHERE id=$2`, existingTask.ID, companyAssetA).Scan(&existingAssociation); err != nil {
+	if err := d.QueryRow(d.SQL(`SELECT $1=ANY(task_ids) FROM assets WHERE id=$2`, `SELECT EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1) FROM assets WHERE id=$2`), existingTask.ID, companyAssetA).Scan(&existingAssociation); err != nil {
 		t.Fatal(err)
 	}
 	if !existingAssociation {
@@ -669,7 +670,7 @@ RETURNING id`, domainB, companyB).Scan(&companyAssetB); err != nil {
 // deliberately not the sort key: tasks created in the same instant share a
 // timestamp and would reorder between polls; id is unique and monotonic.
 func TestListTasksOrderByIDDesc(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}

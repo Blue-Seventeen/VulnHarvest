@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -63,8 +61,8 @@ const taskTemplateCols = `id, name, nkey, description, goal, category_id, interc
 
 func scanTaskTemplate(row interface{ Scan(...any) error }) (TaskTemplate, error) {
 	var t TaskTemplate
-	var rulesRaw []byte
-	if err := row.Scan(&t.ID, &t.Name, &t.NKey, &t.Description, &t.Goal, &t.CategoryID, &rulesRaw, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	var rulesRaw json.RawMessage
+	if err := row.Scan(&t.ID, &t.Name, &t.NKey, &t.Description, &t.Goal, &t.CategoryID, JSONScanner{&rulesRaw}, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return t, err
 	}
 	t.InterceptRules = []TaskInterceptRuleInput{}
@@ -156,8 +154,7 @@ func normalizeTaskTemplatePatch(patch TaskTemplatePatch) (TaskTemplatePatch, *st
 }
 
 func taskTemplateUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return IsUniqueViolation(err)
 }
 
 // CreateTaskTemplate inserts one globally reusable preset.
@@ -174,7 +171,7 @@ func (d *DB) CreateTaskTemplate(in TaskTemplateInput) (*TaskTemplate, error) {
 INSERT INTO task_templates(name, nkey, description, goal, category_id, intercept_rules)
 VALUES ($1,$2,$3,$4,$5,$6)
 ON CONFLICT (nkey) DO NOTHING
-RETURNING `+taskTemplateCols, in.Name, nkey, in.Description, in.Goal, in.CategoryID, rulesJSON))
+RETURNING `+taskTemplateCols, in.Name, nkey, in.Description, in.Goal, in.CategoryID, d.jsonValue(rulesJSON)))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskTemplateNameConflict
 	}
@@ -237,7 +234,17 @@ func (d *DB) PatchTaskTemplate(id int64, patch TaskTemplatePatch) (*TaskTemplate
 	if err != nil {
 		return nil, err
 	}
-	t, err := scanTaskTemplate(d.QueryRow(`UPDATE task_templates
+	queryRow := d.QueryRow
+	var tx *sql.Tx
+	if d.IsSQLite() {
+		tx, err = d.Begin()
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		queryRow = tx.QueryRow
+	}
+	t, err := scanTaskTemplate(queryRow(d.SQL(`UPDATE task_templates
 SET name=CASE WHEN $2 THEN $3::text ELSE name END,
     nkey=CASE WHEN $2 THEN $4::text ELSE nkey END,
     description=CASE WHEN $5 THEN $6::text ELSE description END,
@@ -245,13 +252,21 @@ SET name=CASE WHEN $2 THEN $3::text ELSE name END,
     category_id=CASE WHEN $9 THEN $10::bigint ELSE category_id END,
     intercept_rules=CASE WHEN $11 THEN $12::jsonb ELSE intercept_rules END
 WHERE id=$1
-RETURNING `+taskTemplateCols,
+RETURNING `+taskTemplateCols, `UPDATE task_templates
+SET name=CASE WHEN $2 THEN $3 ELSE name END,
+    nkey=CASE WHEN $2 THEN $4 ELSE nkey END,
+    description=CASE WHEN $5 THEN $6 ELSE description END,
+    goal=CASE WHEN $7 THEN $8 ELSE goal END,
+    category_id=CASE WHEN $9 THEN $10 ELSE category_id END,
+    intercept_rules=CASE WHEN $11 THEN $12 ELSE intercept_rules END,
+    updated_at=now()
+WHERE id=$1 RETURNING `+taskTemplateCols),
 		id,
 		patch.Name != nil, patch.Name, nkey,
 		patch.Description != nil, patch.Description,
 		patch.Goal != nil, patch.Goal,
 		patch.SetCategoryID, patch.CategoryID,
-		patch.SetInterceptRules, rulesJSON,
+		patch.SetInterceptRules, d.jsonValue(rulesJSON),
 	))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskTemplateNotFound
@@ -261,6 +276,15 @@ RETURNING `+taskTemplateCols,
 	}
 	if err != nil {
 		return nil, err
+	}
+	if tx != nil {
+		// Read the final AFTER-trigger stamp before releasing the write barrier.
+		if err = tx.QueryRow(`SELECT updated_at FROM task_templates WHERE id=$1`, id).Scan(&t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
 	}
 	return &t, nil
 }

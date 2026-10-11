@@ -6,7 +6,7 @@ import (
 )
 
 func TestTaskQueuePreservesBootstrapAndFIFOPosition(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}

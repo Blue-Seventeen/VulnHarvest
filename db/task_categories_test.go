@@ -9,7 +9,7 @@ import (
 )
 
 func TestTaskCategoryCRUDAndTaskAssignment(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
@@ -56,8 +56,12 @@ func TestTaskCategoryCRUDAndTaskAssignment(t *testing.T) {
 	if loaded.CategoryID != nil || loaded.CategoryName != "" {
 		t.Fatalf("uncategorized task retained category: %+v", loaded)
 	}
-	if _, err := d.SetTaskCategory(task.ID, &category.ID); err != nil {
+	assigned, err := d.SetTaskCategory(task.ID, &category.ID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if assigned == nil || assigned.TaskCount != 1 {
+		t.Fatalf("assignment count=%+v, want one committed task", assigned)
 	}
 	deleted, err := d.DeleteTaskCategory(category.ID)
 	if err != nil || !deleted {
@@ -70,7 +74,7 @@ func TestTaskCategoryCRUDAndTaskAssignment(t *testing.T) {
 }
 
 func TestCreateTaskRejectsMissingCategoryAtomically(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
@@ -91,7 +95,7 @@ func TestCreateTaskRejectsMissingCategoryAtomically(t *testing.T) {
 }
 
 func TestSetTasksCategoryBatch(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}
@@ -148,7 +152,7 @@ func TestSetTasksCategoryBatch(t *testing.T) {
 }
 
 func TestSetTasksCategoryRejectsBadInputAtomically(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) - skipping", err)
 	}

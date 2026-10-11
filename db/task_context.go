@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -112,6 +113,18 @@ type taskBatchContext struct {
 	companyIDs      []int64
 }
 
+// Explicit ID-set binds: pgx accepts bigint[], while SQLite consumes JSON text.
+func (d *DB) taskIDParameter(ids []int64) any {
+	if !d.IsSQLite() {
+		return ids
+	}
+	if ids == nil {
+		ids = []int64{}
+	}
+	raw, _ := json.Marshal(ids)
+	return string(raw)
+}
+
 // hydrateTasksContext loads every task's LLM chain, source tasks, and company
 // scopes with three bulk queries. ListTasks used to issue these queries once per
 // task, making startup and task-list hydration grow as 3N+1 database round trips.
@@ -135,13 +148,18 @@ func (d *DB) hydrateTasksContext(tasks []*Task) error {
 		return nil
 	}
 
-	rows, err := d.Query(`
+	rows, err := d.Query(d.SQL(`
 SELECT t.id, t.llm_profile_id, t.active_llm_profile_id, t.llm_chain_revision,
        p.profile_id, p.position, p.status, COALESCE(p.last_error,''), p.exhausted_at
 FROM tasks t
 LEFT JOIN task_llm_profiles p ON p.task_id=t.id
 WHERE t.id=ANY($1::bigint[])
-ORDER BY t.id, p.position NULLS LAST`, ids)
+ORDER BY t.id, p.position NULLS LAST`, `
+SELECT t.id, t.llm_profile_id, t.active_llm_profile_id, t.llm_chain_revision,
+       p.profile_id, p.position, p.status, COALESCE(p.last_error,''), p.exhausted_at
+FROM tasks t LEFT JOIN task_llm_profiles p ON p.task_id=t.id
+WHERE t.id IN (SELECT value FROM json_each($1))
+ORDER BY t.id, p.position NULLS LAST`), d.taskIDParameter(ids))
 	if err != nil {
 		return err
 	}
@@ -190,11 +208,14 @@ ORDER BY t.id, p.position NULLS LAST`, ids)
 	}
 	rows.Close()
 
-	rows, err = d.Query(`
+	rows, err = d.Query(d.SQL(`
 SELECT task_id, source_task_id
 FROM task_relations
 WHERE task_id=ANY($1::bigint[])
-ORDER BY task_id, created_at, source_task_id`, ids)
+ORDER BY task_id, created_at, source_task_id`, `
+SELECT task_id, source_task_id FROM task_relations
+WHERE task_id IN (SELECT value FROM json_each($1))
+ORDER BY task_id, created_at, source_task_id`), d.taskIDParameter(ids))
 	if err != nil {
 		return err
 	}
@@ -214,11 +235,14 @@ ORDER BY task_id, created_at, source_task_id`, ids)
 	}
 	rows.Close()
 
-	rows, err = d.Query(`
+	rows, err = d.Query(d.SQL(`
 SELECT task_id, company_id
 FROM task_scope
 WHERE task_id=ANY($1::bigint[]) AND kind='company' AND company_id IS NOT NULL
-ORDER BY task_id, id`, ids)
+ORDER BY task_id, id`, `
+SELECT task_id, company_id FROM task_scope
+WHERE task_id IN (SELECT value FROM json_each($1)) AND kind='company' AND company_id IS NOT NULL
+ORDER BY task_id, id`), d.taskIDParameter(ids))
 	if err != nil {
 		return err
 	}
@@ -476,7 +500,7 @@ func (d *DB) markTaskLLMProfileQuotaExhausted(taskID, profileID, revision int64,
 		active          sql.NullInt64
 		currentRevision int64
 	)
-	if err := tx.QueryRow(`SELECT active_llm_profile_id, llm_chain_revision FROM tasks WHERE id=$1 FOR UPDATE`, taskID).Scan(&active, &currentRevision); err != nil {
+	if err := tx.QueryRow(d.SQL(`SELECT active_llm_profile_id, llm_chain_revision FROM tasks WHERE id=$1 FOR UPDATE`, `SELECT active_llm_profile_id, llm_chain_revision FROM tasks WHERE id=$1`), taskID).Scan(&active, &currentRevision); err != nil {
 		return out, err
 	}
 	out.PreviousProfileID = profileID

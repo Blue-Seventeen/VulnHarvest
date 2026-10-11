@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const MaxTaskCategoryNameRunes = 80
@@ -56,8 +54,7 @@ func normalizeTaskCategoryName(name string) (string, string, error) {
 }
 
 func taskCategoryUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return IsUniqueViolation(err)
 }
 
 func (d *DB) CreateTaskCategory(name string) (*TaskCategory, error) {
@@ -65,7 +62,7 @@ func (d *DB) CreateTaskCategory(name string) (*TaskCategory, error) {
 	if err != nil {
 		return nil, err
 	}
-	category, err := scanTaskCategory(d.QueryRow(`
+	category, err := scanTaskCategory(d.QueryRow(d.SQL(`
 WITH inserted AS (
     INSERT INTO task_categories(name, nkey)
     VALUES ($1,$2)
@@ -73,7 +70,8 @@ WITH inserted AS (
     RETURNING *
 )
 SELECT inserted.id, inserted.name, inserted.nkey, 0, inserted.created_at, inserted.updated_at
-FROM inserted`, name, nkey))
+FROM inserted`, `INSERT INTO task_categories(name,nkey) VALUES ($1,$2)
+ON CONFLICT(nkey) DO NOTHING RETURNING id,name,nkey,0,created_at,updated_at`), name, nkey))
 	if err == sql.ErrNoRows {
 		return nil, ErrTaskCategoryNameConflict
 	}
@@ -126,6 +124,32 @@ func (d *DB) RenameTaskCategory(id int64, name string) (*TaskCategory, error) {
 	if err != nil {
 		return nil, err
 	}
+	if d.IsSQLite() {
+		tx, err := d.Begin()
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		category, err := scanTaskCategory(tx.QueryRow(`UPDATE task_categories SET name=$2,nkey=$3,updated_at=now() WHERE id=$1
+RETURNING id,name,nkey,0,created_at,updated_at`, id, name, nkey))
+		if err == sql.ErrNoRows {
+			return nil, ErrTaskCategoryNotFound
+		}
+		if taskCategoryUniqueViolation(err) {
+			return nil, ErrTaskCategoryNameConflict
+		}
+		if err != nil {
+			return nil, err
+		}
+		// AFTER UPDATE can advance the SQLite timestamp after RETURNING ran.
+		if err = tx.QueryRow(`SELECT (SELECT count(*) FROM tasks WHERE category_id=$1 AND deleted_at IS NULL),updated_at FROM task_categories WHERE id=$1`, id).Scan(&category.TaskCount, &category.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		return &category, nil
+	}
 	category, err := scanTaskCategory(d.QueryRow(`
 WITH updated AS (
     UPDATE task_categories SET name=$2, nkey=$3 WHERE id=$1 RETURNING *
@@ -176,29 +200,39 @@ func (d *DB) SetTaskCategory(taskID int64, categoryID *int64) (*TaskCategory, er
 	if *categoryID <= 0 {
 		return nil, fmt.Errorf("%w: category id must be positive", ErrTaskCategoryInvalid)
 	}
-	category, err := scanTaskCategory(d.QueryRow(`
-WITH selected AS (
-    SELECT * FROM task_categories WHERE id=$2
-), updated AS (
-    UPDATE tasks SET category_id=$2
-    WHERE id=$1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM selected)
-    RETURNING id
-)
-SELECT selected.id, selected.name, selected.nkey,
-       (SELECT count(*) FROM tasks WHERE category_id=selected.id AND deleted_at IS NULL),
-       selected.created_at, selected.updated_at
-FROM selected, updated`, taskID, *categoryID))
-	if err == sql.ErrNoRows {
-		var taskExists bool
-		if checkErr := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL)`, taskID).Scan(&taskExists); checkErr != nil {
-			return nil, checkErr
-		}
-		if !taskExists {
-			return nil, ErrTaskCategoryTaskNotFound
-		}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var taskExists, categoryExists bool
+	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND deleted_at IS NULL),EXISTS(SELECT 1 FROM task_categories WHERE id=$2)`, taskID, *categoryID).Scan(&taskExists, &categoryExists); err != nil {
+		return nil, err
+	}
+	if !taskExists {
+		return nil, ErrTaskCategoryTaskNotFound
+	}
+	if !categoryExists {
 		return nil, ErrTaskCategoryNotFound
 	}
+	result, err := tx.Exec(`UPDATE tasks SET category_id=$2 WHERE id=$1 AND deleted_at IS NULL`, taskID, *categoryID)
 	if err != nil {
+		return nil, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if updated == 0 {
+		return nil, ErrTaskCategoryTaskNotFound
+	}
+	// A second statement sees our own UPDATE. The PG data-modifying CTE's count
+	// used its pre-update statement snapshot and returned the previous count.
+	category, err := scanTaskCategory(tx.QueryRow(`SELECT `+taskCategoryCols+` FROM task_categories category LEFT JOIN tasks task ON task.category_id=category.id WHERE category.id=$1 GROUP BY category.id`, *categoryID))
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &category, nil
@@ -241,10 +275,10 @@ func (d *DB) SetTasksCategory(taskIDs []int64, categoryID *int64) ([]int64, *Tas
 			return nil, nil, ErrTaskCategoryNotFound
 		}
 	}
-	rows, err := tx.Query(`
+	rows, err := tx.Query(d.SQL(`
 UPDATE tasks SET category_id=$2
 WHERE id=ANY($1::bigint[]) AND deleted_at IS NULL
-RETURNING id`, taskIDs, categoryID)
+RETURNING id`, `UPDATE tasks SET category_id=$2 WHERE id IN (SELECT value FROM json_each($1)) AND deleted_at IS NULL RETURNING id`), d.taskIDParameter(taskIDs), categoryID)
 	if err != nil {
 		return nil, nil, err
 	}

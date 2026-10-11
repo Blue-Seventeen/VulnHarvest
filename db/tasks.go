@@ -260,6 +260,32 @@ func insertTaskCompanies(tx *sql.Tx, taskID int64, companyIDs []int64, dialect .
 	if err := lockCompanyScopeMutation(tx, dialect...); err != nil {
 		return err
 	}
+	if len(dialect) > 0 && dialect[0].IsSQLite() {
+		ids := dialect[0].taskIDParameter(companyIDs)
+		var found int
+		if err := tx.QueryRow(`SELECT count(*) FROM companies WHERE id IN (SELECT value FROM json_each($1))`, ids).Scan(&found); err != nil {
+			return err
+		}
+		if found != len(companyIDs) {
+			return fmt.Errorf("%w: one or more companies do not exist", ErrTaskCompanyNotFound)
+		}
+		for _, id := range companyIDs {
+			if _, err := tx.Exec(`INSERT INTO task_scope(task_id,kind,company_id,source,reason) VALUES ($1,'company',$2,'manual','任务创建时关联企业')`, taskID, id); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`UPDATE assets SET task_ids=portable_asset_array_merge(task_ids,json_array($1),'set')
+WHERE company_id IN (SELECT value FROM json_each($2))`, taskID, ids); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO task_asset_links(task_id,asset_id,source,source_summary)
+SELECT $1,asset.id,$3,'任务创建时关联企业：' || company.name
+FROM assets asset JOIN companies company ON company.id=asset.company_id
+WHERE asset.company_id IN (SELECT value FROM json_each($2))
+AND EXISTS(SELECT 1 FROM json_each(asset.task_ids) WHERE value=$1)
+ON CONFLICT(task_id,asset_id) DO UPDATE SET source=excluded.source,source_summary=excluded.source_summary,source_node_id=NULL`, taskID, ids, taskCompanyAssetSource)
+		return err
+	}
 	var inserted int
 	err := tx.QueryRow(`
 WITH requested(company_id, position) AS (
@@ -397,7 +423,7 @@ type TaskPatch struct {
 // UpdateTask applies a partial task name/pin mutation and returns the updated row.
 // Re-pinning an already pinned task preserves its original position.
 func (d *DB) UpdateTask(id int64, patch TaskPatch) (*Task, error) {
-	task, err := scanTask(d.QueryRow(`UPDATE tasks SET
+	task, err := scanTask(d.QueryRow(d.SQL(`UPDATE tasks SET
 	name = CASE WHEN $2::boolean THEN $3 ELSE name END,
 	pinned_at = CASE
 		WHEN $4::boolean IS NULL THEN pinned_at
@@ -405,7 +431,10 @@ func (d *DB) UpdateTask(id int64, patch TaskPatch) (*Task, error) {
 		ELSE NULL
 	END
 WHERE id=$1 AND deleted_at IS NULL
-RETURNING `+taskCols, id, patch.Name != nil, patch.Name, patch.Pinned))
+RETURNING `+taskCols, `UPDATE tasks SET
+name=CASE WHEN $2 THEN $3 ELSE name END,
+pinned_at=CASE WHEN $4 IS NULL THEN pinned_at WHEN $4 THEN COALESCE(pinned_at,now()) ELSE NULL END
+WHERE id=$1 AND deleted_at IS NULL RETURNING `+taskCols), id, patch.Name != nil, patch.Name, patch.Pinned))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -509,6 +538,17 @@ UPDATE tasks
 // leaves deadline_at NULL (不限时). Returns the resulting deadline (nil = 不限/未变).
 func (d *DB) StampFirstRun(id int64, timeoutSeconds int) (*time.Time, error) {
 	var deadline *time.Time
+	if d.IsSQLite() {
+		started := time.Now().UTC()
+		var candidate any
+		if timeoutSeconds > 0 {
+			candidate = started.Add(time.Duration(timeoutSeconds) * time.Second)
+		}
+		err := d.QueryRow(`UPDATE tasks SET first_run_at=COALESCE(first_run_at,$2),
+deadline_at=CASE WHEN first_run_at IS NOT NULL THEN deadline_at ELSE $3 END
+WHERE id=$1 RETURNING deadline_at`, id, started, candidate).Scan(&deadline)
+		return deadline, err
+	}
 	err := d.QueryRow(`
 UPDATE tasks
    SET first_run_at = COALESCE(first_run_at, now()),
@@ -559,7 +599,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 	}
 	defer tx.Rollback()
 	var expID int64
-	if err := tx.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1 FOR UPDATE`, id).Scan(&expID); err != nil {
+	if err := tx.QueryRow(d.SQL(`SELECT exploration_id FROM tasks WHERE id=$1 FOR UPDATE`, `SELECT exploration_id FROM tasks WHERE id=$1`), id).Scan(&expID); err != nil {
 		if err == sql.ErrNoRows {
 			return result, nil // already gone
 		}

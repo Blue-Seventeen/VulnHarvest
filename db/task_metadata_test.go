@@ -7,7 +7,7 @@ import (
 )
 
 func TestTaskPinOrderingAndRename(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
@@ -23,9 +23,10 @@ func TestTaskPinOrderingAndRename(t *testing.T) {
 		_ = d.DeleteTask(first.ID)
 		t.Fatal(err)
 	}
+	firstID, secondID := first.ID, second.ID
 	defer func() {
-		_ = d.DeleteTask(first.ID)
-		_ = d.DeleteTask(second.ID)
+		_ = d.DeleteTask(firstID)
+		_ = d.DeleteTask(secondID)
 	}()
 
 	pinned := true
@@ -69,7 +70,7 @@ func TestTaskPinOrderingAndRename(t *testing.T) {
 }
 
 func TestDeleteConversationsReturnsExistingIDs(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTaskTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
