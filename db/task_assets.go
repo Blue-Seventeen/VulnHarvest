@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -158,7 +159,7 @@ func (s *AssetStore) RegisterTaskAssetScopes(taskID int64, inputs []ScopeInput) 
 		return mutation, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return mutation, err
 	}
 	var taskExists bool
@@ -341,10 +342,21 @@ func (s *AssetStore) hydrateTaskAssetSources(taskID int64, assets []*Asset) erro
 		ids = append(ids, asset.ID)
 		byID[asset.ID] = asset
 	}
-	rows, err := s.db.Query(`
+	var idsValue any = ids
+	if s.db.IsSQLite() {
+		raw, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		idsValue = s.db.jsonValue(raw)
+	}
+	rows, err := s.query(s.db.SQL(`
 SELECT asset_id, source, source_summary, source_node_id
 FROM task_asset_links
-WHERE task_id=$1 AND asset_id=ANY($2::bigint[])`, taskID, ids)
+WHERE task_id=$1 AND asset_id=ANY($2::bigint[])`, `
+SELECT asset_id, source, source_summary, source_node_id
+FROM task_asset_links
+WHERE task_id=$1 AND asset_id IN (SELECT value FROM json_each($2))`), taskID, idsValue)
 	if err != nil {
 		return err
 	}

@@ -110,7 +110,7 @@ func (s *AssetStore) withCompanyScopeMutation(fn func(*AssetStore) (int64, error
 		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return 0, err
 	}
 	scoped := &AssetStore{db: s.db, company: s.company, tx: tx}
@@ -126,7 +126,7 @@ func (s *AssetStore) withCompanyScopeMutation(fn func(*AssetStore) (int64, error
 
 func (s *AssetStore) resolveCompanyWithICP(rootDomain, ipStr, icp string) (*int64, error) {
 	if s.tx != nil {
-		return resolveCompanyWithICP(s.tx, rootDomain, ipStr, icp)
+		return resolveCompanyWithICP(s.tx, rootDomain, ipStr, icp, s.db)
 	}
 	return s.company.ResolveCompanyWithICP(rootDomain, ipStr, icp)
 }
@@ -219,6 +219,7 @@ func marshalStringArray(items []string) string {
 	}
 	escaped := make([]string, len(items))
 	for i, s := range items {
+		s = strings.ReplaceAll(s, `\`, `\\`)
 		escaped[i] = `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 	}
 	return "{" + strings.Join(escaped, ",") + "}"
@@ -267,12 +268,7 @@ func (s *AssetStore) UpsertRootDomain(req UpsertRootDomainReq) (int64, error) {
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := s.taskIDs(req.TaskID)
 
 	var icpVal any
 	if req.ICP != "" {
@@ -280,7 +276,7 @@ func (s *AssetStore) UpsertRootDomain(req UpsertRootDomainReq) (int64, error) {
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(type, domain, root_domain, icp, company_id, company_source, task_ids)
 VALUES ('root_domain', $1, $1, $2, $3, 'scope', $4::bigint[])
 ON CONFLICT (domain) WHERE type = 'root_domain' DO UPDATE SET
@@ -297,7 +293,24 @@ ON CONFLICT (domain) WHERE type = 'root_domain' DO UPDATE SET
     task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     extra      = assets.extra || EXCLUDED.extra,
     last_seen  = now()
-RETURNING id`, domain, icpVal, companyID, taskIDs).Scan(&id)
+RETURNING id`, `
+INSERT INTO assets(type, domain, root_domain, icp, company_id, company_source, task_ids)
+VALUES ('root_domain', $1, $1, $2, $3, 'scope', $4)
+ON CONFLICT (domain) WHERE type = 'root_domain' DO UPDATE SET
+    icp        = COALESCE(EXCLUDED.icp, assets.icp),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids   = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    extra      = portable_json_overlay(assets.extra, EXCLUDED.extra),
+    last_seen  = now()
+RETURNING id`), domain, icpVal, companyID, taskIDs).Scan(&id)
 	return id, err
 }
 
@@ -353,15 +366,10 @@ func (s *AssetStore) UpsertIP(req UpsertIPReq) (int64, error) {
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := s.taskIDs(req.TaskID)
 
-	boundDomains := marshalStringArray(req.BoundDomains)
-	openPortsJSON, err := marshalPortServices(req.OpenPorts)
+	boundDomains := s.stringArray(req.BoundDomains)
+	openPortsJSON, err := s.portArray(req.OpenPorts)
 	if err != nil {
 		return 0, err
 	}
@@ -372,7 +380,7 @@ func (s *AssetStore) UpsertIP(req UpsertIPReq) (int64, error) {
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(type, ip, c_segment, bound_domains, open_ports, company_id, company_source, task_ids)
 VALUES ('ip', $1, $2::cidr, $3::text[], $4::jsonb[], $5, 'scope', $6::bigint[])
 ON CONFLICT (ip) WHERE type = 'ip' DO UPDATE SET
@@ -397,7 +405,25 @@ ON CONFLICT (ip) WHERE type = 'ip' DO UPDATE SET
     END,
     task_ids   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     last_seen  = now()
-RETURNING id`, req.IP, csegVal, boundDomains, openPortsJSON, companyID, taskIDs).Scan(&id)
+RETURNING id`, `
+INSERT INTO assets(type, ip, c_segment, bound_domains, open_ports, company_id, company_source, task_ids)
+VALUES ('ip', $1, $2, $3, $4, $5, 'scope', $6)
+ON CONFLICT (ip) WHERE type = 'ip' DO UPDATE SET
+    bound_domains = portable_asset_array_merge(assets.bound_domains, EXCLUDED.bound_domains, 'set'),
+    open_ports    = portable_asset_array_merge(assets.open_ports, EXCLUDED.open_ports, 'ports'),
+    c_segment  = COALESCE(assets.c_segment, EXCLUDED.c_segment),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids   = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    last_seen  = now()
+RETURNING id`), req.IP, csegVal, boundDomains, openPortsJSON, companyID, taskIDs).Scan(&id)
 	return id, err
 }
 
@@ -406,8 +432,12 @@ func (s *AssetStore) AppendIPPort(ipStr string, port int, serviceName string) er
 	if ipStr == "" || port == 0 {
 		return nil
 	}
+	if s.tx == nil {
+		_, err := s.withCompanyScopeMutation(func(scoped *AssetStore) (int64, error) { return 0, scoped.AppendIPPort(ipStr, port, serviceName) })
+		return err
+	}
 	entry, _ := json.Marshal(map[string]any{"port": port, "service": serviceName})
-	_, err := s.db.Exec(`
+	_, err := s.tx.Exec(s.db.SQL(`
 UPDATE assets SET
     open_ports = (
         SELECT ARRAY(
@@ -418,7 +448,7 @@ UPDATE assets SET
         )
     ),
     last_seen = now()
-WHERE type = 'ip' AND ip = $2`, string(entry), ipStr)
+WHERE type = 'ip' AND ip = $2`, `UPDATE assets SET open_ports=portable_asset_array_merge(open_ports,json_array(json($1)),'ports'),last_seen=now() WHERE type='ip' AND ip=$2`), string(entry), ipStr)
 	return err
 }
 
@@ -427,11 +457,15 @@ func (s *AssetStore) AppendIPBoundDomain(ipStr, domain string) error {
 	if ipStr == "" || domain == "" {
 		return nil
 	}
-	_, err := s.db.Exec(`
+	if s.tx == nil {
+		_, err := s.withCompanyScopeMutation(func(scoped *AssetStore) (int64, error) { return 0, scoped.AppendIPBoundDomain(ipStr, domain) })
+		return err
+	}
+	_, err := s.tx.Exec(s.db.SQL(`
 UPDATE assets SET
     bound_domains = (SELECT ARRAY(SELECT DISTINCT unnest(bound_domains || ARRAY[$1::text]))),
     last_seen = now()
-WHERE type = 'ip' AND ip = $2`, domain, ipStr)
+WHERE type = 'ip' AND ip = $2`, `UPDATE assets SET bound_domains=portable_asset_array_merge(bound_domains,json_array($1),'set'),last_seen=now() WHERE type='ip' AND ip=$2`), domain, ipStr)
 	return err
 }
 
@@ -467,16 +501,15 @@ func (s *AssetStore) UpsertSubdomain(req UpsertSubdomainReq) (id int64, err erro
 	}
 
 	// Resolve by root domain first, then the asset's exact normalized ICP.
-	companyID, err := s.resolveCompanyWithICP(rootDomain, "", req.ICP)
-	if err != nil {
-		return 0, err
-	}
+	var companyID *int64
 
 	// side effect 1: ensure root domain exists
-	_, _ = s.UpsertRootDomain(UpsertRootDomainReq{
+	if _, err := s.UpsertRootDomain(UpsertRootDomainReq{
 		Domain: rootDomain,
 		TaskID: req.TaskID,
-	})
+	}); err != nil {
+		return 0, err
+	}
 
 	// side effect 2: if A/AAAA record, upsert each IP + bind domain.
 	// RecordValue is []string; each element may itself be comma-separated (legacy).
@@ -491,26 +524,24 @@ func (s *AssetStore) UpsertSubdomain(req UpsertSubdomainReq) (id int64, err erro
 				if ipStr == "" {
 					ipStr = candidate
 				}
-				_, _ = s.UpsertIP(UpsertIPReq{
+				if _, err := s.UpsertIP(UpsertIPReq{
 					IP:           candidate,
 					BoundDomains: []string{domain},
 					TaskID:       req.TaskID,
-				})
+				}); err != nil {
+					return 0, err
+				}
 			}
 		}
 	}
 
 	cseg := calcCSegment(ipStr)
-	if companyID == nil && ipStr != "" {
-		companyID, _ = s.resolveCompanyWithICP("", ipStr, "")
+	companyID, err = s.resolveCompanyWithICP(rootDomain, ipStr, req.ICP)
+	if err != nil {
+		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := s.taskIDs(req.TaskID)
 
 	var icpVal, csegVal, ipVal any
 	if req.ICP != "" {
@@ -523,9 +554,9 @@ func (s *AssetStore) UpsertSubdomain(req UpsertSubdomainReq) (id int64, err erro
 		ipVal = ipStr
 	}
 	recordType := req.RecordType
-	recordValueArr := marshalStringArray(req.RecordValue)
+	recordValueArr := s.stringArray(req.RecordValue)
 
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(type, domain, root_domain, record_type, record_value, ip, c_segment, icp, company_id, company_source, task_ids)
 VALUES ('subdomain', $1, $2, $3, $4::text[], $5, $6::cidr, $7, $8, 'scope', $9::bigint[])
 ON CONFLICT (domain, COALESCE(record_type,'')) WHERE type = 'subdomain' DO UPDATE SET
@@ -545,7 +576,27 @@ ON CONFLICT (domain, COALESCE(record_type,'')) WHERE type = 'subdomain' DO UPDAT
     record_value = (SELECT ARRAY(SELECT DISTINCT unnest(assets.record_value || EXCLUDED.record_value))),
     extra        = assets.extra || EXCLUDED.extra,
     last_seen    = now()
-RETURNING id`, domain, rootDomain, recordType, recordValueArr, ipVal, csegVal, icpVal, companyID, taskIDs).Scan(&id)
+RETURNING id`, `
+INSERT INTO assets(type, domain, root_domain, record_type, record_value, ip, c_segment, icp, company_id, company_source, task_ids)
+VALUES ('subdomain', $1, $2, $3, $4, $5, $6, $7, $8, 'scope', $9)
+ON CONFLICT (domain, COALESCE(record_type,'')) WHERE type = 'subdomain' DO UPDATE SET
+    ip           = COALESCE(EXCLUDED.ip, assets.ip),
+    c_segment    = COALESCE(EXCLUDED.c_segment, assets.c_segment),
+    icp          = COALESCE(EXCLUDED.icp, assets.icp),
+    company_id   = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids     = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    record_value = portable_asset_array_merge(assets.record_value, EXCLUDED.record_value, 'set'),
+    extra        = portable_json_overlay(assets.extra, EXCLUDED.extra),
+    last_seen    = now()
+RETURNING id`), domain, rootDomain, recordType, recordValueArr, ipVal, csegVal, icpVal, companyID, taskIDs).Scan(&id)
 	return id, err
 }
 
@@ -575,12 +626,7 @@ func (s *AssetStore) UpsertApp(req UpsertAppReq) (int64, error) {
 		})
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := s.taskIDs(req.TaskID)
 
 	var bundleVal, catVal, descVal, icpVal, companyIDVal any
 	companySource := "scope"
@@ -613,7 +659,7 @@ func (s *AssetStore) UpsertApp(req UpsertAppReq) (int64, error) {
 	var err error
 
 	if req.BundleID != "" {
-		err = s.tx.QueryRow(`
+		err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
 VALUES ('app', $1, $2, $3, $4, $5, $6, $7, $8::bigint[])
 ON CONFLICT (bundle_id) WHERE type = 'app' AND bundle_id IS NOT NULL DO UPDATE SET
@@ -634,9 +680,30 @@ ON CONFLICT (bundle_id) WHERE type = 'app' AND bundle_id IS NOT NULL DO UPDATE S
     END,
     task_ids        = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     last_seen       = now()
-RETURNING id`, bundleVal, req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
+RETURNING id`, `
+INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
+VALUES ('app', $1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (bundle_id) WHERE type = 'app' AND bundle_id IS NOT NULL DO UPDATE SET
+    app_name        = COALESCE(EXCLUDED.app_name, assets.app_name),
+    category        = COALESCE(EXCLUDED.category, assets.category),
+    app_description = COALESCE(EXCLUDED.app_description, assets.app_description),
+    app_icp         = COALESCE(EXCLUDED.app_icp, assets.app_icp),
+    company_id      = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN EXCLUDED.company_id
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source  = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN 'explicit'
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids        = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    last_seen       = now()
+RETURNING id`), bundleVal, req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
 	} else {
-		err = s.tx.QueryRow(`
+		err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
 VALUES ('app', NULL, $1, $2, $3, $4, $5, $6, $7::bigint[])
 ON CONFLICT (app_name) WHERE type = 'app' AND bundle_id IS NULL DO UPDATE SET
@@ -656,7 +723,27 @@ ON CONFLICT (app_name) WHERE type = 'app' AND bundle_id IS NULL DO UPDATE SET
     END,
     task_ids        = (SELECT ARRAY(SELECT DISTINCT unnest(assets.task_ids || EXCLUDED.task_ids))),
     last_seen       = now()
-RETURNING id`, req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
+RETURNING id`, `
+INSERT INTO assets(type, bundle_id, app_name, category, app_description, app_icp, company_id, company_source, task_ids)
+VALUES ('app', NULL, $1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (app_name) WHERE type = 'app' AND bundle_id IS NULL DO UPDATE SET
+    category        = COALESCE(EXCLUDED.category, assets.category),
+    app_description = COALESCE(EXCLUDED.app_description, assets.app_description),
+    app_icp         = COALESCE(EXCLUDED.app_icp, assets.app_icp),
+    company_id      = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN EXCLUDED.company_id
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source  = CASE
+        WHEN EXCLUDED.company_source = 'explicit' THEN 'explicit'
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    task_ids        = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    last_seen       = now()
+RETURNING id`), req.Name, catVal, descVal, icpVal, companyIDVal, companySource, taskIDs).Scan(&id)
 	}
 	return id, err
 }
@@ -705,15 +792,10 @@ func (s *AssetStore) UpsertHTTPService(req UpsertHTTPServiceReq) (int64, error) 
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := s.taskIDs(req.TaskID)
 
-	techsArr := marshalStringArray(req.Technologies)
-	authJSON, err := marshalJSONBArray(req.Auth)
+	techsArr := s.stringArray(req.Technologies)
+	authJSON, err := s.objectArray(req.Auth)
 	if err != nil {
 		return 0, err
 	}
@@ -736,7 +818,7 @@ func (s *AssetStore) UpsertHTTPService(req UpsertHTTPServiceReq) (int64, error) 
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(
     type, url, service_type, service_name, domain, ip, port, root_domain,
     c_segment, favicon_mmh3, technologies, status_code, content_length, page_title,
@@ -757,7 +839,7 @@ ON CONFLICT (url) WHERE type = 'service' AND service_type = 'http' DO UPDATE SET
     technologies   = (SELECT ARRAY(SELECT DISTINCT unnest(assets.technologies || EXCLUDED.technologies))),
     auth           = (
         SELECT ARRAY(
-            SELECT DISTINCT ON (elem::text) elem
+            SELECT DISTINCT ON (elem) elem
             FROM unnest(assets.auth || EXCLUDED.auth) AS elem
         )
     ),
@@ -772,7 +854,38 @@ ON CONFLICT (url) WHERE type = 'service' AND service_type = 'http' DO UPDATE SET
         ELSE assets.company_source
     END,
     last_seen      = now()
-RETURNING id`,
+RETURNING id`, `
+INSERT INTO assets(
+    type, url, service_type, service_name, domain, ip, port, root_domain,
+    c_segment, favicon_mmh3, technologies, status_code, content_length, page_title,
+    auth, company_id, company_source, task_ids
+)
+VALUES (
+    'service', $1, 'http', $2, $3, $4, $5, $6,
+    $7, $8, $9, $10, $11, $12,
+    $13, $14, 'scope', $15
+)
+ON CONFLICT (url) WHERE type = 'service' AND service_type = 'http' DO UPDATE SET
+    status_code    = COALESCE(EXCLUDED.status_code,    assets.status_code),
+    content_length = COALESCE(EXCLUDED.content_length, assets.content_length),
+    page_title     = COALESCE(EXCLUDED.page_title,     assets.page_title),
+    favicon_mmh3   = COALESCE(EXCLUDED.favicon_mmh3,   assets.favicon_mmh3),
+    ip             = COALESCE(EXCLUDED.ip,             assets.ip),
+    c_segment      = COALESCE(EXCLUDED.c_segment,      assets.c_segment),
+    technologies   = portable_asset_array_merge(assets.technologies, EXCLUDED.technologies, 'set'),
+    auth           = portable_asset_array_merge(assets.auth, EXCLUDED.auth, 'set'),
+    task_ids       = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    company_id     = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    last_seen      = now()
+RETURNING id`),
 		normURL, serviceName, domainVal, ipVal, nullableInt(port), rootDomain,
 		csegVal, faviconVal, techsArr, req.StatusCode, req.ContentLength, titleVal,
 		authJSON, companyID, taskIDs,
@@ -782,7 +895,9 @@ RETURNING id`,
 	}
 
 	// side effects: register root_domain + subdomain as their own assets too
-	s.linkHostAssets(domain, rootDomain, req.TaskID)
+	if err := s.linkHostAssets(domain, rootDomain, req.TaskID); err != nil {
+		return 0, err
+	}
 	if req.IP != "" {
 		var boundDomains []string
 		if domain != "" {
@@ -792,12 +907,14 @@ RETURNING id`,
 		if port > 0 {
 			openPorts = []PortService{{Port: port, Service: serviceName}}
 		}
-		_, _ = s.UpsertIP(UpsertIPReq{
+		if _, err := s.UpsertIP(UpsertIPReq{
 			IP:           req.IP,
 			BoundDomains: boundDomains,
 			OpenPorts:    openPorts,
 			TaskID:       req.TaskID,
-		})
+		}); err != nil {
+			return 0, err
+		}
 	}
 	return id, nil
 }
@@ -854,14 +971,9 @@ func (s *AssetStore) UpsertOtherService(req UpsertOtherServiceReq) (int64, error
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := s.taskIDs(req.TaskID)
 
-	authJSON, err := marshalJSONBArray(req.Auth)
+	authJSON, err := s.objectArray(req.Auth)
 	if err != nil {
 		return 0, err
 	}
@@ -881,7 +993,7 @@ func (s *AssetStore) UpsertOtherService(req UpsertOtherServiceReq) (int64, error
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(
     type, service_type, service_name, domain, ip, port, root_domain,
     c_segment, auth, company_id, company_source, task_ids
@@ -893,7 +1005,7 @@ ON CONFLICT (COALESCE(domain,''), COALESCE(ip,''), port, service_name) WHERE typ
     c_segment  = COALESCE(EXCLUDED.c_segment,  assets.c_segment),
     auth       = (
         SELECT ARRAY(
-            SELECT DISTINCT ON (elem::text) elem
+            SELECT DISTINCT ON (elem) elem
             FROM unnest(assets.auth || EXCLUDED.auth) AS elem
         )
     ),
@@ -908,7 +1020,29 @@ ON CONFLICT (COALESCE(domain,''), COALESCE(ip,''), port, service_name) WHERE typ
         ELSE assets.company_source
     END,
     last_seen  = now()
-RETURNING id`,
+RETURNING id`, `
+INSERT INTO assets(
+    type, service_type, service_name, domain, ip, port, root_domain,
+    c_segment, auth, company_id, company_source, task_ids
+)
+VALUES ('service', 'other', $1, $2, $3, $4, $5, $6, $7, $8, 'scope', $9)
+ON CONFLICT (COALESCE(domain,''), COALESCE(ip,''), port, service_name) WHERE type = 'service' AND service_type = 'other' DO UPDATE SET
+    domain     = COALESCE(EXCLUDED.domain,     assets.domain),
+    ip         = COALESCE(EXCLUDED.ip,         assets.ip),
+    c_segment  = COALESCE(EXCLUDED.c_segment,  assets.c_segment),
+    auth       = portable_asset_array_merge(assets.auth, EXCLUDED.auth, 'set'),
+    task_ids   = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    last_seen  = now()
+RETURNING id`),
 		serviceName, domainVal, ipVal, req.Port, rootDomainVal,
 		csegVal, authJSON, companyID, taskIDs,
 	).Scan(&id)
@@ -922,27 +1056,37 @@ RETURNING id`,
 		if domain != "" {
 			boundDomains = []string{domain}
 		}
-		_, _ = s.UpsertIP(UpsertIPReq{
+		if _, err := s.UpsertIP(UpsertIPReq{
 			IP:           req.IP,
 			BoundDomains: boundDomains,
 			OpenPorts:    []PortService{{Port: req.Port, Service: serviceName}},
 			TaskID:       req.TaskID,
-		})
+		}); err != nil {
+			return 0, err
+		}
 	}
-	s.linkHostAssets(domain, rootDomain, req.TaskID)
+	if err := s.linkHostAssets(domain, rootDomain, req.TaskID); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
 // linkHostAssets ensures a service/endpoint's host is also registered as its own
 // root_domain and (when it's a real subdomain, not the apex or an IP) subdomain
 // asset — so those asset types stay populated and can anchor task scope. Best-effort.
-func (s *AssetStore) linkHostAssets(domain, rootDomain string, taskID int64) {
+func (s *AssetStore) linkHostAssets(domain, rootDomain string, taskID int64) error {
 	if rootDomain != "" {
-		_, _ = s.UpsertRootDomain(UpsertRootDomainReq{Domain: rootDomain, TaskID: taskID})
+		if _, err := s.UpsertRootDomain(UpsertRootDomainReq{Domain: rootDomain, TaskID: taskID}); err != nil {
+			return err
+		}
 	}
 	if domain != "" && domain != rootDomain && net.ParseIP(domain) == nil {
-		_, _ = s.UpsertSubdomain(UpsertSubdomainReq{Domain: domain, TaskID: taskID})
+		if _, err := s.UpsertSubdomain(UpsertSubdomainReq{Domain: domain, TaskID: taskID}); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // =====================================================================
@@ -989,14 +1133,9 @@ func (s *AssetStore) UpsertEndpoint(req UpsertEndpointReq) (int64, error) {
 		return 0, err
 	}
 
-	var taskIDs string
-	if req.TaskID > 0 {
-		taskIDs = fmt.Sprintf("{%d}", req.TaskID)
-	} else {
-		taskIDs = "{}"
-	}
+	taskIDs := s.taskIDs(req.TaskID)
 
-	paramsJSON, err := marshalJSONBArray(req.Params)
+	paramsJSON, err := s.objectArray(req.Params)
 	if err != nil {
 		return 0, err
 	}
@@ -1016,7 +1155,7 @@ func (s *AssetStore) UpsertEndpoint(req UpsertEndpointReq) (int64, error) {
 	}
 
 	var id int64
-	err = s.tx.QueryRow(`
+	err = s.tx.QueryRow(s.db.SQL(`
 INSERT INTO assets(
     type, url, method, domain, ip, port, root_domain,
     params, company_id, company_source, task_ids, c_segment
@@ -1027,7 +1166,7 @@ ON CONFLICT (url, method) WHERE type = 'endpoint' DO UPDATE SET
         SELECT ARRAY(
             SELECT DISTINCT ON ((elem->>'location'), (elem->>'name')) elem
             FROM unnest(assets.params || EXCLUDED.params) AS elem
-            ORDER BY (elem->>'location'), (elem->>'name'), elem::text DESC
+            ORDER BY (elem->>'location'), (elem->>'name'), elem::text COLLATE "C" DESC
         )
     ),
     ip         = COALESCE(EXCLUDED.ip,        assets.ip),
@@ -1043,7 +1182,28 @@ ON CONFLICT (url, method) WHERE type = 'endpoint' DO UPDATE SET
         ELSE assets.company_source
     END,
     last_seen  = now()
-RETURNING id`,
+RETURNING id`, `
+INSERT INTO assets(
+    type, url, method, domain, ip, port, root_domain,
+    params, company_id, company_source, task_ids, c_segment
+)
+VALUES ('endpoint', $1, $2, $3, $4, $5, $6, $7, $8, 'scope', $9, $10)
+ON CONFLICT (url, method) WHERE type = 'endpoint' DO UPDATE SET
+    params     = portable_asset_array_merge(assets.params, EXCLUDED.params, 'params'),
+    ip         = COALESCE(EXCLUDED.ip,        assets.ip),
+    c_segment  = COALESCE(EXCLUDED.c_segment, assets.c_segment),
+    task_ids   = portable_asset_array_merge(assets.task_ids, EXCLUDED.task_ids, 'set'),
+    company_id = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN assets.company_id
+        ELSE COALESCE(EXCLUDED.company_id, assets.company_id)
+    END,
+    company_source = CASE
+        WHEN assets.company_source = 'explicit' AND assets.company_id IS NOT NULL THEN 'explicit'
+        WHEN EXCLUDED.company_id IS NOT NULL THEN 'scope'
+        ELSE assets.company_source
+    END,
+    last_seen  = now()
+RETURNING id`),
 		normURL, method, domainVal, ipVal, nullableInt(port), rootDomainVal,
 		paramsJSON, companyID, taskIDs, csegVal,
 	).Scan(&id)
@@ -1052,9 +1212,13 @@ RETURNING id`,
 	}
 	// side effects: endpoint previously registered none — register its host as
 	// root_domain + subdomain(+IP) so those asset types get populated too.
-	s.linkHostAssets(domain, rootDomain, req.TaskID)
+	if err := s.linkHostAssets(domain, rootDomain, req.TaskID); err != nil {
+		return 0, err
+	}
 	if req.IP != "" {
-		_, _ = s.UpsertIP(UpsertIPReq{IP: req.IP, TaskID: req.TaskID})
+		if _, err := s.UpsertIP(UpsertIPReq{IP: req.IP, TaskID: req.TaskID}); err != nil {
+			return 0, err
+		}
 	}
 	return id, nil
 }
@@ -1071,21 +1235,7 @@ func (s *AssetStore) QueryByType(typ string, limit, offset int) ([]*Asset, error
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := s.db.Query(`
-SELECT id, type, company_id, array_to_json(task_ids)::text,
-       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
-       COALESCE(c_segment::text,''), port,
-       COALESCE(icp,''), array_to_json(bound_domains)::text, array_to_json(open_ports)::text, COALESCE(record_type,''),
-       array_to_json(record_value)::text, COALESCE(bundle_id,''), COALESCE(app_name,''),
-       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
-       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
-       COALESCE(favicon_mmh3,''), status_code, content_length,
-       COALESCE(page_title,''), array_to_json(technologies)::text, array_to_json(auth)::text,
-       COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
-FROM assets
-WHERE type = $1
-ORDER BY last_seen DESC, id DESC
-LIMIT $2 OFFSET $3`, typ, limit, offset)
+	rows, err := s.query(s.selectCols()+` WHERE type=$1 ORDER BY last_seen DESC,id DESC LIMIT $2 OFFSET $3`, typ, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1096,31 +1246,21 @@ LIMIT $2 OFFSET $3`, typ, limit, offset)
 // CountByType returns the total number of assets of a type (for server-side pagination).
 func (s *AssetStore) CountByType(typ string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT count(*) FROM assets WHERE type = $1`, typ).Scan(&n)
+	err := s.queryRow(`SELECT count(*) FROM assets WHERE type = $1`, typ).Scan(&n)
 	return n, err
 }
 
 // QueryByCompany returns assets for a company, optionally filtered by type.
 // limit <= 0 means no limit.
 func (s *AssetStore) QueryByCompany(companyID int64, typ string, limit, offset int) ([]*Asset, error) {
-	q := `SELECT id, type, company_id, array_to_json(task_ids)::text,
-       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
-       COALESCE(c_segment::text,''), port,
-       COALESCE(icp,''), array_to_json(bound_domains)::text, array_to_json(open_ports)::text, COALESCE(record_type,''),
-       array_to_json(record_value)::text, COALESCE(bundle_id,''), COALESCE(app_name,''),
-       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
-       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
-       COALESCE(favicon_mmh3,''), status_code, content_length,
-       COALESCE(page_title,''), array_to_json(technologies)::text, array_to_json(auth)::text,
-       COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
-FROM assets WHERE company_id = $1`
+	q := s.selectCols() + ` WHERE company_id=$1`
 	args := []any{companyID}
 	if typ != "" {
 		args = append(args, typ)
 		q += fmt.Sprintf(` AND type = $%d`, len(args))
 	}
-	q += pageClause(&args, limit, offset)
-	rows, err := s.db.Query(q, args...)
+	q += s.pageClause(&args, limit, offset)
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1136,7 +1276,7 @@ func (s *AssetStore) CountByCompany(companyID int64, typ string) (int, error) {
 		q += fmt.Sprintf(` AND type = $%d`, len(args))
 	}
 	var n int
-	err := s.db.QueryRow(q, args...).Scan(&n)
+	err := s.queryRow(q, args...).Scan(&n)
 	return n, err
 }
 
@@ -1155,24 +1295,14 @@ func pageClause(args *[]any, limit, offset int) string {
 
 // QueryByTask returns assets rows that have a given task_id in task_ids.
 func (s *AssetStore) QueryByTask(taskID int64, typ string, limit, offset int) ([]*Asset, error) {
-	q := `SELECT id, type, company_id, array_to_json(task_ids)::text,
-       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
-       COALESCE(c_segment::text,''), port,
-       COALESCE(icp,''), array_to_json(bound_domains)::text, array_to_json(open_ports)::text, COALESCE(record_type,''),
-       array_to_json(record_value)::text, COALESCE(bundle_id,''), COALESCE(app_name,''),
-       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
-       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
-       COALESCE(favicon_mmh3,''), status_code, content_length,
-       COALESCE(page_title,''), array_to_json(technologies)::text, array_to_json(auth)::text,
-       COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
-FROM assets WHERE $1 = ANY(task_ids)`
+	q := s.selectCols() + " WHERE " + s.taskMembership("$1", "task_ids")
 	args := []any{taskID}
 	if typ != "" {
 		args = append(args, typ)
 		q += fmt.Sprintf(` AND type = $%d`, len(args))
 	}
-	q += pageClause(&args, limit, offset)
-	rows, err := s.db.Query(q, args...)
+	q += s.pageClause(&args, limit, offset)
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1188,19 +1318,19 @@ FROM assets WHERE $1 = ANY(task_ids)`
 }
 
 func (s *AssetStore) CountByTask(taskID int64, typ string) (int, error) {
-	q := `SELECT count(*) FROM assets WHERE $1 = ANY(task_ids)`
+	q := "SELECT count(*) FROM assets WHERE " + s.taskMembership("$1", "task_ids")
 	args := []any{taskID}
 	if typ != "" {
 		args = append(args, typ)
 		q += fmt.Sprintf(` AND type = $%d`, len(args))
 	}
 	var n int
-	err := s.db.QueryRow(q, args...).Scan(&n)
+	err := s.queryRow(q, args...).Scan(&n)
 	return n, err
 }
 
 func (s *AssetStore) CountsByTypeForTask(taskID int64) (map[string]int, error) {
-	rows, err := s.db.Query(`SELECT type, COUNT(*) FROM assets WHERE $1 = ANY(task_ids) GROUP BY type`, taskID)
+	rows, err := s.query("SELECT type, COUNT(*) FROM assets WHERE "+s.taskMembership("$1", "task_ids")+" GROUP BY type", taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -1213,24 +1343,28 @@ func (s *AssetStore) CountsByTypeForTask(taskID int64) (map[string]int, error) {
 // transaction in DeleteTaskCascadePrepared; this method remains for callers
 // that explicitly manage only asset associations.
 func (s *AssetStore) DeleteByTaskID(taskID int64) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM assets WHERE task_ids = ARRAY[$1]::bigint[]`, taskID)
+	if s.tx == nil {
+		return s.withCompanyScopeMutation(func(scoped *AssetStore) (int64, error) { return scoped.DeleteByTaskID(taskID) })
+	}
+	res, err := s.tx.Exec(s.db.SQL(`DELETE FROM assets WHERE task_ids=ARRAY[$1]::bigint[]`, `DELETE FROM assets WHERE json_array_length(task_ids)=1 AND EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1)`), taskID)
 	if err != nil {
 		return 0, err
 	}
-	deleted, _ := res.RowsAffected()
-	if _, err := s.db.Exec(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, taskID); err != nil {
-		return deleted, err
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
 	}
-	return deleted, nil
+	_, err = s.tx.Exec(s.db.SQL(`UPDATE assets SET task_ids=array_remove(task_ids,$1) WHERE $1=ANY(task_ids)`, `UPDATE assets SET task_ids=(SELECT json_group_array(value) FROM json_each(assets.task_ids) WHERE value<>$1) WHERE EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1)`), taskID)
+	return deleted, err
 }
 
 // HostsByTask returns the exact HTTP host candidates attached to a task's
 // assets. Domain/IP columns cover root domains, subdomains and non-HTTP
 // services; URL covers HTTP services and endpoints.
 func (s *AssetStore) HostsByTask(taskID int64) ([]string, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 SELECT COALESCE(domain,''), COALESCE(ip,''), COALESCE(url,'')
-FROM assets WHERE $1 = ANY(task_ids)`, taskID)
+FROM assets WHERE `+s.taskMembership("$1", "task_ids"), taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -1271,7 +1405,10 @@ FROM assets WHERE $1 = ANY(task_ids)`, taskID)
 // were anchor-only) are covered. Protection is host-wide: if another live task
 // references any asset for a candidate host, that host's global traffic remains.
 func (s *AssetStore) HostsForTaskDeletion(taskID, explorationID int64) ([]string, error) {
-	return hostsForTaskDeletion(s.db, taskID, explorationID)
+	if s.tx != nil {
+		return hostsForTaskDeletion(s.tx, taskID, explorationID, s.db)
+	}
+	return hostsForTaskDeletion(s.db.readPool(), taskID, explorationID, s.db)
 }
 
 type rowsQuerier interface {
@@ -1282,8 +1419,8 @@ type rowsQuerier interface {
 // deletion transaction. Coordinated traffic deletion must call it through the
 // transaction path so asset/anchor writes stay locked until the task delete is
 // committed.
-func hostsForTaskDeletion(q rowsQuerier, taskID, explorationID int64) ([]string, error) {
-	rows, err := q.Query(`
+func hostsForTaskDeletion(q rowsQuerier, taskID, explorationID int64, dialect ...*DB) ([]string, error) {
+	rows, err := q.Query(dialectSQL(dialect, `
 WITH current_assets AS (
   SELECT id FROM assets WHERE $1 = ANY(task_ids)
   UNION
@@ -1310,7 +1447,34 @@ SELECT COALESCE(a.domain,''), COALESCE(a.ip,''), COALESCE(a.url,''), true
 FROM assets a JOIN current_assets c ON c.id=a.id
 UNION ALL
 SELECT COALESCE(a.domain,''), COALESCE(a.ip,''), COALESCE(a.url,''), false
-FROM assets a JOIN other_assets o ON o.id=a.id`, taskID, explorationID)
+FROM assets a JOIN other_assets o ON o.id=a.id`, `
+WITH current_assets AS (
+  SELECT id FROM assets WHERE EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1)
+  UNION
+  SELECT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes n ON n.id=ea.node_id
+  WHERE n.exploration_id=$2
+),
+other_assets AS (
+  SELECT DISTINCT a.id
+  FROM assets a
+  WHERE EXISTS (
+    SELECT 1 FROM tasks t
+    WHERE t.id<>$1 AND t.deleted_at IS NULL AND t.id IN (SELECT value FROM json_each(a.task_ids))
+  ) OR EXISTS (
+    SELECT 1
+    FROM exploration_anchors ea
+    JOIN exploration_nodes n ON n.id=ea.node_id
+    JOIN tasks t ON t.exploration_id=n.exploration_id
+    WHERE ea.asset_id=a.id AND t.id<>$1 AND t.deleted_at IS NULL
+  )
+)
+SELECT COALESCE(a.domain,''), COALESCE(a.ip,''), COALESCE(a.url,''), true
+FROM assets a JOIN current_assets c ON c.id=a.id
+UNION ALL
+SELECT COALESCE(a.domain,''), COALESCE(a.ip,''), COALESCE(a.url,''), false
+FROM assets a JOIN other_assets o ON o.id=a.id`), taskID, explorationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1365,6 +1529,20 @@ const assetSelectCols = `SELECT id, type, company_id, array_to_json(task_ids)::t
        COALESCE(method,''), array_to_json(params)::text, extra, last_seen::text
 FROM assets`
 
+const sqliteAssetSelectCols = `SELECT id, type, company_id, task_ids,
+       COALESCE(domain,''), COALESCE(root_domain,''), COALESCE(ip,''),
+       COALESCE(c_segment,''), port,
+       COALESCE(icp,''), bound_domains, open_ports, COALESCE(record_type,''),
+       record_value, COALESCE(bundle_id,''), COALESCE(app_name,''),
+       COALESCE(category,''), COALESCE(app_description,''), COALESCE(app_icp,''),
+       COALESCE(url,''), COALESCE(service_type,''), COALESCE(service_name,''),
+       COALESCE(favicon_mmh3,''), status_code, content_length,
+       COALESCE(page_title,''), technologies, auth,
+       COALESCE(method,''), params, extra, CAST(last_seen AS TEXT)
+FROM assets`
+
+func (s *AssetStore) selectCols() string { return s.db.SQL(assetSelectCols, sqliteAssetSelectCols) }
+
 // GetByIDs returns assets with the given ids (order preserved by id array order).
 func (s *AssetStore) GetByIDs(ids []int64) ([]*Asset, error) {
 	if len(ids) == 0 {
@@ -1376,8 +1554,8 @@ func (s *AssetStore) GetByIDs(ids []int64) ([]*Asset, error) {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
-	sql := assetSelectCols + " WHERE id IN (" + strings.Join(placeholders, ",") + ") ORDER BY last_seen DESC"
-	rows, err := s.db.Query(sql, args...)
+	sql := s.selectCols() + " WHERE id IN (" + strings.Join(placeholders, ",") + ") ORDER BY last_seen DESC"
+	rows, err := s.query(sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1387,7 +1565,7 @@ func (s *AssetStore) GetByIDs(ids []int64) ([]*Asset, error) {
 
 // DeleteByCompanyID hard-deletes all assets belonging to a company. Returns rows deleted.
 func (s *AssetStore) DeleteByCompanyID(companyID int64) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM assets WHERE company_id = $1`, companyID)
+	res, err := s.exec(`DELETE FROM assets WHERE company_id = $1`, companyID)
 	if err != nil {
 		return 0, err
 	}
@@ -1407,7 +1585,7 @@ func (s *AssetStore) DeleteByHost(host string) (map[string]int64, error) {
 	if h == "" {
 		return nil, fmt.Errorf("host is required")
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 DELETE FROM assets
 WHERE domain = $1 OR root_domain = $1 OR ip = $1
 RETURNING type`, h)
@@ -1437,7 +1615,7 @@ func (s *AssetStore) DeleteByIDs(ids []int64) (int64, error) {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
-	res, err := s.db.Exec("DELETE FROM assets WHERE id IN ("+strings.Join(placeholders, ",")+")", args...)
+	res, err := s.exec("DELETE FROM assets WHERE id IN ("+strings.Join(placeholders, ",")+")", args...)
 	if err != nil {
 		return 0, err
 	}
@@ -1446,7 +1624,7 @@ func (s *AssetStore) DeleteByIDs(ids []int64) (int64, error) {
 
 // CountsByType returns asset counts per type.
 func (s *AssetStore) CountsByType() (map[string]int, error) {
-	rows, err := s.db.Query(`SELECT type, COUNT(*) FROM assets GROUP BY type`)
+	rows, err := s.query(`SELECT type, COUNT(*) FROM assets GROUP BY type`)
 	if err != nil {
 		return nil, err
 	}
@@ -1472,20 +1650,20 @@ func scanAssets(rows *sql.Rows) ([]*Asset, error) {
 	var out []*Asset
 	for rows.Next() {
 		a := &Asset{}
-		var taskIDsRaw, boundDomainsRaw, openPortsRaw, recordValueRaw, techsRaw, authRaw, paramsRaw, extraRaw []byte
+		var taskIDsRaw, boundDomainsRaw, openPortsRaw, recordValueRaw, techsRaw, authRaw, paramsRaw, extraRaw json.RawMessage
 		var port, statusCode sql.NullInt64
 		var contentLength sql.NullInt64
 		var companyID sql.NullInt64
 		if err := rows.Scan(
-			&a.ID, &a.Type, &companyID, &taskIDsRaw,
+			&a.ID, &a.Type, &companyID, JSONScanner{Target: &taskIDsRaw},
 			&a.Domain, &a.RootDomain, &a.IP, &a.CSegment, &port,
-			&a.ICP, &boundDomainsRaw, &openPortsRaw, &a.RecordType,
-			&recordValueRaw, &a.BundleID, &a.AppName,
+			&a.ICP, JSONScanner{Target: &boundDomainsRaw}, JSONScanner{Target: &openPortsRaw}, &a.RecordType,
+			JSONScanner{Target: &recordValueRaw}, &a.BundleID, &a.AppName,
 			&a.Category, &a.AppDescription, &a.AppICP,
 			&a.URL, &a.ServiceType, &a.ServiceName,
 			&a.FaviconMMH3, &statusCode, &contentLength,
-			&a.PageTitle, &techsRaw, &authRaw,
-			&a.Method, &paramsRaw, &extraRaw, &a.LastSeen,
+			&a.PageTitle, JSONScanner{Target: &techsRaw}, JSONScanner{Target: &authRaw},
+			&a.Method, JSONScanner{Target: &paramsRaw}, JSONScanner{Target: &extraRaw}, &a.LastSeen,
 		); err != nil {
 			return nil, err
 		}
@@ -1507,28 +1685,44 @@ func scanAssets(rows *sql.Rows) ([]*Asset, error) {
 		}
 		// parse arrays
 		if len(taskIDsRaw) > 0 {
-			_ = json.Unmarshal(taskIDsRaw, &a.TaskIDs)
+			if err := decodeAssetJSON(taskIDsRaw, &a.TaskIDs); err != nil {
+				return nil, err
+			}
 		}
 		if len(boundDomainsRaw) > 0 {
-			_ = json.Unmarshal(boundDomainsRaw, &a.BoundDomains)
+			if err := decodeAssetJSON(boundDomainsRaw, &a.BoundDomains); err != nil {
+				return nil, err
+			}
 		}
 		if len(openPortsRaw) > 0 {
-			_ = json.Unmarshal(openPortsRaw, &a.OpenPorts)
+			if err := decodeAssetJSON(openPortsRaw, &a.OpenPorts); err != nil {
+				return nil, err
+			}
 		}
 		if len(recordValueRaw) > 0 {
-			_ = json.Unmarshal(recordValueRaw, &a.RecordValue)
+			if err := decodeAssetJSON(recordValueRaw, &a.RecordValue); err != nil {
+				return nil, err
+			}
 		}
 		if len(techsRaw) > 0 {
-			_ = json.Unmarshal(techsRaw, &a.Technologies)
+			if err := decodeAssetJSON(techsRaw, &a.Technologies); err != nil {
+				return nil, err
+			}
 		}
 		if len(authRaw) > 0 {
-			_ = json.Unmarshal(authRaw, &a.Auth)
+			if err := decodeAssetJSON(authRaw, &a.Auth); err != nil {
+				return nil, err
+			}
 		}
 		if len(paramsRaw) > 0 {
-			_ = json.Unmarshal(paramsRaw, &a.Params)
+			if err := decodeAssetJSON(paramsRaw, &a.Params); err != nil {
+				return nil, err
+			}
 		}
 		if len(extraRaw) > 0 {
-			_ = json.Unmarshal(extraRaw, &a.Extra)
+			if err := decodeAssetJSON(extraRaw, &a.Extra); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, a)
 	}

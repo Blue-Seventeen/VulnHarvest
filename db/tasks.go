@@ -234,7 +234,7 @@ RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, descripti
 	if err := insertTaskRelations(tx, t.ID, opts.SourceTaskIDs); err != nil {
 		return nil, err
 	}
-	if err := insertTaskCompanies(tx, t.ID, opts.CompanyIDs); err != nil {
+	if err := insertTaskCompanies(tx, t.ID, opts.CompanyIDs, d); err != nil {
 		return nil, err
 	}
 	if err := insertTaskLLMProfiles(tx, t.ID, opts.LLMProfileIDs); err != nil {
@@ -251,13 +251,13 @@ RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, descripti
 	return t, tx.Commit()
 }
 
-func insertTaskCompanies(tx *sql.Tx, taskID int64, companyIDs []int64) error {
+func insertTaskCompanies(tx *sql.Tx, taskID int64, companyIDs []int64, dialect ...*DB) error {
 	if len(companyIDs) == 0 {
 		return nil
 	}
 	// Company scope edits rebuild assets.company_id. Serialize the creation-time
 	// snapshot with those edits so the task sees one committed attribution state.
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, dialect...); err != nil {
 		return err
 	}
 	var inserted int
@@ -576,7 +576,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 		}
 	}
 	if prepare != nil {
-		hosts, err := hostsForTaskDeletion(tx, id, expID)
+		hosts, err := hostsForTaskDeletion(tx, id, expID, d)
 		if err != nil {
 			return result, err
 		}

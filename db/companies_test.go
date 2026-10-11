@@ -15,7 +15,7 @@ func cleanupCompany(d *DB, id int64) {
 }
 
 func TestCompanyUpsertAndGet(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -62,7 +62,7 @@ func TestCompanyUpsertAndGet(t *testing.T) {
 }
 
 func TestCreateCompanyWithScopeRejectsNormalizedDuplicate(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -101,7 +101,7 @@ func TestCreateCompanyWithScopeRejectsNormalizedDuplicate(t *testing.T) {
 }
 
 func TestCreateCompanyWithScopeRollsBackOnScopeWriteFailure(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -126,7 +126,7 @@ func TestCreateCompanyWithScopeRollsBackOnScopeWriteFailure(t *testing.T) {
 }
 
 func TestCompanyScope(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -164,7 +164,7 @@ func TestCompanyScope(t *testing.T) {
 }
 
 func TestCompanyScopeInvalid(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -193,7 +193,7 @@ func TestCompanyScopeInvalid(t *testing.T) {
 }
 
 func TestResolveCompany(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -234,7 +234,7 @@ func TestResolveCompany(t *testing.T) {
 }
 
 func TestUpdateScope(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -279,7 +279,7 @@ func TestUpdateScope(t *testing.T) {
 }
 
 func TestUpdateScopeRollsBackOnInsertFailure(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -314,7 +314,7 @@ func TestUpdateScopeRollsBackOnInsertFailure(t *testing.T) {
 }
 
 func TestDeleteCompany(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -342,7 +342,7 @@ func TestDeleteCompany(t *testing.T) {
 }
 
 func TestDeleteCompanyWithAssetsDeletesBoth(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -389,7 +389,7 @@ RETURNING id`, domain, id).Scan(&assetID); err != nil {
 }
 
 func TestRecomputeAttribution(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}
@@ -431,7 +431,7 @@ func TestRecomputeAttribution(t *testing.T) {
 }
 
 func TestListCompanies(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}

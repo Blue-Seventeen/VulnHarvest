@@ -258,8 +258,28 @@ var fullTextCols = []string{
 }
 
 type whereBuilder struct {
-	args []any
-	base int // placeholders are numbered base+1, base+2, …; 0 = the usual $1, $2, …
+	args   []any
+	base   int // placeholders are numbered base+1, base+2, …; 0 = the usual $1, $2, …
+	sqlite bool
+}
+
+func (b *whereBuilder) like(column, placeholder string) string {
+	if b.sqlite {
+		return "portable_lower(" + column + ") LIKE portable_lower(" + placeholder + ") ESCAPE '\\'"
+	}
+	return column + " ILIKE " + placeholder
+}
+func (b *whereBuilder) member(column, placeholder string) string {
+	if b.sqlite {
+		return "EXISTS(SELECT 1 FROM json_each(" + column + ") WHERE value=" + placeholder + ")"
+	}
+	return placeholder + " = ANY(" + column + ")"
+}
+func (b *whereBuilder) arrayLike(column, placeholder string) string {
+	if b.sqlite {
+		return "EXISTS(SELECT 1 FROM json_each(" + column + ") WHERE " + b.like("value", placeholder) + ")"
+	}
+	return "EXISTS (SELECT 1 FROM unnest(" + column + ") t(v) WHERE " + b.like("v", placeholder) + ")"
 }
 
 func (b *whereBuilder) next(v any) string {
@@ -303,11 +323,11 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 		p := b.next("%" + e.Value + "%")
 		var parts []string
 		for _, col := range fullTextCols {
-			parts = append(parts, col+" ILIKE "+p)
+			parts = append(parts, b.like(col, p))
 		}
 		parts = append(parts,
-			"EXISTS (SELECT 1 FROM unnest(technologies) t(v) WHERE v ILIKE "+p+")",
-			"EXISTS (SELECT 1 FROM unnest(bound_domains) t(v) WHERE v ILIKE "+p+")",
+			b.arrayLike("technologies", p),
+			b.arrayLike("bound_domains", p),
 		)
 		return "(" + strings.Join(parts, " OR ") + ")", nil
 	}
@@ -318,7 +338,7 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("task_id 需要整数值: %s", e.Value)
 		}
-		return b.next(n) + " = ANY(task_ids)", nil
+		return b.member("task_ids", b.next(n)), nil
 	}
 
 	// company_id: exact integer
@@ -350,12 +370,12 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 	if col, ok := knownArrayFields[f]; ok {
 		switch e.Op {
 		case "==":
-			return b.next(e.Value) + " = ANY(" + col + ")", nil
+			return b.member(col, b.next(e.Value)), nil
 		case "!=":
-			return "NOT (" + b.next(e.Value) + " = ANY(" + col + "))", nil
+			return "NOT (" + b.member(col, b.next(e.Value)) + ")", nil
 		case "=":
 			p := b.next("%" + e.Value + "%")
-			return "EXISTS (SELECT 1 FROM unnest(" + col + ") t(v) WHERE v ILIKE " + p + ")", nil
+			return b.arrayLike(col, p), nil
 		default:
 			return "", fmt.Errorf("数组字段 %s 不支持运算符 %s", f, e.Op)
 		}
@@ -365,11 +385,11 @@ func (b *whereBuilder) buildLeaf(e Expr) (string, error) {
 	if col, ok := knownStringFields[f]; ok {
 		switch e.Op {
 		case "=":
-			return col + " ILIKE " + b.next("%"+e.Value+"%"), nil
+			return b.like(col, b.next("%"+e.Value+"%")), nil
 		case "==":
 			return col + " = " + b.next(e.Value), nil
 		case "!=":
-			return col + " NOT ILIKE " + b.next("%"+e.Value+"%"), nil
+			return "NOT (" + b.like(col, b.next("%"+e.Value+"%")) + ")", nil
 		default:
 			return "", fmt.Errorf("字符串字段 %s 不支持运算符 %s", f, e.Op)
 		}
@@ -385,11 +405,14 @@ func buildDSLWhere(node *astNode) (string, []any, error) {
 // buildDSLWhereBase is buildDSLWhere with a placeholder offset: emitted args are
 // numbered base+1 onward, leaving $1..$base free for the caller (e.g. a scope CTE
 // that reserves $1 for the task id).
-func buildDSLWhereBase(node *astNode, base int) (string, []any, error) {
+func buildDSLWhereBase(node *astNode, base int, sqlite ...bool) (string, []any, error) {
 	if node == nil {
 		return "1=1", nil, nil
 	}
 	b := &whereBuilder{base: base}
+	if len(sqlite) > 0 {
+		b.sqlite = sqlite[0]
+	}
 	clause, err := b.build(node)
 	if err != nil {
 		return "", nil, err
@@ -480,59 +503,75 @@ func ValidateDSL(dsl string) error {
 // CountDSL returns the total number of assets matching a DSL expression (and optional
 // type), for server-side pagination — same WHERE as QueryDSL, without LIMIT/OFFSET.
 // taskID > 0 scopes the count to assets attached to that task.
-func (s *AssetStore) CountDSL(dsl, typ string, taskID int64) (int, error) {
+func (s *AssetStore) dslPredicate(dsl, typ string, taskID int64, declaredScope bool) (prefix, where string, args []any, err error) {
 	node, err := ParseDSL(dsl)
 	if err != nil {
-		return 0, err
+		return "", "", nil, err
 	}
-	where, args, err := buildDSLWhere(node)
+	base := 0
+	if declaredScope && taskID > 0 {
+		prefix = "WITH " + s.scopeTargetSQL() + " "
+		base = 1
+		args = []any{taskID}
+	}
+	where, dslArgs, err := buildDSLWhereBase(node, base, s.db.IsSQLite())
+	if err != nil {
+		return "", "", nil, err
+	}
+	args = append(args, dslArgs...)
+	// Parenthesize before attaching independent type/task/scope filters. A top-
+	// level OR must not leak rows of another type or outside the declared scope.
+	where = "(" + where + ")"
+	if typ != "" {
+		args = append(args, typ)
+		where += fmt.Sprintf(" AND type=$%d", len(args))
+	}
+	if taskID > 0 {
+		if declaredScope {
+			where += " AND id IN (SELECT id FROM target)"
+		} else {
+			args = append(args, taskID)
+			where += " AND " + s.taskMembership(fmt.Sprintf("$%d", len(args)), "task_ids")
+		}
+	}
+	return prefix, where, args, nil
+}
+
+func (s *AssetStore) countDSL(dsl, typ string, taskID int64, declaredScope bool) (int, error) {
+	prefix, where, args, err := s.dslPredicate(dsl, typ, taskID, declaredScope)
 	if err != nil {
 		return 0, err
 	}
-	if typ != "" {
-		args = append(args, typ)
-		where += fmt.Sprintf(" AND type = $%d", len(args))
-	}
-	if taskID > 0 {
-		args = append(args, taskID)
-		where += fmt.Sprintf(" AND $%d = ANY(task_ids)", len(args))
-	}
 	var n int
-	err = s.db.QueryRow("SELECT count(*) FROM assets WHERE "+where, args...).Scan(&n)
+	err = s.readQueryRow(prefix+"SELECT count(*) FROM assets WHERE "+where, args...).Scan(&n)
 	return n, err
 }
 
-// QueryDSL executes a DSL query string against the asset store.
-// typ is an optional asset type filter applied independently of the DSL expression.
-// taskID > 0 scopes results to assets attached to that task and hydrates each
-// row's per-task source metadata (as QueryByTask does).
-func (s *AssetStore) QueryDSL(dsl, typ string, taskID int64, limit, offset int) ([]*Asset, error) {
+func (s *AssetStore) CountDSL(dsl, typ string, taskID int64) (int, error) {
+	return s.countDSL(dsl, typ, taskID, false)
+}
+
+// CountDSLInScope uses exactly the declared-scope predicate used by
+// QueryDSLInScope, before pagination. It includes direct live source scopes but
+// does not count touched/anchored assets outside those declarations.
+func (s *AssetStore) CountDSLInScope(dsl, typ string, taskID int64) (int, error) {
+	return s.countDSL(dsl, typ, taskID, true)
+}
+
+func (s *AssetStore) queryDSL(dsl, typ string, taskID int64, limit, offset int, declaredScope bool) ([]*Asset, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	node, err := ParseDSL(dsl)
+	prefix, where, args, err := s.dslPredicate(dsl, typ, taskID, declaredScope)
 	if err != nil {
 		return nil, err
-	}
-	where, args, err := buildDSLWhere(node)
-	if err != nil {
-		return nil, err
-	}
-	if typ != "" {
-		args = append(args, typ)
-		where += fmt.Sprintf(" AND type = $%d", len(args))
-	}
-	if taskID > 0 {
-		args = append(args, taskID)
-		where += fmt.Sprintf(" AND $%d = ANY(task_ids)", len(args))
 	}
 	args = append(args, limit, offset)
-	q := assetSelectCols + " WHERE " + where +
-		fmt.Sprintf(" ORDER BY last_seen DESC, id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
-	rows, err := s.db.Query(q, args...)
+	q := prefix + s.selectCols() + " WHERE " + where + fmt.Sprintf(" ORDER BY last_seen DESC,id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+	rows, err := s.readQuery(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -541,63 +580,26 @@ func (s *AssetStore) QueryDSL(dsl, typ string, taskID int64, limit, offset int) 
 	if err != nil {
 		return nil, err
 	}
+	rows.Close()
 	if taskID > 0 {
-		if err := s.hydrateTaskAssetSources(taskID, assets); err != nil {
+		if err = s.hydrateTaskAssetSources(taskID, assets); err != nil {
 			return nil, err
 		}
 	}
 	return assets, nil
 }
 
-// QueryDSLInScope is QueryDSL restricted to assets that BELONG to taskID's (and its
-// direct source tasks') declared scope — membership, not literal value: a
-// root_domain scope returns every subdomain / service / endpoint under it. This is
-// the agent-facing list_assets path, so an agent queries the task's relevant assets
-// instead of the whole shared库. taskID<=0 (non-task contexts: Auto / pentest / chat)
-// has no scope to honor and falls back to the plain global QueryDSL. Rows carry the
-// same per-task source metadata as QueryByTask.
+// QueryDSL filters producer task_ids when taskID is positive. This association
+// differs from declared-scope membership in QueryDSLInScope.
+func (s *AssetStore) QueryDSL(dsl, typ string, taskID int64, limit, offset int) ([]*Asset, error) {
+	return s.queryDSL(dsl, typ, taskID, limit, offset, false)
+}
+
+// QueryDSLInScope selects membership in the task's and direct live sources'
+// declared scopes. Network scopes include IP-literal domains. Filtering occurs
+// before LIMIT/OFFSET; non-task contexts fall back to the global predicate.
 func (s *AssetStore) QueryDSLInScope(dsl, typ string, taskID int64, limit, offset int) ([]*Asset, error) {
-	if taskID <= 0 {
-		return s.QueryDSL(dsl, typ, 0, limit, offset)
-	}
-	if limit <= 0 {
-		limit = 50
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	node, err := ParseDSL(dsl)
-	if err != nil {
-		return nil, err
-	}
-	// $1 is reserved for taskID (scopeTargetCTE); DSL placeholders start at $2.
-	where, dslArgs, err := buildDSLWhereBase(node, 1)
-	if err != nil {
-		return nil, err
-	}
-	args := []any{taskID}
-	args = append(args, dslArgs...)
-	if typ != "" {
-		args = append(args, typ)
-		where += fmt.Sprintf(" AND type = $%d", len(args))
-	}
-	where += " AND id IN (SELECT id FROM target)"
-	args = append(args, limit, offset)
-	q := `WITH ` + scopeTargetCTE + ` ` + assetSelectCols + " WHERE " + where +
-		fmt.Sprintf(" ORDER BY last_seen DESC, id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
-	rows, err := s.db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	assets, err := scanAssets(rows)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.hydrateTaskAssetSources(taskID, assets); err != nil {
-		return nil, err
-	}
-	return assets, nil
+	return s.queryDSL(dsl, typ, taskID, limit, offset, true)
 }
 
 // GetByIDsInScope is GetByIDs restricted to ids that BELONG to taskID's (and its
@@ -618,10 +620,10 @@ func (s *AssetStore) GetByIDsInScope(taskID int64, ids []int64) ([]*Asset, error
 		placeholders[i] = fmt.Sprintf("$%d", i+2)
 		args = append(args, id)
 	}
-	q := `WITH ` + scopeTargetCTE + ` ` + assetSelectCols +
+	q := `WITH ` + s.scopeTargetSQL() + ` ` + s.selectCols() +
 		" WHERE id IN (" + strings.Join(placeholders, ",") + ")" +
 		" AND id IN (SELECT id FROM target) ORDER BY last_seen DESC, id DESC"
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.readQuery(q, args...)
 	if err != nil {
 		return nil, err
 	}

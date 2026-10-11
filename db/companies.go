@@ -98,6 +98,9 @@ func companyNKey(name string) string {
 // UpsertCompany creates or updates a company by name. Returns the id and whether
 // a new row was created.
 func (s *CompanyStore) UpsertCompany(name, logo string) (id int64, created bool, err error) {
+	if s.db.IsSQLite() {
+		return s.upsertSQLiteCompany(name, logo)
+	}
 	nkey := companyNKey(name)
 	var logoVal any
 	if logo != "" {
@@ -133,7 +136,7 @@ func (s *CompanyStore) CreateCompanyWithScope(name, logo string, inputs []ScopeI
 		return 0, 0, 0, invalid, validationErrors, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return 0, 0, 0, invalid, validationErrors, err
 	}
 
@@ -153,12 +156,12 @@ RETURNING id`, name, nkey, logoVal).Scan(&id); err != nil {
 		return 0, 0, 0, invalid, validationErrors, err
 	}
 
-	added, skipped, needsAttribution, err := insertScopeRulesTx(tx, id, rules, reason)
+	added, skipped, needsAttribution, err := insertScopeRulesTx(tx, id, rules, reason, s.db)
 	if err != nil {
 		return 0, 0, 0, invalid, validationErrors, err
 	}
 	if needsAttribution {
-		warning, err := recomputeAttributionTx(tx)
+		warning, err := recomputeAttributionTx(tx, s.db)
 		if err != nil {
 			return 0, 0, 0, invalid, validationErrors, err
 		}
@@ -173,9 +176,11 @@ RETURNING id`, name, nkey, logoVal).Scan(&id); err != nil {
 // GetCompany returns one company by id (nil if not found).
 func (s *CompanyStore) GetCompany(id int64) (*Company, error) {
 	c := &Company{}
-	err := s.db.QueryRow(`
+	err := s.db.QueryRow(s.db.SQL(`
 SELECT id, name, nkey, logo, created_at::text, updated_at::text
-FROM companies WHERE id = $1`, id).Scan(
+FROM companies WHERE id = $1`, `
+SELECT id, name, nkey, logo, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+FROM companies WHERE id = $1`), id).Scan(
 		&c.ID, &c.Name, &c.NKey, &c.Logo, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -187,9 +192,11 @@ FROM companies WHERE id = $1`, id).Scan(
 func (s *CompanyStore) GetCompanyByName(name string) (*Company, error) {
 	nkey := companyNKey(name)
 	c := &Company{}
-	err := s.db.QueryRow(`
+	err := s.db.QueryRow(s.db.SQL(`
 SELECT id, name, nkey, logo, created_at::text, updated_at::text
-FROM companies WHERE nkey = $1`, nkey).Scan(
+FROM companies WHERE nkey = $1`, `
+SELECT id, name, nkey, logo, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+FROM companies WHERE nkey = $1`), nkey).Scan(
 		&c.ID, &c.Name, &c.NKey, &c.Logo, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -219,7 +226,7 @@ func (s *CompanyStore) DeleteCompanyWithAssets(id int64, deleteAssets bool) (ass
 		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return 0, err
 	}
 	if deleteAssets {
@@ -245,7 +252,7 @@ func (s *CompanyStore) DeleteCompanyWithAssets(id int64, deleteAssets bool) (ass
 	}
 	// This path has no per-request warning channel, so the log is the only place
 	// the operator can learn about unparseable ip rows here.
-	warning, err := recomputeAttributionTx(tx)
+	warning, err := recomputeAttributionTx(tx, s.db)
 	if err != nil {
 		return 0, err
 	}
@@ -258,13 +265,19 @@ func (s *CompanyStore) DeleteCompanyWithAssets(id int64, deleteAssets bool) (ass
 
 // ListCompanies returns all companies with scope and asset count.
 func (s *CompanyStore) ListCompanies() ([]*CompanyWithScope, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.db.Query(s.db.SQL(`
 SELECT c.id, c.name, c.nkey, c.logo, c.created_at::text, c.updated_at::text,
        COUNT(DISTINCT a.id) AS asset_count
 FROM companies c
 LEFT JOIN assets a ON a.company_id = c.id
 GROUP BY c.id
-ORDER BY c.name`)
+ORDER BY c.name`, `
+SELECT c.id, c.name, c.nkey, c.logo, CAST(c.created_at AS TEXT), CAST(c.updated_at AS TEXT),
+       COUNT(DISTINCT a.id) AS asset_count
+FROM companies c
+LEFT JOIN assets a ON a.company_id = c.id
+GROUP BY c.id
+ORDER BY c.name`))
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +297,7 @@ ORDER BY c.name`)
 	}
 
 	// fetch scope rules for each company
+	rows.Close()
 	for _, cws := range out {
 		cws.Scope, err = s.GetScope(cws.ID)
 		if err != nil {
@@ -295,12 +309,17 @@ ORDER BY c.name`)
 
 // GetScope returns all scope rules for a company.
 func (s *CompanyStore) GetScope(companyID int64) ([]ScopeRule, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.db.Query(s.db.SQL(`
 SELECT id, company_id, kind,
        COALESCE(domain,''), COALESCE(net::text,''), COALESCE(value,''), raw, COALESCE(reason,'')
 FROM company_scope
 WHERE company_id = $1
-ORDER BY id`, companyID)
+ORDER BY id`, `
+SELECT id, company_id, kind,
+       COALESCE(domain,''), COALESCE(net,''), COALESCE(value,''), raw, COALESCE(reason,'')
+FROM company_scope
+WHERE company_id = $1
+ORDER BY id`), companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +372,7 @@ func (s *CompanyStore) AddScopeInputsChecked(companyID int64, inputs []ScopeInpu
 		return 0, 0, invalid, errors, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return 0, 0, invalid, errors, err
 	}
 	if err := ensureCompanyExistsTx(tx, companyID); err != nil {
@@ -365,12 +384,12 @@ func (s *CompanyStore) AddScopeInputsChecked(companyID int64, inputs []ScopeInpu
 		}
 		return 0, 0, invalid, errors, nil
 	}
-	added, skipped, needsAttribution, err := insertScopeRulesTx(tx, companyID, rules, reason)
+	added, skipped, needsAttribution, err := insertScopeRulesTx(tx, companyID, rules, reason, s.db)
 	if err != nil {
 		return 0, 0, invalid, errors, err
 	}
 	if needsAttribution {
-		warning, err := recomputeAttributionTx(tx)
+		warning, err := recomputeAttributionTx(tx, s.db)
 		if err != nil {
 			return 0, 0, invalid, errors, fmt.Errorf("重新计算企业归属失败: %w", err)
 		}
@@ -423,16 +442,19 @@ func ensureCompanyExistsTx(tx *sql.Tx, companyID int64) error {
 	return nil
 }
 
-func lockCompanyScopeMutation(tx *sql.Tx) error {
+func lockCompanyScopeMutation(tx *sql.Tx, dialect ...*DB) error {
+	if sqliteDialect(dialect) {
+		return nil
+	}
 	_, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, companyScopeMutationLock)
 	return err
 }
 
-func insertScopeRulesTx(tx *sql.Tx, companyID int64, rules []ParsedScope, reason string) (
+func insertScopeRulesTx(tx *sql.Tx, companyID int64, rules []ParsedScope, reason string, dialect ...*DB) (
 	added, skipped int, needsAttribution bool, err error,
 ) {
 	for _, rule := range rules {
-		inserted, insertErr := insertScopeRuleTx(tx, companyID, rule, reason)
+		inserted, insertErr := insertScopeRuleTx(tx, companyID, rule, reason, dialect...)
 		if insertErr != nil {
 			return 0, 0, false, insertErr
 		}
@@ -448,20 +470,23 @@ func insertScopeRulesTx(tx *sql.Tx, companyID int64, rules []ParsedScope, reason
 
 // insertScopeRuleTx inserts a scope rule. inserted=false means a duplicate was
 // ignored by ON CONFLICT, not an error.
-func insertScopeRuleTx(tx *sql.Tx, companyID int64, rule ParsedScope, reason string) (inserted bool, err error) {
+func insertScopeRuleTx(tx *sql.Tx, companyID int64, rule ParsedScope, reason string, dialect ...*DB) (inserted bool, err error) {
 	var res interface{ RowsAffected() (int64, error) }
 	switch rule.Kind {
 	case "domain":
 		res, err = tx.Exec(`
 INSERT INTO company_scope(company_id, kind, domain, raw, reason)
 VALUES ($1, 'domain', $2, $3, $4)
-ON CONFLICT ON CONSTRAINT uq_sv2_domain DO NOTHING`,
+ON CONFLICT (company_id,domain) DO NOTHING`,
 			companyID, rule.Domain, rule.Raw, reason)
 	case "ip", "cidr":
-		res, err = tx.Exec(`
+		res, err = tx.Exec(dialectSQL(dialect, `
 INSERT INTO company_scope(company_id, kind, net, raw, reason)
 VALUES ($1, $2, $3::cidr, $4, $5)
-ON CONFLICT ON CONSTRAINT uq_sv2_net DO NOTHING`,
+ON CONFLICT (company_id,net) DO NOTHING`, `
+INSERT INTO company_scope(company_id, kind, net, raw, reason)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (company_id,net) DO NOTHING`),
 			companyID, rule.Kind, rule.Net, rule.Raw, reason)
 	case "icp", "keyword":
 		res, err = tx.Exec(`
@@ -488,10 +513,10 @@ func (s *CompanyStore) RecomputeAttribution() error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return err
 	}
-	warning, err := recomputeAttributionTx(tx)
+	warning, err := recomputeAttributionTx(tx, s.db)
 	if err != nil {
 		return err
 	}
@@ -503,7 +528,10 @@ func (s *CompanyStore) RecomputeAttribution() error {
 // for assets whose ip column cannot be parsed: try_inet skips them instead of
 // aborting the statement, so without this they would silently never receive a
 // network-based company. Callers surface the warning and it is always logged.
-func recomputeAttributionTx(tx *sql.Tx) (string, error) {
+func recomputeAttributionTx(tx *sql.Tx, dialect ...*DB) (string, error) {
+	if sqliteDialect(dialect) {
+		return recomputeSQLiteAttributionTx(tx)
+	}
 	// Only derived rows are cleared. Historical rows migrated without provenance
 	// are marked explicit by schema.sql, which is the non-destructive default.
 	if _, err := tx.Exec(`
@@ -596,14 +624,17 @@ type malformedIPAssetQueryer interface {
 // widening the mutation signatures — an unrelated data problem is not one of
 // this request's validation errors.
 func (s *CompanyStore) MalformedIPAssetWarning() (string, error) {
-	return malformedIPAssetWarning(s.db)
+	return malformedIPAssetWarning(s.db, s.db)
 }
 
 // malformedIPAssetWarning describes assets whose ip column is not a valid
 // address. They are invisible to network attribution, so the operator has to be
 // told which rows to fix — silently skipping them would look like scope rules
 // that simply do not work.
-func malformedIPAssetWarning(q malformedIPAssetQueryer) (string, error) {
+func malformedIPAssetWarning(q malformedIPAssetQueryer, dialect ...*DB) (string, error) {
+	if sqliteDialect(dialect) {
+		return malformedSQLiteIPWarning(q)
+	}
 	rows, err := q.Query(`
 SELECT id, ip, count(*) OVER () AS total
 FROM assets
@@ -681,7 +712,7 @@ func (s *CompanyStore) UpdateScopeInputsChecked(companyID int64, inputs []ScopeI
 		return 0, invalid, errs, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := lockCompanyScopeMutation(tx); err != nil {
+	if err := lockCompanyScopeMutation(tx, s.db); err != nil {
 		return 0, invalid, errs, err
 	}
 	if err := ensureCompanyExistsTx(tx, companyID); err != nil {
@@ -690,13 +721,13 @@ func (s *CompanyStore) UpdateScopeInputsChecked(companyID int64, inputs []ScopeI
 	if _, err := tx.Exec(`DELETE FROM company_scope WHERE company_id = $1`, companyID); err != nil {
 		return 0, invalid, errs, err
 	}
-	added, _, _, err = insertScopeRulesTx(tx, companyID, rules, reason)
+	added, _, _, err = insertScopeRulesTx(tx, companyID, rules, reason, s.db)
 	if err != nil {
 		return 0, invalid, errs, err
 	}
 	// Rebuild even for an empty replacement because removing the old rules may
 	// detach scope-derived assets or expose a lower-precedence company match.
-	warning, err := recomputeAttributionTx(tx)
+	warning, err := recomputeAttributionTx(tx, s.db)
 	if err != nil {
 		return 0, invalid, errs, fmt.Errorf("重新计算企业归属失败: %w", err)
 	}
@@ -716,14 +747,18 @@ func (s *CompanyStore) ResolveCompany(rootDomain, ipStr string) (*int64, error) 
 // ResolveCompanyWithICP mirrors RecomputeAttribution for insert-time ownership.
 // ICP is consulted only after domain and IP/CIDR fail to match.
 func (s *CompanyStore) ResolveCompanyWithICP(rootDomain, ipStr, icp string) (*int64, error) {
-	return resolveCompanyWithICP(s.db, rootDomain, ipStr, icp)
+	return resolveCompanyWithICP(s.db, rootDomain, ipStr, icp, s.db)
 }
 
 type companyScopeQueryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-func resolveCompanyWithICP(q companyScopeQueryer, rootDomain, ipStr, icp string) (*int64, error) {
+func resolveCompanyWithICP(q companyScopeQueryer, rootDomain, ipStr, icp string, dialect ...*DB) (*int64, error) {
+	if sqliteDialect(dialect) {
+		return resolveSQLiteCompany(q, rootDomain, ipStr, icp)
+	}
 	if rootDomain != "" {
 		var cid int64
 		err := q.QueryRow(`

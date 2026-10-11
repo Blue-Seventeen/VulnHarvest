@@ -228,7 +228,7 @@ func TestCompanyScopeLimitsAndCheckedErrors(t *testing.T) {
 }
 
 func TestCompanyScopeCheckedReturnsSystemErrorSeparately(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v)", err)
 	}

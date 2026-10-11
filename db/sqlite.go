@@ -297,6 +297,9 @@ func registerSQLiteFunctions() error {
 				return strings.ToLower(fmt.Sprint(args[0])), nil
 			}},
 			{"portable_json_overlay", 2, sqliteJSONOverlay},
+			{"portable_asset_array_merge", 3, sqliteAssetArrayMerge},
+			{"portable_net_contains", 2, sqliteNetContains},
+			{"portable_normalize_icp", 1, sqliteNormalizeICP},
 			{"portable_time_shift", 2, sqliteTimeShift},
 			{"greatest", -1, sqliteExtremum(true)},
 			{"least", -1, sqliteExtremum(false)},

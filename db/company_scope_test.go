@@ -229,7 +229,7 @@ func TestParseStructuredCompanyScope(t *testing.T) {
 }
 
 func TestCompanyICPAttribution(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
@@ -255,7 +255,7 @@ func TestCompanyICPAttribution(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		// 不吞错误：清理失败会污染后续用例，必须让它在本次运行里显形。
-		if _, err := d.Exec(`DELETE FROM assets WHERE task_ids @> ARRAY[$1]::bigint[]`, suffix); err != nil {
+		if _, err := d.Exec(d.SQL(`DELETE FROM assets WHERE task_ids @> ARRAY[$1]::bigint[]`, `DELETE FROM assets WHERE EXISTS(SELECT 1 FROM json_each(task_ids) WHERE value=$1)`), suffix); err != nil {
 			t.Errorf("清理测试资产失败: %v", err)
 		}
 		if _, err := d.Exec(`DELETE FROM companies WHERE id=$1`, companyID); err != nil {
@@ -314,7 +314,7 @@ func TestCompanyICPAttribution(t *testing.T) {
 // backfill of a pre-existing asset, CIDR + domain-suffix matching, and that
 // out-of-scope assets stay unattributed.
 func TestCompanyScopeAttribution(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openAssetTestDB(t)
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
