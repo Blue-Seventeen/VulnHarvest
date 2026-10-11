@@ -47,6 +47,28 @@ func OpenSQLite(path string) (_ *DB, err error) {
 	if !strings.HasPrefix(u.Path, "/") {
 		u.Path = "/" + u.Path
 	}
+	// Preflight existing files with a genuinely read-only connection. Even a
+	// plain Close on the last read-write connection can checkpoint a crashed
+	// process's WAL. Do not use immutable: the version may exist only in WAL.
+	if _, statErr := os.Stat(path); statErr == nil {
+		preflight := u
+		preflight.RawQuery = url.Values{"mode": {"ro"}}.Encode()
+		probe, probeErr := sql.Open("sqlite", preflight.String())
+		if probeErr != nil {
+			return nil, fmt.Errorf("inspect SQLite version read-only: %w", probeErr)
+		}
+		var version int
+		probeErr = probe.QueryRow(`PRAGMA user_version`).Scan(&version)
+		closeErr := probe.Close()
+		if probeErr != nil || closeErr != nil {
+			return nil, fmt.Errorf("inspect SQLite version read-only: %w", errors.Join(probeErr, closeErr))
+		}
+		if version > sqliteSchemaVersion {
+			return nil, fmt.Errorf("SQLite schema %d is newer than supported %d", version, sqliteSchemaVersion)
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return nil, statErr
+	}
 	params := url.Values{}
 	params.Add("_pragma", "foreign_keys(ON)")
 	params.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", sqliteBusyTimeout))

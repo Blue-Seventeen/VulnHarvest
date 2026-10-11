@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -547,5 +548,65 @@ func TestSQLiteRejectFutureWALWithoutMutation(t *testing.T) {
 	}
 	if err := external.QueryRow(`SELECT value FROM future_data`).Scan(&value); err != nil || value != "uncheckpointed" {
 		t.Fatal(value, err)
+	}
+}
+
+func TestSQLiteFutureCrashFixture(t *testing.T) {
+	path := os.Getenv("VH_FUTURE_CRASH_FIXTURE")
+	if path == "" {
+		t.Skip("subprocess fixture helper")
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.SetMaxOpenConns(1)
+	raw.SetMaxIdleConns(1)
+	for _, q := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA wal_autocheckpoint=0`, `CREATE TABLE future_data(value TEXT)`, `INSERT INTO future_data VALUES('committed before crash')`, `PRAGMA user_version=999`} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Mimic a crashed process: no sql.DB.Close, so no last-writer checkpoint.
+	os.Exit(0)
+}
+
+func TestSQLiteRejectCrashedFutureWALWithoutMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "crashed-future.sqlite")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(exe, "-test.run=^TestSQLiteFutureCrashFixture$")
+	child.Env = append(os.Environ(), "VH_FUTURE_CRASH_FIXTURE="+path)
+	if output, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("crash fixture: %v\n%s", err, output)
+	}
+	// No external connection remains; version=999 exists only in the WAL.
+	mainBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	walBefore, err := os.ReadFile(path + "-wal")
+	if err != nil || len(walBefore) == 0 {
+		t.Fatal("fixture needs nonempty WAL", err)
+	}
+	if d, err := OpenSQLite(path); err == nil {
+		d.Close()
+		t.Fatal("future schema accepted")
+	}
+	mainAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sha256.Sum256(mainAfter) != sha256.Sum256(mainBefore) {
+		t.Error("future rejection changed main database bytes")
+	}
+	walAfter, err := os.ReadFile(path + "-wal")
+	if err != nil {
+		t.Fatal("future rejection removed WAL", err)
+	}
+	if sha256.Sum256(walAfter) != sha256.Sum256(walBefore) {
+		t.Error("future rejection changed WAL bytes")
 	}
 }

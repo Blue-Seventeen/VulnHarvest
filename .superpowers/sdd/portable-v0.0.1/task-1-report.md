@@ -64,3 +64,18 @@ TDD 回归 TestSQLiteRejectFutureWALWithoutMutation：独立临时 future.sqlite
 - `go test ./config ./db -run 'TestResolveMode|^TestSQLite|TestApplySchemaRetries' -count=1`：PASS config 0.417s / db 2.139s。
 - `go vet ./config ./db`：PASS（退出码0，无诊断）。
 - 未启动应用、未seed、未访问旧实例；无其他业务改动。
+
+
+## Task 1 fix 2 — 无常驻连接的崩溃 WAL 保护
+
+读取 task-1-review.md 与 task-1-fix-1-review.md。复审确认 fix1 仅消除了显式 checkpoint；SQLite 最后一条 read-write 连接 Close 本身仍会自动 checkpoint。因此仅关闭 writer 的失败清理不能保护崩溃后独存的未来版本 WAL。
+
+已有磁盘文件在建立任何 RW pool 前，先通过独立 `mode=ro` 连接读取 `PRAGMA user_version` 并关闭；未来版本立即拒绝。不能用 immutable，因为最新版本与数据可以仅存在于 WAL。支持版本通过预检后再建立原 writer/reader；新文件正常直接初始化；没有靠泄漏 writer 规避 checkpoint。正常 Close 及 fix1 失败pool清理保持原契约。
+
+新增子进程 fixture 使用本机 test executable：创建独立临时 WAL 数据库、禁自动checkpoint、写入 committed 数据和 user_version=999，然后直接 os.Exit(0)，保留非空 WAL，父进程不保持任何外部数据库连接。拒绝前后比较主库及 WAL SHA-256，WAL 必须仍存在且完全相同。
+
+- 修复前 `go test ./db -run '^TestSQLiteRejectCrashedFutureWALWithoutMutation$' -count=1 -v`：FAIL（2.023s），主库字节改变，WAL文件被删除。
+- 修复后 `go test ./db -run '^TestSQLiteReject(Crashed)?FutureWALWithoutMutation$' -count=1 -v`：PASS（2.104s），同时覆盖常驻外部连接及子进程崩溃无连接两个路径。
+- `go test ./config ./db -run 'TestResolveMode|^TestSQLite|TestApplySchemaRetries' -count=1`：PASS config 0.526s / db 3.238s；新数据库初始化、受支持重开、迁移/备份、正常Close全部仍通过。
+- `go vet ./config ./db`：PASS（退出码0，无诊断）。
+- 未seed、未启动应用、未访问旧实例。改动仅 sqlite.go、sqlite_test.go、本文报告。
