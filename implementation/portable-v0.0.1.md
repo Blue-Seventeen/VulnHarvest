@@ -22,22 +22,22 @@ Files: config/config.go, config/mode_test.go, db/db.go, db/sqlite.go, db/sqlite_
 
 Interfaces: config.ResolveMode(cli string) (string,error), db.OpenSQLite(path string) (*DB,error), (*DB).IsSQLite() bool, (*DB).SQL(postgres,sqlite string) string.
 
-- [ ] 先测试 CLI/env/file/default、非法模式、便携忽略 PostgreSQL DSN。
-- [ ] 建立最新完整表结构和索引/触发器。SQLite 数组使用 JSON text，时间列使用 DATETIME，BOOLEAN 支持 bool 扫描。
-- [ ] 建立 schema version、升级前备份、未来版本拒绝、rollback、Close checkpoint。
-- [ ] DB 保留嵌入 *sql.DB；覆盖 Exec/Query/QueryRow/Context/Begin/BeginTx，读写路由，无全局 SQL 重写。写池最大连接 1，_txlock=immediate。
-- [ ] 注册 now/concat_ws/greatest/least 等可共享标量函数；不注册伪造锁函数。
-- [ ] OpenSQLite 暂只迁移；内置配置 seed 于 Task 2 集成。
-- [ ] 测试每连接 PRAGMA、读写并发、外键/唯一/忙等待错误分类、重启、备份、未来版本。
+- [x] 先测试 CLI/env/file/default、非法模式、便携忽略 PostgreSQL DSN。
+- [x] 建立最新完整表结构和索引/触发器。SQLite 数组使用 JSON text，时间列使用 DATETIME，BOOLEAN 支持 bool 扫描。
+- [x] 建立 schema version、升级前备份、未来版本拒绝、rollback、Close checkpoint。
+- [x] DB 保留嵌入 *sql.DB；覆盖 Exec/Query/QueryRow/Context/Begin/BeginTx，读写路由，无全局 SQL 重写。写池最大连接 1，_txlock=immediate。
+- [x] 注册 now/concat_ws/greatest/least 等可共享标量函数；不注册伪造锁函数。
+- [x] OpenSQLite 暂只迁移；内置配置 seed 于 Task 2 集成。
+- [x] 测试每连接 PRAGMA、读写并发、外键/唯一/忙等待错误分类、重启、备份、未来版本。
 
 ### Task 2: 配置和基础 DAO
 
 Files: db/db.go seed, config.go, tools.go, settings.go, conversation.go, logs.go, tool_usage.go, llm_usage.go, llmretry.go, llmhealth.go, skill_usage.go, intercept*.go, notification*.go, triggers.go, commands.go, chat_mentions.go, side_questions.go.
 
-- [ ] 为 SQL 选择接缝增加模块测试，完整初始化 seed，不能覆盖自定义提示词和绑定。
-- [ ] 适配 JSON/数组/日期/ILIKE/统计/通知领取/锁，检查记录日志正文和用量。
-- [ ] SQL 查询共有参数保持 $N，SQLite 不支持的显式使用 DB.SQL 或独立方法。
-- [ ] 使用独立 PG 库和 SQLite 验证同一业务契约。
+- [x] 为 SQL 选择接缝增加模块测试，完整初始化 seed，不能覆盖自定义提示词和绑定。
+- [x] 适配 JSON/数组/日期/ILIKE/统计/通知领取/锁，检查记录日志正文和用量。
+- [x] SQL 查询共有参数保持 $N，SQLite 不支持的显式使用 DB.SQL 或独立方法。
+- [x] 使用独立 PG 库和 SQLite 验证同一业务契约。
 
 ### Task 3: 任务和探索图
 
