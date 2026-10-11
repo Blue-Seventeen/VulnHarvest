@@ -1,0 +1,768 @@
+--- a/mcp/stdio.go
++++ b/mcp/stdio.go
+@@ -2,25 +2,30 @@
+ 
+ import (
+ 	"context"
++	"fmt"
+ 	"io"
+ 	"os"
+ 	"os/exec"
++	"sync"
+ )
+ 
+ // stdioCloser shuts down a spawned MCP server process and its pipes.
+ type stdioCloser struct {
+ 	cmd   *exec.Cmd
+ 	stdin io.Closer
++	once  sync.Once
+ }
+ 
+ func (s *stdioCloser) Close() error {
+-	if s.stdin != nil {
+-		s.stdin.Close()
+-	}
+-	if s.cmd != nil && s.cmd.Process != nil {
+-		_ = s.cmd.Process.Kill()
+-		_ = s.cmd.Wait()
+-	}
++	s.once.Do(func() {
++		if s.cmd != nil && s.cmd.Process != nil {
++			stopStdioProcess(s.cmd)
++			_ = s.cmd.Wait()
++		}
++		if s.stdin != nil {
++			s.stdin.Close()
++		}
++	})
+ 	return nil
+ }
+ 
+@@ -37,15 +42,31 @@
+ 			cmd.Env = append(cmd.Env, k+"="+v)
+ 		}
+ 	}
++	return NewStdioClientWithCommand(ctx, server, cmd)
++}
++
++// NewStdioClientWithCommand owns an unstarted prepared command. ctx bounds only
++// initialization; use exec.Command (not exec.CommandContext with handshake ctx)
++// when the session must outlive discovery. Close kills and waits the child.
++func NewStdioClientWithCommand(ctx context.Context, server string, cmd *exec.Cmd) (*Client, error) {
++	if cmd == nil || cmd.Process != nil || cmd.Stdin != nil || cmd.Stdout != nil {
++		return nil, fmt.Errorf("MCP requires unstarted command with unused stdio pipes")
++	}
++	if err := prepareStdioProcess(cmd); err != nil {
++		return nil, err
++	}
+ 	stdin, err := cmd.StdinPipe()
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	stdout, err := cmd.StdoutPipe()
+ 	if err != nil {
++		_ = stdin.Close()
+ 		return nil, err
+ 	}
+ 	if err := cmd.Start(); err != nil {
++		_ = stdin.Close()
++		_ = stdout.Close()
+ 		return nil, err
+ 	}
+ 	c := &Client{
+--- /dev/null
++++ b/mcp/stdio_launch_test.go
+@@ -0,0 +1,112 @@
++package mcp
++
++import (
++	"context"
++	"fmt"
++	"io"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestMain(m *testing.M) {
++	if os.Getenv("NORMA_MCP_TEST_CHILD") == "grandchild" {
++		for {
++			_ = os.WriteFile(os.Getenv("NORMA_MCP_HEARTBEAT"), []byte(fmt.Sprint(time.Now().UnixNano())), 0600)
++			time.Sleep(10 * time.Millisecond)
++		}
++	}
++	if os.Getenv("NORMA_MCP_TEST_CHILD") == "1" {
++		if os.Getenv("NORMA_MCP_SPAWN_DESCENDANT") == "1" {
++			exe, _ := os.Executable()
++			child := exec.Command(exe)
++			child.Env = append(os.Environ(), "NORMA_MCP_TEST_CHILD=grandchild")
++			_ = child.Start()
++		}
++		fakeServer(os.Stdin, os.Stdout)
++		os.Exit(0)
++	}
++	os.Exit(m.Run())
++}
++
++func TestPreparedStdioCloseStopsPackageRunnerDescendant(t *testing.T) {
++	exe, _ := os.Executable()
++	marker := filepath.Join(t.TempDir(), "descendant-heartbeat")
++	cmd := exec.Command(exe)
++	cmd.Env = append(os.Environ(), "NORMA_MCP_TEST_CHILD=1", "NORMA_MCP_SPAWN_DESCENDANT=1", "NORMA_MCP_HEARTBEAT="+marker)
++	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
++	defer cancel()
++	client, err := NewStdioClientWithCommand(ctx, "descendant", cmd)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer client.Close()
++	deadline := time.Now().Add(5 * time.Second)
++	for {
++		if _, err := os.Stat(marker); err == nil {
++			break
++		}
++		if time.Now().After(deadline) {
++			t.Fatal("descendant did not start")
++		}
++		time.Sleep(20 * time.Millisecond)
++	}
++	_ = client.Close()
++	before, _ := os.ReadFile(marker)
++	time.Sleep(150 * time.Millisecond)
++	after, _ := os.ReadFile(marker)
++	if string(before) != string(after) {
++		t.Fatal("package-runner descendant kept writing after MCP Close")
++	}
++}
++
++// Detects command re-resolution or attaching handshake cancellation to child lifetime.
++func TestPreparedStdioRealHandshakeRetainsProcessUntilClose(t *testing.T) {
++	exe, _ := os.Executable()
++	cmd := exec.Command(exe, "中文 space argv")
++	cmd.Env = append(os.Environ(), "NORMA_MCP_TEST_CHILD=1")
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	client, err := NewStdioClientWithCommand(ctx, "sentinel", cmd)
++	cancel()
++	if err != nil {
++		t.Fatal(err)
++	}
++	tools, err := client.Tools(context.Background())
++	if err != nil || len(tools) != 1 {
++		t.Fatalf("handshake context killed live child: %v %v", tools, err)
++	}
++	res, err := tools[0].Call(context.Background(), []byte(`{}`), nil)
++	if err != nil || res.Flatten() != "echoed!" {
++		t.Fatalf("real MCP call %v %s", err, res.Flatten())
++	}
++	if err := client.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if cmd.ProcessState == nil {
++		t.Fatal("Close did not Wait child")
++	}
++	_ = client.Close()
++}
++
++func TestPreparedStdioRejectsConflictingPipesWithoutStarting(t *testing.T) {
++	exe, _ := os.Executable()
++	cmd := exec.Command(exe)
++	cmd.Stdin = strings.NewReader("conflict")
++	if _, err := NewStdioClientWithCommand(context.Background(), "invalid", cmd); err == nil {
++		t.Fatal("accepted conflicting stdin")
++	}
++	if cmd.Process != nil {
++		t.Fatal("invalid command started")
++	}
++	if _, err := NewStdioClientWithCommand(context.Background(), "nil", nil); err == nil {
++		t.Fatal("accepted nil cmd")
++	}
++	cmd = exec.Command(exe)
++	cmd.Stdout = io.Discard
++	if _, err := NewStdioClientWithCommand(context.Background(), "invalid", cmd); err == nil {
++		t.Fatal("accepted conflicting stdout")
++	}
++}
+--- /dev/null
++++ b/mcp/stdio_process_unix.go
+@@ -0,0 +1,21 @@
++//go:build !windows
++
++package mcp
++
++import (
++	"os/exec"
++	"syscall"
++)
++
++func prepareStdioProcess(cmd *exec.Cmd) error {
++	if cmd.SysProcAttr == nil {
++		cmd.SysProcAttr = &syscall.SysProcAttr{}
++	}
++	cmd.SysProcAttr.Setpgid = true
++	return nil
++}
++
++func stopStdioProcess(cmd *exec.Cmd) {
++	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
++	_ = cmd.Process.Kill()
++}
+--- /dev/null
++++ b/mcp/stdio_process_windows.go
+@@ -0,0 +1,25 @@
++package mcp
++
++import (
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strconv"
++	"syscall"
++)
++
++func prepareStdioProcess(cmd *exec.Cmd) error {
++	if cmd.SysProcAttr == nil {
++		cmd.SysProcAttr = &syscall.SysProcAttr{}
++	}
++	cmd.SysProcAttr.CreationFlags |= 0x00000200 // CREATE_NEW_PROCESS_GROUP
++	return nil
++}
++
++func stopStdioProcess(cmd *exec.Cmd) {
++	// Use an absolute OS helper; controlled tool PATH must not replace tree kill.
++	if root := os.Getenv("SystemRoot"); root != "" {
++		_ = exec.Command(filepath.Join(root, "System32", "taskkill.exe"), "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
++	}
++	_ = cmd.Process.Kill()
++}
+--- a/tool/bash.go
++++ b/tool/bash.go
+@@ -156,18 +156,22 @@
+ 	cctx, cancel := context.WithTimeout(ctx, timeout)
+ 	defer cancel()
+ 
+-	shell, flags := shellCmd()
+-	cmd := exec.CommandContext(cctx, shell, append(flags, command)...)
++	var dir string
++	var env []string
+ 	if tc != nil {
+-		cmd.Dir = tc.WorkingDir
+-		if env := withEnv(tc.Env); env != nil {
+-			cmd.Env = env
+-		}
++		dir, env = tc.WorkingDir, tc.Env
++	}
++	cmd, err := newShellCommand(cctx, command, dir, env)
++	if err != nil {
++		return Errorf(err.Error()), nil
++	}
++	if executionRuntime.Load() != nil {
++		prepareRuntimeCancellation(cmd)
+ 	}
+ 	var buf bytes.Buffer
+ 	cmd.Stdout = &buf
+ 	cmd.Stderr = &buf
+-	err := cmd.Run()
++	err = cmd.Run()
+ 
+ 	out := Capture(tc, buf.String())
+ 	if cctx.Err() == context.DeadlineExceeded {
+--- a/tool/ripgrep.go
++++ b/tool/ripgrep.go
+@@ -1,30 +1,20 @@
+ package tool
+ 
+ import (
++	"context"
+ 	"errors"
+ 	"fmt"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+-	"runtime"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+ )
+ 
+-// Ripgrep integration: the Grep tool prefers the ripgrep binary when available
+-// (faster, .gitignore-aware, full ripgrep syntax) and falls back to the pure-Go
+-// implementation otherwise. Resolution runs once:
+-//
+-//  1. an `rg` already on PATH is used as-is;
+-//  2. otherwise a best-effort `npm install -g @vscode/ripgrep` runs (npm is
+-//     assumed present) and the installed binary is located;
+-//  3. on any failure — no npm, install error, binary not found — the pure-Go
+-//     grep is used, so search always works.
+-//
+-// Env controls:
+-//   - NORMA_DISABLE_RIPGREP=1     force the pure-Go implementation (also used by tests)
+-//   - NORMA_RIPGREP_NO_INSTALL=1  use an existing rg but never auto-install
++// Ripgrep prefers an existing binary and otherwise uses the pure-Go backend.
++// Automatic npm installation is deliberately disabled in every storage mode.
++// NORMA_DISABLE_RIPGREP forces Go; NORMA_RIPGREP_NO_INSTALL remains compatible.
+ 
+ var (
+ 	rgOnce     sync.Once
+@@ -32,58 +22,24 @@
+ )
+ 
+ // RipgrepPath returns the resolved ripgrep binary path, or "" when the pure-Go
+-// grep should be used. The heavy resolution (detect + optional npm install) runs
+-// at most once per process.
++// grep should be used. Published runtime selections bypass legacy caching.
+ func RipgrepPath() string {
+ 	if os.Getenv("NORMA_DISABLE_RIPGREP") != "" {
+ 		return ""
++	}
++	if rt := executionRuntime.Load(); rt != nil {
++		return rt.Commands["rg"].Executable
+ 	}
+ 	rgOnce.Do(func() { rgResolved = resolveRipgrep() })
+ 	return rgResolved
+ }
+ 
+-// EnsureRipgrep warms ripgrep resolution so the cost (including a possible npm
+-// install) is paid at startup rather than on the first Grep call. Hosts may call
++// EnsureRipgrep warms legacy resolution without installing anything. Hosts may call
+ // it once at boot. Returns the resolved path ("" = Go fallback).
+ func EnsureRipgrep() string { return RipgrepPath() }
+ 
+ func resolveRipgrep() string {
+ 	if p, err := exec.LookPath("rg"); err == nil {
+-		return p
+-	}
+-	if os.Getenv("NORMA_RIPGREP_NO_INSTALL") != "" {
+-		return ""
+-	}
+-	return installRipgrepViaNpm()
+-}
+-
+-func installRipgrepViaNpm() string {
+-	if _, err := exec.LookPath("npm"); err != nil {
+-		return "" // no npm → Go fallback
+-	}
+-	cmd := exec.Command("npm", "install", "-g", "@vscode/ripgrep")
+-	if err := cmd.Run(); err != nil {
+-		return ""
+-	}
+-	if p, err := exec.LookPath("rg"); err == nil {
+-		return p
+-	}
+-	return npmGlobalRipgrep()
+-}
+-
+-// npmGlobalRipgrep locates the rg binary vendored by @vscode/ripgrep in the npm
+-// global root (it exposes no `rg` command, so we resolve the path directly).
+-func npmGlobalRipgrep() string {
+-	out, err := exec.Command("npm", "root", "-g").Output()
+-	if err != nil {
+-		return ""
+-	}
+-	name := "rg"
+-	if runtime.GOOS == "windows" {
+-		name = "rg.exe"
+-	}
+-	p := filepath.Join(strings.TrimSpace(string(out)), "@vscode", "ripgrep", "bin", name)
+-	if st, err := os.Stat(p); err == nil && !st.IsDir() {
+ 		return p
+ 	}
+ 	return ""
+@@ -146,6 +102,15 @@
+ 	args = append(args, "-e", r.pattern, "--", target)
+ 
+ 	cmd := exec.Command(rg, args...)
++	// Capture one current generation for both the absolute executable and PATH.
++	// A rescan between RipgrepPath and this launch must not revive a removed rg.
++	if rt := ExecutionSnapshot(); rt != nil {
++		var err error
++		cmd, err = CommandFromSnapshot(context.Background(), rt, "rg", args, dir, nil)
++		if err != nil {
++			return Result{}, false
++		}
++	}
+ 	cmd.Dir = dir
+ 	out, err := cmd.Output()
+ 	if err != nil {
+--- /dev/null
++++ b/tool/runtime_execution.go
+@@ -0,0 +1,144 @@
++package tool
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"sync/atomic"
++	"time"
++)
++
++// LaunchSpec preserves argv boundaries, including known Node CLI wrappers.
++type LaunchSpec struct {
++	Executable string   `json:"executable"`
++	PrefixArgs []string `json:"prefix_args,omitempty"`
++}
++
++// ExecutionRuntime is one immutable process-wide selection. Its sole host owner
++// must publish before tool use and stop/join consumers before clearing it. Separate
++// Managers cannot own different selections in the same process. Running sessions
++// retain their generation's PATH; publishers must keep old alias directories alive.
++type ExecutionRuntime struct {
++	Generation uint64
++	ShellPath  string
++	ShellArgs  []string
++	ChildPATH  string
++	Commands   map[string]LaunchSpec
++	Metadata   json.RawMessage
++}
++
++var executionRuntime atomic.Pointer[ExecutionRuntime]
++
++func cloneRuntime(rt *ExecutionRuntime) *ExecutionRuntime {
++	if rt == nil {
++		return nil
++	}
++	out := *rt
++	out.ShellArgs = append([]string(nil), rt.ShellArgs...)
++	out.Metadata = append(json.RawMessage(nil), rt.Metadata...)
++	out.Commands = make(map[string]LaunchSpec, len(rt.Commands))
++	for k, v := range rt.Commands {
++		v.PrefixArgs = append([]string(nil), v.PrefixArgs...)
++		out.Commands[k] = v
++	}
++	return &out
++}
++
++// ExecutionSnapshot returns an independent copy of the single published value.
++func ExecutionSnapshot() *ExecutionRuntime { return cloneRuntime(executionRuntime.Load()) }
++
++// SetExecutionRuntime validates before publishing; failures preserve the old value.
++// nil restores legacy execution. This setter performs no probes or installation.
++func SetExecutionRuntime(rt *ExecutionRuntime) error {
++	next := cloneRuntime(rt)
++	if next != nil {
++		if next.ShellPath != "" && !filepath.IsAbs(next.ShellPath) {
++			return fmt.Errorf("shell path must be absolute")
++		}
++		for _, spec := range next.Commands {
++			if spec.Executable == "" || !filepath.IsAbs(spec.Executable) {
++				return fmt.Errorf("tool path must be absolute")
++			}
++		}
++	}
++	executionRuntime.Store(next)
++	return nil
++}
++
++// RuntimeEnv merges extra values and overrides any spelling of PATH on Windows.
++func RuntimeEnv(parent, extra []string, path string) []string {
++	result := make([]string, 0, len(parent)+len(extra)+1)
++	seen := map[string]bool{}
++	all := append(append([]string(nil), parent...), extra...)
++	all = append(all, "PATH="+path)
++	for i := len(all) - 1; i >= 0; i-- {
++		k, _, ok := strings.Cut(all[i], "=")
++		if !ok {
++			continue
++		}
++		if runtime.GOOS == "windows" {
++			k = strings.ToUpper(k)
++		}
++		if !seen[k] {
++			seen[k] = true
++			result = append(result, all[i])
++		}
++	}
++	return result
++}
++
++// CommandFromSnapshot never resolves a name through the ambient parent PATH.
++// Callers may supply one captured snapshot to keep multi-stage operations coherent.
++func CommandFromSnapshot(ctx context.Context, rt *ExecutionRuntime, name string, args []string, dir string, extra []string) (*exec.Cmd, error) {
++	if rt == nil {
++		return nil, fmt.Errorf("execution snapshot required")
++	}
++	spec, ok := rt.Commands[name]
++	if !ok {
++		return nil, fmt.Errorf("tool %q unavailable", name)
++	}
++	argv := append(append([]string(nil), spec.PrefixArgs...), args...)
++	cmd := exec.CommandContext(ctx, spec.Executable, argv...)
++	cmd.Dir = dir
++	cmd.Env = RuntimeEnv(os.Environ(), extra, rt.ChildPATH)
++	prepareRuntimeCancellation(cmd)
++	return cmd, nil
++}
++
++func prepareRuntimeCancellation(cmd *exec.Cmd) {
++	setDetached(cmd)
++	cmd.Cancel = func() error {
++		if cmd.Process != nil {
++			treeKill(cmd.Process)
++		}
++		return nil
++	}
++	cmd.WaitDelay = 2 * time.Second
++}
++
++func newShellCommand(ctx context.Context, command, dir string, extra []string) (*exec.Cmd, error) {
++	rt := executionRuntime.Load()
++	if rt == nil {
++		shell, flags := shellCmd()
++		cmd := exec.CommandContext(ctx, shell, append(flags, command)...)
++		cmd.Dir = dir
++		cmd.Env = withEnv(extra)
++		return cmd, nil
++	}
++	if rt.ShellPath == "" {
++		return nil, fmt.Errorf("command interpreter unavailable")
++	}
++	// PowerShell's built-in curl alias otherwise bypasses native PATH selection.
++	if runtime.GOOS == "windows" && len(rt.ShellArgs) > 0 && strings.EqualFold(rt.ShellArgs[len(rt.ShellArgs)-1], "-Command") {
++		command = "Remove-Item Alias:curl -ErrorAction SilentlyContinue; " + command
++	}
++	cmd := exec.CommandContext(ctx, rt.ShellPath, append(append([]string(nil), rt.ShellArgs...), command)...)
++	cmd.Dir = dir
++	cmd.Env = RuntimeEnv(os.Environ(), extra, rt.ChildPATH)
++	return cmd, nil
++}
+--- /dev/null
++++ b/tool/runtime_execution_test.go
+@@ -0,0 +1,102 @@
++package tool
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++)
++
++func TestMain(m *testing.M) {
++	if os.Getenv("NORMA_TEST_CHILD") == "1" {
++		if p := os.Getenv("NORMA_TEST_MARKER"); p != "" {
++			_ = os.WriteFile(p, []byte(strings.Join(os.Args, "|")), 0600)
++		}
++		fmt.Print(strings.Join(os.Args[1:], "|") + " PATH=" + os.Getenv("PATH"))
++		os.Exit(0)
++	}
++	os.Exit(m.Run())
++}
++
++// Detects stale/frozen launch paths in synchronous and owned-background commands.
++func TestExecutionSnapshotDrivesActualForegroundAndBackground(t *testing.T) {
++	old := ExecutionSnapshot()
++	defer SetExecutionRuntime(old)
++	exe, _ := os.Executable()
++	dir := t.TempDir()
++	t.Setenv("NORMA_TEST_CHILD", "1")
++	rt := &ExecutionRuntime{Generation: 1, ShellPath: exe, ShellArgs: []string{"selected-one"}, ChildPATH: dir, Commands: map[string]LaunchSpec{"rg": {Executable: exe}}}
++	if err := SetExecutionRuntime(rt); err != nil {
++		t.Fatal(err)
++	}
++	rt.ShellArgs[0] = "mutated"
++	res, err := runBashSync(context.Background(), &ToolContext{Env: []string{"PATH=wrong"}}, "中文 空格", time.Second*5)
++	if err != nil || !strings.Contains(res.Flatten(), "selected-one|中文 空格 PATH="+dir) {
++		t.Fatalf("foreground %s %v", res.Flatten(), err)
++	}
++	root, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	manager := &Manager{tasks: map[string]*Task{}, sessions: map[string]*ptySession{}, dir: dir, rootCtx: root, rootCancel: cancel}
++	defer manager.Cleanup()
++	if err := SetExecutionRuntime(&ExecutionRuntime{Generation: 2, ShellPath: exe, ShellArgs: []string{"selected-two"}, ChildPATH: dir}); err != nil {
++		t.Fatal(err)
++	}
++	task, err := manager.Spawn(SpawnSpec{Command: "argv 空格", WorkingDir: dir})
++	if err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case <-task.done:
++	case <-time.After(5 * time.Second):
++		t.Fatal("background did not exit")
++	}
++	out, _ := manager.Output(task.ID, 0)
++	if !strings.Contains(out, "selected-two|argv 空格") {
++		t.Fatalf("background %s", out)
++	}
++	if RipgrepPath() != "" {
++		t.Fatal("rescan retained old rg")
++	}
++	if err := SetExecutionRuntime(&ExecutionRuntime{ShellPath: "relative"}); err == nil {
++		t.Fatal("relative snapshot accepted")
++	}
++	if ExecutionSnapshot().Generation != 2 {
++		t.Fatal("failed publish replaced usable snapshot")
++	}
++}
++
++// Detects npm auto-install on the SDK's legacy path, independently of detector probes.
++func TestRipgrepNeverInstallsAndGoFallbackWorks(t *testing.T) {
++	old := ExecutionSnapshot()
++	defer SetExecutionRuntime(old)
++	_ = SetExecutionRuntime(nil)
++	dir := t.TempDir()
++	exe, _ := os.Executable()
++	b, _ := os.ReadFile(exe)
++	name := "npm"
++	if filepath.Ext(exe) == ".exe" {
++		name += ".exe"
++	}
++	if err := os.WriteFile(filepath.Join(dir, name), b, 0700); err != nil {
++		t.Fatal(err)
++	}
++	marker := filepath.Join(dir, "npm-was-executed")
++	t.Setenv("PATH", dir)
++	t.Setenv("NORMA_TEST_CHILD", "1")
++	t.Setenv("NORMA_TEST_MARKER", marker)
++	t.Setenv("NORMA_RIPGREP_NO_INSTALL", "")
++	t.Setenv("NORMA_DISABLE_RIPGREP", "")
++	rgOnce = sync.Once{}
++	_ = os.WriteFile(filepath.Join(dir, "sample.txt"), []byte("fallback-needle"), 0600)
++	res := run(t, NewGrep(), dir, map[string]any{"pattern": "fallback-needle", "output_mode": "files_with_matches"})
++	if !strings.Contains(res.Flatten(), "sample.txt") {
++		t.Fatal(res.Flatten())
++	}
++	if _, err := os.Stat(marker); !os.IsNotExist(err) {
++		t.Fatal("SDK executed npm instead of Go fallback")
++	}
++}
+--- /dev/null
++++ b/tool/runtime_pty_test.go
+@@ -0,0 +1,42 @@
++package tool
++
++import (
++	"context"
++	"os"
++	"runtime"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestRuntimePTYSelectionOrHonestUnsupported(t *testing.T) {
++	old := ExecutionSnapshot()
++	defer SetExecutionRuntime(old)
++	exe, _ := os.Executable()
++	dir := t.TempDir()
++	t.Setenv("NORMA_TEST_CHILD", "1")
++	_ = SetExecutionRuntime(&ExecutionRuntime{Generation: 1, ShellPath: exe, ShellArgs: []string{"selected-pty"}, ChildPATH: dir})
++	root, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	manager := &Manager{tasks: map[string]*Task{}, sessions: map[string]*ptySession{}, dir: dir, rootCtx: root, rootCancel: cancel}
++	defer manager.closeAllSessions()
++	sess, err := manager.openSession("中文 argv", dir, nil, 24, 80, "dispatch", nil)
++	if runtime.GOOS == "windows" {
++		if err == nil || !strings.Contains(err.Error(), "不支持") {
++			t.Fatalf("unsupported Windows PTY %v", err)
++		}
++		return
++	}
++	if err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case <-sess.done:
++	case <-time.After(5 * time.Second):
++		t.Fatal("PTY child not joined")
++	}
++	text, _, _ := sess.readSince(0, 0, 4096, true)
++	if !strings.Contains(text, "selected-pty|中文 argv") {
++		t.Fatalf("PTY ignored published shell %q", text)
++	}
++}
+--- a/tool/shell_session.go
++++ b/tool/shell_session.go
+@@ -65,7 +65,7 @@
+ 	lastOut  time.Time
+ 	exitedAt time.Time
+ 
+-	readCur  int64 // tool-side read cursor (shell_read without since_cursor continues here)
++	readCur  int64         // tool-side read cursor (shell_read without since_cursor continues here)
+ 	notifyCh chan struct{} // pinged on new output
+ 	done     chan struct{} // closed when the process exits
+ }
+@@ -298,11 +298,9 @@
+ 	if cols <= 0 {
+ 		cols = sessDefCols
+ 	}
+-	shell, flags := shellCmd()
+-	cmd := exec.CommandContext(m.rootCtx, shell, append(flags, command)...)
+-	cmd.Dir = workDir
+-	if e := withEnv(env); e != nil {
+-		cmd.Env = e
++	cmd, err := newShellCommand(m.rootCtx, command, workDir, env)
++	if err != nil {
++		return nil, err
+ 	}
+ 	ptmx, err := startPTY(cmd, rows, cols)
+ 	if err != nil {
+--- a/tool/task.go
++++ b/tool/task.go
+@@ -70,9 +70,9 @@
+ 	OutputPath  string
+ 
+ 	// internal, guarded by Manager.mu
+-	backgrounded bool          // surfaced as a background task: notify on exit
+-	notified     bool          // completion already enqueued into pending
+-	oversize     bool          // terminated by the size watchdog
++	backgrounded bool // surfaced as a background task: notify on exit
++	notified     bool // completion already enqueued into pending
++	oversize     bool // terminated by the size watchdog
+ 	cmd          *exec.Cmd
+ 	done         chan struct{} // closed by watch when the process exits
+ }
+@@ -88,15 +88,15 @@
+ 
+ // TaskInfo is an immutable snapshot of a task for safe reads outside the lock.
+ type TaskInfo struct {
+-	ID          string
+-	Kind        TaskKind
+-	Command     string
+-	Description string
+-	Status      TaskStatus
+-	ExitCode    int
+-	StartTime   time.Time
+-	EndTime     time.Time
+-	OutputPath  string
++	ID           string
++	Kind         TaskKind
++	Command      string
++	Description  string
++	Status       TaskStatus
++	ExitCode     int
++	StartTime    time.Time
++	EndTime      time.Time
++	OutputPath   string
+ 	Backgrounded bool
+ }
+ 
+@@ -227,11 +227,11 @@
+ 	if kind == "" {
+ 		kind = KindBash
+ 	}
+-	shell, flags := shellCmd()
+-	cmd := exec.CommandContext(m.rootCtx, shell, append(flags, spec.Command)...)
+-	cmd.Dir = spec.WorkingDir
+-	if env := withEnv(spec.Env); env != nil {
+-		cmd.Env = env
++	cmd, err := newShellCommand(m.rootCtx, spec.Command, spec.WorkingDir, spec.Env)
++	if err != nil {
++		_ = f.Close()
++		_ = os.Remove(outPath)
++		return nil, err
+ 	}
+ 	cmd.Stdout = f
+ 	cmd.Stderr = f

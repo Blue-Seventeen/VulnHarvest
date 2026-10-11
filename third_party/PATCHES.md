@@ -1,5 +1,70 @@
 # Scoped SDK patches
 
+## norma v0.4.3 — portable-tool-selection-1
+
+The root still requires `github.com/Autumn-27/norma v0.4.3`, with only a scoped
+source replacement to `./third_party/norma`. All 210 original archive files
+were copied and compared against the read-only cache, preserving raw bytes.
+205 are unchanged; five upstream files are patched, six files added, none
+deleted. The original module declaration, go.mod/go.sum, docs, versions and
+available copyright remain unchanged. No transitive module is vendored.
+The published archive contains no LICENSE/COPYING/NOTICE: this absence is
+recorded accurately and no upstream license is invented. The compressed zip
+SHA-256 is `fd6e096f5ee5399b51d26fb6c3b7a43c04b5dd43bb1807dc1fe676d63e24f720`;
+its recorded Go content hash is `h1:DnmOhJPL6OZSMnCVYO5Ujh4yVINuDarEickVi9jx1hI=`.
+The existing proxy manifest entry and raw hashes are retained unchanged.
+
+`patches/norma-v0.4.3.patch` is the exact module-relative baseline diff,
+separate from the copied source. `verify_upstream.py --module norma --archive
+<original.zip>` checks every original byte/hash, the copy/change/add lists,
+and the exact patch. Git `-text` attributes preserve raw-byte provenance.
+
+- `tool/runtime_execution.go` adds immutable process-global selection with
+  validation/deep copies, one atomic publication, absolute command construction,
+  generation PATH and environment merging. Its single owner must join consumers
+  before clearing it. Existing PG execution remains legacy until publication.
+- `tool/bash.go`, `tool/task.go`, `tool/shell_session.go` use the same selected
+  interpreter for sync/background/PTY. Windows PTY remains unsupported; Unix
+  uses its existing PTY. Snapshot sync timeouts stop relay descendants and bound
+  output-pipe waiting. Windows PowerShell removes its built-in curl alias only
+  inside the child, so bare curl obeys selected PATH.
+- `tool/ripgrep.go` removes automatic npm installation/root commands in every
+  mode, retaining Go fallback. Published selection bypasses legacy sync.Once;
+  actual rg launch captures both the selected executable and PATH together.
+- `mcp/stdio.go` adds `NewStdioClientWithCommand`, validates unstarted pipes,
+  cleans partial construction failures and preserves handshake-only context.
+  `stdio_process_{unix,windows}.go` owns process-group/tree termination; Close
+  stops the tree before closing stdin (a package runner may exit on EOF), then
+  waits its child. Explicit user package commands remain supported.
+- Tests: actual selected foreground/background/PTY or honest Windows error,
+  Go grep/no npm sentinel, real stdio initialize/tools/list/tools/call, handshake
+  cancellation and package-runner descendant heartbeat shutdown.
+
+App-side `runtimeenv` owns Check, read-only metadata/safe bounded known version
+probes, per-generation native aliases, fallback and lifecycle. npm/npx .cmd are
+translated only for known npm Node CLI layouts using this generation's Node;
+unknown batch wrappers remain unresolved. Custom MCP and browser detection
+never execute business args, package requests, GUI or service flags. Versions
+retain only parsed version numbers. Optional absence does not prevent Check.
+Aliases expose selected tools only and explicitly fail unavailable names;
+runtime/bin is removed from child host PATH, old generations persist to Close.
+Windows aliases are copies (running image hardlinks cannot be deleted); Unix
+prefers hardlinks and relay uses exec. `cmd/artex` dispatches aliases before any
+flags/update/lock/storage work, but does not yet construct portable mode.
+
+Server Python and explicit MCP launches use the published execution selection.
+MCP proxy/CA overlay is session-only and preserves saved args/env; PG's legacy
+path remains when no snapshot is published. Task5b must initialize/check once
+before tool use, rescan after config changes, suppress automatic MCP discovery,
+and stop/join all consumers before ToolManager.Close. No runtime HTTP API,
+startup recovery or full application lifecycle is claimed by this patch.
+
+Windows focused behavior gates passed, including real shell curl alias and
+Chinese/space argv; the original complete norma tool suite has three existing
+Windows failures, reproduced against the pristine archive (Unix shell syntax
+in two tests and legacy Cleanup completion). Native Linux/race/PTY gate is
+separate; full app business/LLM acceptance belongs to Tasks5b/7.
+
 ## go-mitmproxy v1.9.2 — portable-proxy-lifecycle-1
 
 `go.mod` still requires upstream `github.com/lqqyt2423/go-mitmproxy v1.9.2`;

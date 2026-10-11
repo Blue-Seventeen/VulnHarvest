@@ -8,6 +8,7 @@ import (
 
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/mcphttp"
+	"github.com/Autumn-27/artex/runtimeenv"
 	"github.com/Autumn-27/norma/mcp"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -21,11 +22,23 @@ type mcpClient interface {
 }
 
 // connectMCP dials one MCP server per its transport. Callers must Close the client.
-func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
+func connectMCP(ctx context.Context, m *db.MCPServer, overlays ...MCPLaunchOverlay) (mcpClient, error) {
 	switch m.Transport {
 	case "stdio":
 		if m.Command == "" {
 			return nil, fmt.Errorf("stdio 传输缺少命令")
+		}
+		if actool.ExecutionSnapshot() != nil {
+			var overlay *MCPLaunchOverlay
+			if len(overlays) > 0 {
+				overlay = &overlays[0]
+			}
+			args, env := mcpLaunchValues(m, overlay)
+			cmd, err := runtimeenv.MCPCommand(m.Command, args, env, "")
+			if err != nil {
+				return nil, err
+			}
+			return mcp.NewStdioClientWithCommand(ctx, m.Name, cmd)
 		}
 		return mcp.NewStdioClient(ctx, m.Name, m.Command, jsonStrMap(m.Env), jsonStrSlice(m.Args)...)
 	case "http":
@@ -47,7 +60,7 @@ func connectMCP(ctx context.Context, m *db.MCPServer) (mcpClient, error) {
 // discoverAndCacheMCP connects to one MCP, lists its tools, and persists the tool
 // names to mcp_tools_cache so the UI shows them without a live connection.
 func (s *Server) discoverAndCacheMCP(ctx context.Context, m *db.MCPServer) error {
-	cl, err := connectMCP(ctx, m)
+	cl, err := connectMCP(ctx, m, s.runtimeMCPOverlay(m))
 	if err != nil {
 		return err
 	}

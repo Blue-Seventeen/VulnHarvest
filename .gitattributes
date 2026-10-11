@@ -5,6 +5,8 @@
 third_party/go-mitmproxy/** -text
 third_party/patches/go-mitmproxy-v1.9.2.patch -text
 third_party/upstream-manifest.json -text
+third_party/norma/** -text
+third_party/patches/norma-v0.4.3.patch -text -whitespace
 
 # Preserve upstream formatting; patch context lines use meaningful indentation.
 # Patched Go sources keep the repository's normal whitespace checks.

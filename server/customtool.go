@@ -195,6 +195,9 @@ func detectPython() string {
 // pythonInterpreter resolves the interpreter: user-set > stored auto-detect > live
 // detect. "" only when truly none found.
 func (s *Server) pythonInterpreter() string {
+	if rt := actool.ExecutionSnapshot(); rt != nil {
+		return rt.Commands["python"].Executable
+	}
 	if v, ok, _ := s.m.pg.GetSetting(settingPythonInterp); ok && strings.TrimSpace(v) != "" {
 		return strings.TrimSpace(v)
 	}
@@ -395,14 +398,27 @@ func execPython(ctx context.Context, interp, key, code string, params map[string
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	c := exec.CommandContext(runCtx, interp, tmp)
+	var c *exec.Cmd
+	if rt := actool.ExecutionSnapshot(); rt != nil {
+		var err error
+		c, err = actool.CommandFromSnapshot(runCtx, rt, "python", []string{tmp}, workDir, sessionEnv)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		c = exec.CommandContext(runCtx, interp, tmp)
+	}
 	c.Dir = workDir
-	c.Env = append(os.Environ(), sessionEnv...) // 会话代理 env
-	for k, v := range params {                  // 标量参数镜像成 TOOL_<NAME>
+	if c.Env == nil {
+		c.Env = append(os.Environ(), sessionEnv...)
+	} // legacy 会话代理 env
+	for k, v := range params { // 标量参数镜像成 TOOL_<NAME>
 		if sv, ok := scalarStr(v); ok {
 			c.Env = append(c.Env, "TOOL_"+strings.ToUpper(k)+"="+sv)
 		}
 	}
+	// Script stdin/stdout is UTF-8 JSON; Windows Python must not reinterpret it as GBK.
+	c.Env = append(c.Env, "PYTHONIOENCODING=utf-8")
 	pj, _ := json.Marshal(params)
 	c.Stdin = bytes.NewReader(pj) // 参数 JSON 走 stdin
 	out, err := c.CombinedOutput()

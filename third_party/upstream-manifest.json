@@ -586,6 +586,1142 @@
         }
       ],
       "deletedFiles": []
+    },
+    {
+      "module": "github.com/Autumn-27/norma",
+      "version": "v0.4.3",
+      "goDirective": "1.26.3",
+      "directory": "third_party/norma",
+      "goSum": "h1:DnmOhJPL6OZSMnCVYO5Ujh4yVINuDarEickVi9jx1hI=",
+      "archiveSHA256": "fd6e096f5ee5399b51d26fb6c3b7a43c04b5dd43bb1807dc1fe676d63e24f720",
+      "source": "Go module cache archive; offline zip-to-cache comparison of all 210 original raw-byte files; no online SumDB claim",
+      "licenseEvidence": "Upstream v0.4.3 archive contains no LICENSE, COPYING or NOTICE file. Available original source, docs, version and copyright are retained byte-for-byte except explicitly listed patches; no license has been fabricated.",
+      "patchID": "vulnharvest-portable-tool-selection-1",
+      "patchFile": "third_party/patches/norma-v0.4.3.patch",
+      "patchSHA256": "bebb73107fc4ad2bba1bf74e4ec8e1bf36986fc49cddc2a56192e3beb35e9913",
+      "upstreamFiles": [
+        {
+          "path": ".gitignore",
+          "size": 208,
+          "sha256": "a456328a32ac70d0fbcd83886353d401cce83e6e15f4d83eeda5f93ec4c5de22"
+        },
+        {
+          "path": "README.md",
+          "size": 7414,
+          "sha256": "2db733d39223b0a2ea15748d5c54d157b8efcc649b17aa42ead77a3ab9728c57"
+        },
+        {
+          "path": "agentcore/agentcore.go",
+          "size": 21915,
+          "sha256": "c7c09bebc26831d59126d36194e22d7c526eac673f5b527fb8cda4c83a9e88ef"
+        },
+        {
+          "path": "agentcore/agentcore_test.go",
+          "size": 3144,
+          "sha256": "47588f43964cc289b9199bd4daaed510232644e5a84abe9cbc8a96888131137d"
+        },
+        {
+          "path": "agentcore/compactor_test.go",
+          "size": 3686,
+          "sha256": "abeb3f0e7ac3a39c773d8956d9e81723099fb302b4ddb120ba56743d9d16c555"
+        },
+        {
+          "path": "agentcore/deferred_test.go",
+          "size": 4166,
+          "sha256": "dd0fcb54b1f40aa884b58a2a4e6f50ff46b9184f49176e05295f2e6d6aec86aa"
+        },
+        {
+          "path": "agentcore/noa_off_test.go",
+          "size": 4823,
+          "sha256": "00d2f2804ea09eb1b7467ebf85ee16b57ecec90c42cd52cba14f37b5f4ad3c40"
+        },
+        {
+          "path": "agentcore/plan_test.go",
+          "size": 2869,
+          "sha256": "b66fd61cb78001440d2b25755ee34a328611805e12a11d78f922f88ac55192ed"
+        },
+        {
+          "path": "agentcore/task_test.go",
+          "size": 3223,
+          "sha256": "798e46daa8f199d97edec2d3d65633d4e9cc95a06c7a32f7546efa545c58fddc"
+        },
+        {
+          "path": "agentcore/transcript_test.go",
+          "size": 7037,
+          "sha256": "33335a3b12e6b87999059b1a4a35340c9e42df7f8757928509bad2fa9ff88a6b"
+        },
+        {
+          "path": "cmd/agentcore/main.go",
+          "size": 5796,
+          "sha256": "c3424771da8accbc9b2818ba820cf79e6d3375db46752c724f7be5611ca8fb86"
+        },
+        {
+          "path": "compaction/autocompact_test.go",
+          "size": 8953,
+          "sha256": "2d828b53c6ff53039e8d3e23cdb7c2d7b1b0bad06d5ae1823bcf523d428af89b"
+        },
+        {
+          "path": "compaction/compaction.go",
+          "size": 15016,
+          "sha256": "6dc509ea901b6ee4cd366d39c7082d6f574d9a254ef1b53a0e8d04559a2ddf12"
+        },
+        {
+          "path": "compaction/compaction_test.go",
+          "size": 8087,
+          "sha256": "229e7059ff7f2e7d3116222ba1e7d9d56f54d0ccb8807a95662032080ee6da46"
+        },
+        {
+          "path": "compaction/micro_test.go",
+          "size": 5175,
+          "sha256": "1aed2213a6ad5a9ed3dcd2242be1cb94b8df2602072e61ff520d3c4f0f69c2c5"
+        },
+        {
+          "path": "compaction/misc_test.go",
+          "size": 2069,
+          "sha256": "675c13a34cd66f89615b3fde18f944227b4d40315c927f83cf289ec9f6fcbb47"
+        },
+        {
+          "path": "compaction/repeated_test.go",
+          "size": 3240,
+          "sha256": "731f89112d49977ee4dbb2d34eca83fddf1bdce122dd95d4e8b95b5e04ec3597"
+        },
+        {
+          "path": "compaction/skills_reinject_test.go",
+          "size": 2275,
+          "sha256": "63fbdc560becfe5039be77906a10308a85721cfba0837b9819732aae53c49772"
+        },
+        {
+          "path": "compaction/spec3_test.go",
+          "size": 9055,
+          "sha256": "d871e163c8196c0ad6334f6369067db53aeb5e808677818a6a47aca28e683ef6"
+        },
+        {
+          "path": "compaction/summarizer.go",
+          "size": 13387,
+          "sha256": "a57b923735de8ea9a67c433865e361a2fe6486e6dcaa7a9f85338de65ad765b3"
+        },
+        {
+          "path": "compaction/summarizer_helpers_test.go",
+          "size": 6369,
+          "sha256": "56ceac8aa6969a46744baa0a09a572fde6efb7c9c19c9826b2de1dfb34bba58f"
+        },
+        {
+          "path": "compaction/threshold_test.go",
+          "size": 5679,
+          "sha256": "3a2600365c474207d8c1d1ec719d5ea813aa207ef4dd4eb4483b502d9550b7df"
+        },
+        {
+          "path": "coordinator/coordinator.go",
+          "size": 4616,
+          "sha256": "d779a3ab3f22a3dceff59e35fd54f9dabc44cb8804ff43bd9bdfd5962e8a6bcf"
+        },
+        {
+          "path": "coordinator/coordinator_test.go",
+          "size": 2935,
+          "sha256": "5c2decd9b4c29f3444d69e4d96c566c568dc0312b67ed3dccc695446ffe88591"
+        },
+        {
+          "path": "examples/coding-agent/main.go",
+          "size": 4860,
+          "sha256": "83ba4178172d304b7854d8aa20ac8758ebc84176194de795178758ffeccdb1c9"
+        },
+        {
+          "path": "examples/coding-agent/prompt.go",
+          "size": 10349,
+          "sha256": "e66e9bcf2c99d2e3fdaeafc6d0fd7dba5f88835aee09d8c6fab08eacb48bb856"
+        },
+        {
+          "path": "examples/coordinator/main.go",
+          "size": 2673,
+          "sha256": "b7274962f7e54d452c06c3086a984cc944f4c6c48b53d1314e1b668b336ddeba"
+        },
+        {
+          "path": "examples/custom-llm/main.go",
+          "size": 3005,
+          "sha256": "031f94f0226f1a94636d73378b0b42f6d511e74db29466786e3ec45e5ee74668"
+        },
+        {
+          "path": "examples/planner-memory/main.go",
+          "size": 2820,
+          "sha256": "beabe8d2376097a08764c5dd199fb7a8acb2ff92a313d36206539327c32d09e3"
+        },
+        {
+          "path": "examples/security-audit/main.go",
+          "size": 2445,
+          "sha256": "a6b8b91b4fc61615b724518fbb4df48393fb2b682344515de63801d659e8604a"
+        },
+        {
+          "path": "go.mod",
+          "size": 209,
+          "sha256": "3721aa4d823d97a3d07f791eb445b43afdc3e72b0dfff4a858065ad46daa318b"
+        },
+        {
+          "path": "go.sum",
+          "size": 899,
+          "sha256": "1f0a2aa10ff1d360148041527d81cfa9003dcbdf53c5ca13e93138747823869d"
+        },
+        {
+          "path": "harness/capoutput_test.go",
+          "size": 1585,
+          "sha256": "cf529b5de9d87406c363e959099910e90134e055cf34371506fc1dd6f16f0158"
+        },
+        {
+          "path": "harness/compaction_integration_test.go",
+          "size": 2414,
+          "sha256": "72a67781e577e1d60db82b4173bcfb3086c6b4762d2bb1123ffd3bef1d5db676"
+        },
+        {
+          "path": "harness/contextview_test.go",
+          "size": 3732,
+          "sha256": "8ce2fe2d4fb8be8baefd0082e4edbf337a1fae64dc449d373a1d14c3a3416de9"
+        },
+        {
+          "path": "harness/event.go",
+          "size": 3610,
+          "sha256": "89ca496b49a665231aa70672babccb50e6cc686917e4bad240e01115c3b69f66"
+        },
+        {
+          "path": "harness/fidelity_test.go",
+          "size": 6899,
+          "sha256": "b85d05efa5c6f9df1acf77deae63d27648c26f6ba4b6d15b6dc7858b9d3b459f"
+        },
+        {
+          "path": "harness/harness_test.go",
+          "size": 7718,
+          "sha256": "8a766b24206fd5e9b1cc606f673384dcf122d658d418f4eca6f662b86215ab59"
+        },
+        {
+          "path": "harness/nonstream_test.go",
+          "size": 3122,
+          "sha256": "7b2ae0676ab860eeca3f5fac01e3a3b77a0941b015cc83b6e89a36adc8f7b279"
+        },
+        {
+          "path": "harness/query.go",
+          "size": 33448,
+          "sha256": "2a1cb1d4463458dbe917d54e13c95e1c29f6bfbbddd410a32c6bb0c2d4823e69"
+        },
+        {
+          "path": "harness/rawinput_test.go",
+          "size": 4618,
+          "sha256": "fa60d823767742c6a966226bc1adb9c8faa922531d9d23da60a2123fec7440a0"
+        },
+        {
+          "path": "harness/scheduling_test.go",
+          "size": 2557,
+          "sha256": "9f43ce63e2e96dbb64966d48924fa2ab3163248acab5bdaa9daf33a35c29b082"
+        },
+        {
+          "path": "harness/settlement_test.go",
+          "size": 2937,
+          "sha256": "d3e4f48dd338bdd75251223ec99e7ee27264bbc6a015ceb2663ec70659c0f443"
+        },
+        {
+          "path": "harness/streaming.go",
+          "size": 6278,
+          "sha256": "0fe0f28301fa9c33d6deb972dc7184131cf733e424a5ec5f935b15d7da00519f"
+        },
+        {
+          "path": "harness/streaming_test.go",
+          "size": 3555,
+          "sha256": "ff2a63ddec95032e2f38232acd9a046bffc4d5a1b29899739a7c65c9c58524e3"
+        },
+        {
+          "path": "harness/task_test.go",
+          "size": 1898,
+          "sha256": "f51ae78f8e5c485f277a434784ec67942456e07d6f66e6c39bb21fafa2830eaf"
+        },
+        {
+          "path": "harness/timeout_settle_test.go",
+          "size": 3680,
+          "sha256": "31e3e1f88bb9217dc39e4589bfc27d43e5cff9d51570fdf4ea1827612fd9db09"
+        },
+        {
+          "path": "harness/todo_reminder_test.go",
+          "size": 3330,
+          "sha256": "537e7cd1c2cc746c39938f3fd4fdd18ee32227779ad4da4305dd51a300a85f20"
+        },
+        {
+          "path": "harness/tools.go",
+          "size": 4746,
+          "sha256": "0c9eeff84a746c0ad78e3f91d98eb9a79e03911a693719d8b258c9f60358f201"
+        },
+        {
+          "path": "hook/hook.go",
+          "size": 5041,
+          "sha256": "28ff739ae0568a7a1aabee063ea03803daf19a5fecb9565e56d63271e21a2a62"
+        },
+        {
+          "path": "hook/hook_test.go",
+          "size": 1766,
+          "sha256": "ae7112594471f225f4a5035a2f2bc946f7992fa6bcac7ac80c99b8cd21fb3f46"
+        },
+        {
+          "path": "llm/accumulate.go",
+          "size": 2657,
+          "sha256": "310ba697595edbe06c3ff85d8d943d9e80e79f400384cc89f70007847b6be54e"
+        },
+        {
+          "path": "llm/anthropic.go",
+          "size": 13617,
+          "sha256": "dd1536921edc0e6383aa7c953de822c0e5682cc7b9241a927e2884e65fae4062"
+        },
+        {
+          "path": "llm/anthropic_system_test.go",
+          "size": 1064,
+          "sha256": "d70b2db82dbb5d45936c5cd51d168e6a7ce571862d2419ef9fc9a178aea1da39"
+        },
+        {
+          "path": "llm/boundary.go",
+          "size": 5243,
+          "sha256": "193ac2f006d14498ea9bdc86011b39afe70cab496036daba3822016f7d78ddd4"
+        },
+        {
+          "path": "llm/boundary_pairing_test.go",
+          "size": 6201,
+          "sha256": "f20685d9e598c6043db96032f35e8660320d495c7e82a09aa6a6bb8c4faad2b6"
+        },
+        {
+          "path": "llm/llm_test.go",
+          "size": 11154,
+          "sha256": "b85b26a2afb4ea2a5cf0805c892f9e13647b51c4842751b57a1f3316a00ecc39"
+        },
+        {
+          "path": "llm/nonstream_test.go",
+          "size": 4725,
+          "sha256": "73f52748e86501dc1c28d9ecfb83402eb97537c46985cef14c04174afed696f1"
+        },
+        {
+          "path": "llm/openai.go",
+          "size": 20477,
+          "sha256": "76d7d83dd342181136f9bc46e45ad2ef6bb453b72c305eae19bc96e8cfa802f7"
+        },
+        {
+          "path": "llm/openai_empty_retry_test.go",
+          "size": 4838,
+          "sha256": "d439376048da4d44116fbffa3b5f927fd156eb4262fd73794cdd5df6a631244c"
+        },
+        {
+          "path": "llm/openai_maxtokens_field_test.go",
+          "size": 4705,
+          "sha256": "f407752892c51598ef78a6c5893c0be9240d640571b1d4ae16ceefdaf16e3846"
+        },
+        {
+          "path": "llm/openai_reasoning_alias_test.go",
+          "size": 4838,
+          "sha256": "b3f50044373abfac2a9ab7af4c0063cada532d1d86d5a4da1c0dce6e1d2e7310"
+        },
+        {
+          "path": "llm/openai_responses.go",
+          "size": 12345,
+          "sha256": "ddbcbae6145f23bce84e2c0971f8a670c0fb4c38c54998280e85b1581a5f8ed3"
+        },
+        {
+          "path": "llm/openai_responses_test.go",
+          "size": 6711,
+          "sha256": "79b5742430453f2020d1ae7dc600c822d570430f94f2ed6650294e930aa74cf5"
+        },
+        {
+          "path": "llm/provider.go",
+          "size": 9461,
+          "sha256": "146f843a8d5a6e985e88e287d27e09df87adb3c46051e331c07cb97b393250b0"
+        },
+        {
+          "path": "llm/ratelimit.go",
+          "size": 4242,
+          "sha256": "669e4cf48fa3bc44e672ae5f097159af55f568e86efb09750435110e20779e75"
+        },
+        {
+          "path": "llm/retry.go",
+          "size": 3038,
+          "sha256": "8fa26839b4d9ced8f8105ec546a130e222f873d55bad8efad3580149f27786f6"
+        },
+        {
+          "path": "llm/retry_config_test.go",
+          "size": 4165,
+          "sha256": "a9c29a2c8111897d68d0e4c4338c4bbfef570c3577f96b6d070e9a0e3a159efe"
+        },
+        {
+          "path": "llm/sanitize_test.go",
+          "size": 4905,
+          "sha256": "97744d0e6cd6927149006ab73a930c4ca14e6c10d4fdb2b1b0f8e15455307ae6"
+        },
+        {
+          "path": "llm/skillmsg.go",
+          "size": 3221,
+          "sha256": "7e24da05209931adfeaf53e522cf3dd0fc009ef94c6da4fe29f89527326de591"
+        },
+        {
+          "path": "llm/sse.go",
+          "size": 1314,
+          "sha256": "353a50547984a473fb6ed2e64982cdcae109f9ed7a0fc9e8c22c0c8bec7e63fa"
+        },
+        {
+          "path": "llm/thinking_override_test.go",
+          "size": 4053,
+          "sha256": "c05f4783233cc0a8a97b49ac631ff228381a03310299872e330b73574a83d83b"
+        },
+        {
+          "path": "llm/todomsg.go",
+          "size": 2044,
+          "sha256": "3680b736c11f930298e0e31f3757af5fbee3aaf64d256cf9aeee5a7bede3c873"
+        },
+        {
+          "path": "llm/todomsg_test.go",
+          "size": 1184,
+          "sha256": "3f90a2243c2bfa50d9fe99e635651f41822dd812d61646eebfe12fe0afceeaec"
+        },
+        {
+          "path": "llm/types.go",
+          "size": 4779,
+          "sha256": "f09cf21f0d69da0143398d5a82bfe2ef96297002e3dfe69189b55829934605d5"
+        },
+        {
+          "path": "mcp/mcp.go",
+          "size": 6930,
+          "sha256": "29cdbea31df2446813327fd9d06401a3dfae4698cb052b26aa8a90a1441257ca"
+        },
+        {
+          "path": "mcp/mcp_test.go",
+          "size": 2386,
+          "sha256": "734cf01068f7d4f78535a817d5bd6943154fc2a675a4eef3c6bf6dc2218220b7"
+        },
+        {
+          "path": "mcp/stdio.go",
+          "size": 1737,
+          "sha256": "46c50059f9dc1f1ca20b9da21f5d63b96daa9f507cdce76ef6c20173203d3735"
+        },
+        {
+          "path": "memory/memory.go",
+          "size": 4911,
+          "sha256": "41593c7331bc718a0151643fab138ff952ff8fbb8c89a737b532cf30f1860e9b"
+        },
+        {
+          "path": "memory/memory_test.go",
+          "size": 1992,
+          "sha256": "d4d7bd3c332d26ac90b1f3c2b95275574f83f4f4497fb6174cb3a603ff9728b8"
+        },
+        {
+          "path": "memory/relevant.go",
+          "size": 3419,
+          "sha256": "469ba4805ec0bd2d782be2c55358fadb7765c9c02d0c4a286e88c083e134dc75"
+        },
+        {
+          "path": "memory/tools.go",
+          "size": 3746,
+          "sha256": "5e03466de4ef70ebb1de3723634e147bf9fb24194a649e63cdab202bdb335692"
+        },
+        {
+          "path": "noa/archive.go",
+          "size": 6604,
+          "sha256": "bb85ea1b47815660f27c568f0092f347a95b3e76a6269863d203f0932491d9bd"
+        },
+        {
+          "path": "noa/archive_mem_test.go",
+          "size": 1269,
+          "sha256": "c18e9263467d953957fc6d443a78587d7633454ffe24d749f198a17fbeb16911"
+        },
+        {
+          "path": "noa/boundaries.go",
+          "size": 8882,
+          "sha256": "d205861b10308be1926db0e9339e066301bc0122cc7989e8eac433bb07884d9f"
+        },
+        {
+          "path": "noa/boundaries_test.go",
+          "size": 7588,
+          "sha256": "a5b88a83ba52bd452963ca4b28a11e8c1409138a3cfeffcc0d8042c3eda8f5af"
+        },
+        {
+          "path": "noa/compress.go",
+          "size": 20229,
+          "sha256": "6b73bab61625793ef95fece51bb3de8689ad07259560dc2694c7c665c9e784f8"
+        },
+        {
+          "path": "noa/compress_test.go",
+          "size": 11410,
+          "sha256": "3a6f0ac4979fe7e76a631c7a3af17c6928ad20531504cbc18504dca5554014bf"
+        },
+        {
+          "path": "noa/config.go",
+          "size": 6051,
+          "sha256": "88a6fa10b109bb2cc3c3fc8fe530ba3071cd22b9c6b541169756f663081f1bf7"
+        },
+        {
+          "path": "noa/config_test.go",
+          "size": 6234,
+          "sha256": "7e76fd933328260eefd6e17213ac5b58446cbc94e2f25192911ffe607854af5a"
+        },
+        {
+          "path": "noa/const.go",
+          "size": 2910,
+          "sha256": "8bbf7c1db66b32bf374fb14659d1f70e256b4de042f5ca6a949705824fd097eb"
+        },
+        {
+          "path": "noa/edge_test.go",
+          "size": 13664,
+          "sha256": "78aa0a8289f7606f77d22fce95e5c3874ef021db3ab877d90d73960c7665ace6"
+        },
+        {
+          "path": "noa/fuzz_test.go",
+          "size": 7362,
+          "sha256": "6db8ffa2285ea3b87c13da9a03803b776b2dc21e51086f9501d29b279a857981"
+        },
+        {
+          "path": "noa/hideconsumed.go",
+          "size": 4422,
+          "sha256": "2e9349a9801ca7104e8683de84785c0561c0e2c8d40b80fd20252beda62f0837"
+        },
+        {
+          "path": "noa/hideconsumed_test.go",
+          "size": 6578,
+          "sha256": "eeb79a1f7bbcf05cf94d0e3760b56aa850d9db923aae83b58422504e0e13d604"
+        },
+        {
+          "path": "noa/nudge.go",
+          "size": 11251,
+          "sha256": "6c7b82849b704e9a1af89323b45429754b27e3a8090b9eabc868f5ebde406b61"
+        },
+        {
+          "path": "noa/nudge_test.go",
+          "size": 9857,
+          "sha256": "ab4b88d54a4ac3c562e645ed32f3b1144f7ac3ae6e26779bc2853c90eb5e4429"
+        },
+        {
+          "path": "noa/nudge_types.go",
+          "size": 2953,
+          "sha256": "edc2f7f2752e53abfba9ca112eb2e2133cd55ecdd3e4bca05bd6abe6e302c9a3"
+        },
+        {
+          "path": "noa/nudgetext.go",
+          "size": 16203,
+          "sha256": "fc4f2aaa03b00c8b3d7049c2abe596b0ffb48c8ce3e91ecc6b7a631b40777cf2"
+        },
+        {
+          "path": "noa/nudgetext_test.go",
+          "size": 9499,
+          "sha256": "88a380b75238d0ddf244b0fd45a7f4a3baefc561655a0bd2c6602309f1bc878b"
+        },
+        {
+          "path": "noa/pacing_test.go",
+          "size": 3658,
+          "sha256": "d445dcad30e6c416649b95c8c9d2f739fb6b6158e930015cbb2a46bc64b6869d"
+        },
+        {
+          "path": "noa/panel.go",
+          "size": 4352,
+          "sha256": "88e666051c308462a6c54ff05a8442016d3e1d5ee854d258071f241fef610d31"
+        },
+        {
+          "path": "noa/panel_test.go",
+          "size": 4829,
+          "sha256": "795e2e7e9fe3d9a566530a0f15a2cfb6d25a06a2c7eef98986821061fa630447"
+        },
+        {
+          "path": "noa/parseinput.go",
+          "size": 11585,
+          "sha256": "893cfdcf839b370569ac554c08a96abd06f81f231e9206d0578b6a236f5de9d8"
+        },
+        {
+          "path": "noa/parseinput_test.go",
+          "size": 8674,
+          "sha256": "1c0df5070b80bf5fc6f2a6cb7d00b74704da2a7a1db1f03925f110fece68146b"
+        },
+        {
+          "path": "noa/pipeline.go",
+          "size": 2215,
+          "sha256": "45587a1d2d8c914b26f5f5dcb5960fe78a19bbe1d4fecd6597b403f6626324e6"
+        },
+        {
+          "path": "noa/processturn.go",
+          "size": 4913,
+          "sha256": "073bf3cc34fcc7a9450361ca7d2696a56032ec72ad9c45827f5294b027b6b49a"
+        },
+        {
+          "path": "noa/processturn_test.go",
+          "size": 6940,
+          "sha256": "d316ef9278b84a0018c8a391ccbc2eb06b7ea16b70ed6f92a591597d3025a1b2"
+        },
+        {
+          "path": "noa/prompts_rules.go",
+          "size": 14736,
+          "sha256": "98f3b29df389784c7f5ea909a01196abccac4ee2e14c3e4162353bf4ac0661d3"
+        },
+        {
+          "path": "noa/prompts_rules_test.go",
+          "size": 4327,
+          "sha256": "366fa495f5003db3ec77e4932b371dabe39298fad46f5ad0bf03079a0243e94d"
+        },
+        {
+          "path": "noa/prompts_system.go",
+          "size": 5435,
+          "sha256": "dd733f1f1bd664195538cd3dcff01a23db323ff512352b08d5907a77dbff46c9"
+        },
+        {
+          "path": "noa/protected.go",
+          "size": 2412,
+          "sha256": "4133a1598da348765c96b742316741dedf5e4d1bb243c4f938deb84d4503c494"
+        },
+        {
+          "path": "noa/prune.go",
+          "size": 10962,
+          "sha256": "b5905007e3028d7862f95f5587a88ce6fce8427d8bcd7b2f231d6e4718e37169"
+        },
+        {
+          "path": "noa/prune_test.go",
+          "size": 14925,
+          "sha256": "ba77382466b752883ef89497b0c26b9315223da4c71252f46e29d37534db8a96"
+        },
+        {
+          "path": "noa/rebuild.go",
+          "size": 3893,
+          "sha256": "ec1450ef97e88f0d390791f0fd6ffc3bbeb683017fd2318d3d3272f9998229a3"
+        },
+        {
+          "path": "noa/recommend.go",
+          "size": 8279,
+          "sha256": "02d52819b5809c60b81f3677e20a8101bdcd76bf79f206591fa621733d43bcb5"
+        },
+        {
+          "path": "noa/recommend_test.go",
+          "size": 7841,
+          "sha256": "beb3b03f21b4c919017788fd9ab08068a270d3f3c848f7fa08f14e9de78b0577"
+        },
+        {
+          "path": "noa/refs.go",
+          "size": 3818,
+          "sha256": "007f04c6a3575b2e0dc2e5e8e1e1d96cf9194978a68325133ba7527d34327577"
+        },
+        {
+          "path": "noa/refs_test.go",
+          "size": 6981,
+          "sha256": "8a08d31af2601e67761e41023e32b45f7602aca350e683341eaab11faad226be"
+        },
+        {
+          "path": "noa/schema.go",
+          "size": 2858,
+          "sha256": "878c8c634ad3a54d82edd9814eda804a0027cc1ba8cf985989efa7b4a2658a88"
+        },
+        {
+          "path": "noa/state.go",
+          "size": 4061,
+          "sha256": "234c2eab926a843797b701498da9b94fb873dd4eaae59ec45571a78b163876c1"
+        },
+        {
+          "path": "noa/sync.go",
+          "size": 2188,
+          "sha256": "64b022819375629b6a96bb1c811a6bb86bf9c3a26beb8789d118d2a617447f3e"
+        },
+        {
+          "path": "noa/sync_test.go",
+          "size": 5572,
+          "sha256": "5f0d7231294cdb3e2afa2427435954b8aaafc102c38be2ffdc7836e4f7e1ed16"
+        },
+        {
+          "path": "noa/tier.go",
+          "size": 2753,
+          "sha256": "1392e1cd4af05b1d86a2c8f72f2981af77ac53672403e312d21072bbedc1c200"
+        },
+        {
+          "path": "noa/tier_test.go",
+          "size": 7594,
+          "sha256": "0e16876d9ab02f7e069dad057e32409c56650b861d92f45b29b079b665b00578"
+        },
+        {
+          "path": "noa/tokenize.go",
+          "size": 1842,
+          "sha256": "8e5d83a010342961ce76dae5fad6f679f0c92a425c786a68e29fed7266df633f"
+        },
+        {
+          "path": "noa/tokenize_test.go",
+          "size": 2254,
+          "sha256": "2382878e919c735c3602619225dbdc106304b853392ef941a1b706851fddfb7e"
+        },
+        {
+          "path": "noa/toolpairs.go",
+          "size": 3499,
+          "sha256": "c4bfb83468fc90066c869fb41a68a702767ad5810ebb336d90a16abd41c74ba4"
+        },
+        {
+          "path": "noa/toolpairs_test.go",
+          "size": 7668,
+          "sha256": "9d460184f4ccd4af39df5b569ff7b4bb93ea9bf58b070875c09437925a887f36"
+        },
+        {
+          "path": "noa/truncate.go",
+          "size": 3844,
+          "sha256": "86957507d7956b517ee9c41d7951201c7e4d561d8d8fe0a297964ebf278ea0db"
+        },
+        {
+          "path": "noa/truncate_test.go",
+          "size": 5960,
+          "sha256": "3bb4cc49f25bddf757b546c38927c5ae5dc35daacaf6ccff1d2decf89216e5ce"
+        },
+        {
+          "path": "noa/turnintegrity.go",
+          "size": 3399,
+          "sha256": "56011d44dec796d1f9f3abfc591333c2b445b5e39c6bdf3dc9dc43d886fc20e7"
+        },
+        {
+          "path": "noa/types.go",
+          "size": 5443,
+          "sha256": "d60f181672363443ba0907dc0f8efbb33c1e7760894ff2aecd4b27e21676b675"
+        },
+        {
+          "path": "noaadapter/archive.go",
+          "size": 3251,
+          "sha256": "c7e42400ea1acbfdcf6d86424bfb0bee37961f4543e550ae3fdea0acfe831e62"
+        },
+        {
+          "path": "noaadapter/chaos_test.go",
+          "size": 14922,
+          "sha256": "be14c2dbb72e03c5a7166d31de43d6976edb361c23c48fb0892024162ad8ce7f"
+        },
+        {
+          "path": "noaadapter/compactor.go",
+          "size": 3144,
+          "sha256": "99f9e8eaa63302c61c9db9451a4dd60b7b4ff6ca2d22afe6915fc4320b903a55"
+        },
+        {
+          "path": "noaadapter/deadrange.go",
+          "size": 2804,
+          "sha256": "fed4708f8178c803f650c8f0361d823a1bc4b72c1de4a89b0068adf46d3f48e1"
+        },
+        {
+          "path": "noaadapter/defenses_test.go",
+          "size": 11533,
+          "sha256": "0c30777cc83f3968b939e42971de33b4d71006727383139b725386e0f02a76a8"
+        },
+        {
+          "path": "noaadapter/edge_test.go",
+          "size": 11287,
+          "sha256": "b785f783f67566f243cd3c3fe389ee73702ccd2b6ffe5b4b5ac12773fa967ee9"
+        },
+        {
+          "path": "noaadapter/enable_test.go",
+          "size": 7899,
+          "sha256": "29ab3e3b3221699fedc77ed7121f56e75974c193e07d79973b7dce355433af91"
+        },
+        {
+          "path": "noaadapter/identity.go",
+          "size": 2086,
+          "sha256": "7c3233bdc4de87bf283cf2656aae19e874bb6417f6a4d0464a9b78376425b751"
+        },
+        {
+          "path": "noaadapter/inherit.go",
+          "size": 3151,
+          "sha256": "8364733fa8ee24d9371ed1cb41d4682a6de54136b7a1d2e2f263d033bc53fb34"
+        },
+        {
+          "path": "noaadapter/longsession_test.go",
+          "size": 19709,
+          "sha256": "69c6bc71d08147b9419dde851a68feb731f132b64bbb8fa22be90d52fbc9602b"
+        },
+        {
+          "path": "noaadapter/materialize.go",
+          "size": 3186,
+          "sha256": "dd0bdf4f6383bf2b8714a61d2115cf981036af20fbc2399406876caf014b1e78"
+        },
+        {
+          "path": "noaadapter/materialize_test.go",
+          "size": 9814,
+          "sha256": "8664c68df2ff19da807af8d07107431b88adfe4becd5e413a33e2b81d881dc20"
+        },
+        {
+          "path": "noaadapter/noa.go",
+          "size": 2741,
+          "sha256": "eb3388cae223996c013d896467d944c59ed6c33882df766d74620fb03960a6dc"
+        },
+        {
+          "path": "noaadapter/nudge_test.go",
+          "size": 9329,
+          "sha256": "45f07d56e81af09a34e76c8e53f866cc712122bf37519d0137b41bd1b286bd49"
+        },
+        {
+          "path": "noaadapter/overflow.go",
+          "size": 2104,
+          "sha256": "10249bff6bb896ea156133c8ab8622ddc8f51bab0dfd2a345abc370fa2c84ae9"
+        },
+        {
+          "path": "noaadapter/overflow_test.go",
+          "size": 6387,
+          "sha256": "655ad57592f946536868c08489fc56346faf3f3f13af23873573789aee156696"
+        },
+        {
+          "path": "noaadapter/project.go",
+          "size": 9488,
+          "sha256": "f9d148af42220547b4d90e551fb02d412daa9473fc81375acfed64f1715a544e"
+        },
+        {
+          "path": "noaadapter/project_test.go",
+          "size": 12682,
+          "sha256": "1eb8947b2123e9adeca38817dd742aa5089ae4a80c555aa2a74f34a28f99623e"
+        },
+        {
+          "path": "noaadapter/resilience_test.go",
+          "size": 11962,
+          "sha256": "a7b249eb520c2d741104d65cce507ada0bcd5432adf3da89a8af81ca26f83cbf"
+        },
+        {
+          "path": "noaadapter/sentview_test.go",
+          "size": 15089,
+          "sha256": "afe80c7cadc4c9e0fa5f65f8d07babfff341d0379960ff7eabb20327b9a06741"
+        },
+        {
+          "path": "noaadapter/session.go",
+          "size": 15527,
+          "sha256": "4275ae25ab7515a9f3053fbb5791adf6e379fb2c3b64f4de4b8fceb75c6c8d6a"
+        },
+        {
+          "path": "noaadapter/state_store.go",
+          "size": 8261,
+          "sha256": "150883b2515011d003a48917647b0b7b5701c17c372a8a2416a46e8ebf2755e7"
+        },
+        {
+          "path": "noaadapter/state_store_test.go",
+          "size": 6314,
+          "sha256": "bd1326448468c7a78dfc0ecbfcf07474d24dd3f04d64f75fc550b3e8dc94e8c9"
+        },
+        {
+          "path": "noaadapter/tags.go",
+          "size": 4243,
+          "sha256": "661267e94962cd01d625feccfb6e189dd5d995b690a55ea8157ca0015faf2225"
+        },
+        {
+          "path": "noaadapter/tierchain_test.go",
+          "size": 6737,
+          "sha256": "12114d93c11dc8d1b9abfd41926c48204494e3cff9355c74318be3e7033ff58e"
+        },
+        {
+          "path": "noaadapter/tiering_test.go",
+          "size": 6433,
+          "sha256": "a9540caef98562121d1e7a541580a391024bbccbe87f8ffe7201e9a2260ff3a9"
+        },
+        {
+          "path": "noaadapter/tool_compress.go",
+          "size": 5195,
+          "sha256": "af921ebbae79851a5bd8fd0d51b64ce7433f4fbb0c7ad5c2d8785dc7ee28abfd"
+        },
+        {
+          "path": "noaadapter/toolgate_test.go",
+          "size": 9049,
+          "sha256": "1d7fa8f8c933ec6cf7b4cc9cec80e313f49f1a6460376e0a04e51546339f12a4"
+        },
+        {
+          "path": "permission/permission.go",
+          "size": 4990,
+          "sha256": "27958a2e9757e2e2ffe29fa9104a642fe680e4486e58f9acb90dc6864480dff9"
+        },
+        {
+          "path": "permission/permission_test.go",
+          "size": 1680,
+          "sha256": "7af20d64bb68c6e11b268f2a851a53885b0cd4f7d22b18279b20edf258c76d0f"
+        },
+        {
+          "path": "plan/plan.go",
+          "size": 5422,
+          "sha256": "54f6306d8629fb72a5875cd810ba35df5fc80f39105e321471fe92e25694061d"
+        },
+        {
+          "path": "plan/plan_test.go",
+          "size": 1553,
+          "sha256": "2113a0231e33f6f025c8f1dd09ecc2e422aa3db07bb9221f6ddb71b1d23baad4"
+        },
+        {
+          "path": "skill/mcps_test.go",
+          "size": 1356,
+          "sha256": "72350fb00f437624bac4b5ace7321af0a8ba7981dfc0f57958256b6909ef4130"
+        },
+        {
+          "path": "skill/skill.go",
+          "size": 10838,
+          "sha256": "3eeaba16f2b8cdcaac852503fd86533568ef4d4dc57059fb4368fe58b0ce52ba"
+        },
+        {
+          "path": "skill/skill_test.go",
+          "size": 4250,
+          "sha256": "ecce7636b4565dc07d5027a43d5bf1233fc4e41d876ef725a8ad25718b22fd26"
+        },
+        {
+          "path": "subagent/subagent.go",
+          "size": 5982,
+          "sha256": "5555f8da66d3b73cdc9c462befdaea2352570b8826477352cc4aa872b987eaa9"
+        },
+        {
+          "path": "subagent/subagent_test.go",
+          "size": 2536,
+          "sha256": "73fb60ae0c05eb3ec381f321a5ec61497368b21e5706f7f2710fdc47d53df1db"
+        },
+        {
+          "path": "tool/ask.go",
+          "size": 4464,
+          "sha256": "21d91817ac709db4a3467f92a5edd5a57d6922e5ef063035c6dd611c07dbe225"
+        },
+        {
+          "path": "tool/ask_test.go",
+          "size": 1321,
+          "sha256": "55ab7bac688530095c9f9104ac7c78a5ccad8a11fd775f38f2fbc54e7108f9ed"
+        },
+        {
+          "path": "tool/bash.go",
+          "size": 7740,
+          "sha256": "749045d409d071e29ca524dd60c72817be22419a0ce6bf1b14cfb4a4d3644119"
+        },
+        {
+          "path": "tool/builtins_test.go",
+          "size": 14338,
+          "sha256": "d22252257bfba1d5c13cef74cfc012d1cc0e3fe0b9b1f3365ce440f29e2e3e21"
+        },
+        {
+          "path": "tool/captureonce_test.go",
+          "size": 1789,
+          "sha256": "d8bddc2c16db041071683b79f67a12d0d8cc76b86b1918ac9e3ed8d53ec40de8"
+        },
+        {
+          "path": "tool/deferred.go",
+          "size": 9387,
+          "sha256": "fcebf19785220567e6ab11c61690cb81715fb28311da4124a05d93b78846bc19"
+        },
+        {
+          "path": "tool/deferred_test.go",
+          "size": 3812,
+          "sha256": "09b72cc3afe53f1b23f1aa71b664075fae99f6880f8d5a19b2cc2beedc621314"
+        },
+        {
+          "path": "tool/files.go",
+          "size": 8635,
+          "sha256": "02c1ba849a177a2c0e302ac9922dd357b30fc6020bf1a14c83372ab20141efe6"
+        },
+        {
+          "path": "tool/helpers.go",
+          "size": 3466,
+          "sha256": "f12da6daf7286cc6baecdb347a26b044409b59738a0995196108eb16c54ac100"
+        },
+        {
+          "path": "tool/ls.go",
+          "size": 1807,
+          "sha256": "9a16dd8237aee7081c8ed82c64077461acdb37c298aed8448367dab4fe6edb6d"
+        },
+        {
+          "path": "tool/monitor.go",
+          "size": 2167,
+          "sha256": "f5637916072bf6007d5f8f077d7d2d18498f607a0efb4464367a7de2c11bb78a"
+        },
+        {
+          "path": "tool/multiedit.go",
+          "size": 3246,
+          "sha256": "13fa3526446f05c275e4ac12ce05cc68c8472fb672e4f108b60c87cd4b29fee6"
+        },
+        {
+          "path": "tool/pty_other.go",
+          "size": 393,
+          "sha256": "2984ea1befba46ccd4d2beedacf0c04651a9437c35e5aea14e002db682ca10b6"
+        },
+        {
+          "path": "tool/pty_unix.go",
+          "size": 499,
+          "sha256": "120323a60891f91f5d5a04ed7e9fc8f4b41ce72ff16d3e3f4aaab7f79145fe36"
+        },
+        {
+          "path": "tool/registry.go",
+          "size": 1923,
+          "sha256": "4fd4480cd1be694f337acfa40ade1ea84b8664a35bfa57befbf80c29323f4910"
+        },
+        {
+          "path": "tool/ripgrep.go",
+          "size": 5210,
+          "sha256": "e3360805c2dc01a3c3ef8c952e2109aa2ba8957bdb07734f444e85c5234432c3"
+        },
+        {
+          "path": "tool/ripgrep_test.go",
+          "size": 1014,
+          "sha256": "e1005d7b316c991e4c5c2b2bdb8b87724a9e0684374255c4c3fdc7ecf4f509f3"
+        },
+        {
+          "path": "tool/schema.go",
+          "size": 2622,
+          "sha256": "2d8f4dab73a1893cc0619927b17bd26f2a9d3c3c3947fe4700c77a52c5c3f924"
+        },
+        {
+          "path": "tool/search.go",
+          "size": 14130,
+          "sha256": "ff0bfd271b540096395e5f7141125cb8e3702e7f14fe7abc8241032cd8ab5108"
+        },
+        {
+          "path": "tool/shell_session.go",
+          "size": 11586,
+          "sha256": "907732d8dba7905195b7ccaa3f80bd4ccb51c1742d228aad20a1719d80ee76bf"
+        },
+        {
+          "path": "tool/shell_session_test.go",
+          "size": 3760,
+          "sha256": "c4b8d2feef9cd1fb14db14c0b36dc090fca73fa985f2dff821db6753e8c358b5"
+        },
+        {
+          "path": "tool/shell_tools.go",
+          "size": 13964,
+          "sha256": "59e64516c3c51f395f204b73971d20f20cee645e480ef7339b2818bb9fe70f88"
+        },
+        {
+          "path": "tool/sleep.go",
+          "size": 1566,
+          "sha256": "d9e267e5cb410d9b415ad3030952cc085a78221fa2f865176eef2318c88d549c"
+        },
+        {
+          "path": "tool/sleep_test.go",
+          "size": 1144,
+          "sha256": "386413bdf79e8a83b1633719be6fde69a218a2aba7ac204d32bb63920d07b238"
+        },
+        {
+          "path": "tool/task.go",
+          "size": 15890,
+          "sha256": "c707ad0e2b7a020384d9324d97ae97dd5050cb6ebc246c9110b19cc9e4c2a8d9"
+        },
+        {
+          "path": "tool/task_test.go",
+          "size": 8368,
+          "sha256": "fc1ba29edc35e6ccf3491df480d553ce49c06307e550b6a5d5f4122e5108b6af"
+        },
+        {
+          "path": "tool/task_unix.go",
+          "size": 538,
+          "sha256": "170dc183f547675daec701077e153dd2f7c69e872b31632324d7f1f52f5753e6"
+        },
+        {
+          "path": "tool/task_windows.go",
+          "size": 603,
+          "sha256": "e837c6da14f2a43f4fd2ef07637fde7abc5da491edfe73055715c00168c73b16"
+        },
+        {
+          "path": "tool/tasklist.go",
+          "size": 1116,
+          "sha256": "83a779be836c9cb9cf543aaf90838e840405c655f71f3b9db554d379d4b95927"
+        },
+        {
+          "path": "tool/taskoutput.go",
+          "size": 2631,
+          "sha256": "457cdecf9e00efca29f12c0a14fdfd40934d97a5038e69d3e0db17b2614868aa"
+        },
+        {
+          "path": "tool/taskstop.go",
+          "size": 1369,
+          "sha256": "cc5925f927133b2ad3d1d6a938eb2292b648f21ca303bcd8dfb6baa327a4b2fb"
+        },
+        {
+          "path": "tool/todo.go",
+          "size": 3374,
+          "sha256": "944f6a4d1d719eabb9c3b7086cf04d8748053790c96874bcb55ff27fe44a85a5"
+        },
+        {
+          "path": "tool/tool.go",
+          "size": 6644,
+          "sha256": "98c77550c6cafe24044a8e2240937322866e4b6fd780464659f3c936fcd7b140"
+        },
+        {
+          "path": "tool/tool_test.go",
+          "size": 6203,
+          "sha256": "e400dc9f135d896cf5161a504a66873928f5947ab1e0eefdaa3fa3882683380a"
+        },
+        {
+          "path": "tool/webfetch.go",
+          "size": 16186,
+          "sha256": "6fd787bae9636da90e212f91e14619dc9b3eb2260fecf8b221c422c75e7cd1fb"
+        },
+        {
+          "path": "tool/websearch.go",
+          "size": 22729,
+          "sha256": "38fab4cbd6877c528aabb32653b0431ca291504c2dbc79acc6dda4b9efcdced6"
+        },
+        {
+          "path": "tool/websearch_test.go",
+          "size": 9392,
+          "sha256": "c90e5765f85b590f73a4f860cb704502f05cfecb3bb748524ed4add37d216de7"
+        },
+        {
+          "path": "transcript/context.go",
+          "size": 537,
+          "sha256": "e2c2f7dba40e4844e02df68ccdf86135650139bffdd228ff53730ec8716aeb8a"
+        },
+        {
+          "path": "transcript/transcript.go",
+          "size": 7573,
+          "sha256": "3292c5cc6ce60a34190ccd3f968c6bb140339806d7b82ea0cf8d102fddd63ce1"
+        },
+        {
+          "path": "transcript/transcript_test.go",
+          "size": 5930,
+          "sha256": "4e472be30fe84a6bc4750589c519feb99ab8610027f1a082fee348daca8cc0d3"
+        }
+      ],
+      "changedFiles": [
+        {
+          "path": "mcp/stdio.go",
+          "upstreamSHA256": "46c50059f9dc1f1ca20b9da21f5d63b96daa9f507cdce76ef6c20173203d3735",
+          "patchedSHA256": "8f744c5265b2e86ac7c46f53b7ca9c624cc8612ae2adfaf76b1bf70eb42ea6a6",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/bash.go",
+          "upstreamSHA256": "749045d409d071e29ca524dd60c72817be22419a0ce6bf1b14cfb4a4d3644119",
+          "patchedSHA256": "5fe5fd7be43f05b9b72220a61cc13a00d4b1f0101de88243b1757a342b355687",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/ripgrep.go",
+          "upstreamSHA256": "e3360805c2dc01a3c3ef8c952e2109aa2ba8957bdb07734f444e85c5234432c3",
+          "patchedSHA256": "abbc732ae2465d54954d0174551b00a1e2043c33f94e9161addc5c4a5a04f2f0",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/shell_session.go",
+          "upstreamSHA256": "907732d8dba7905195b7ccaa3f80bd4ccb51c1742d228aad20a1719d80ee76bf",
+          "patchedSHA256": "f0642692ec0cabab73ce9d4e57c0edee58b873e276ab2a2ec559be837ec8b7dc",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/task.go",
+          "upstreamSHA256": "c707ad0e2b7a020384d9324d97ae97dd5050cb6ebc246c9110b19cc9e4c2a8d9",
+          "patchedSHA256": "83215d89f5fa81f6a09522141d5707a74a0c3e4b29ce193f3300ceac5da8458d",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        }
+      ],
+      "addedFiles": [
+        {
+          "path": "mcp/stdio_launch_test.go",
+          "size": 3305,
+          "sha256": "15f3d11c1320db9f4b4eacf63b17ac36985e3c4c5d6705a6dda460d3819f1db0",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "mcp/stdio_process_unix.go",
+          "size": 356,
+          "sha256": "a0881da7297ce125063e6a19cdf87f15ee26c7659e96f278dc7287d39772eeb9",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "mcp/stdio_process_windows.go",
+          "size": 615,
+          "sha256": "08278ec9821ac620dc4cb285f4ded45507f37d55a09b9d950ff8b3e8e632035b",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/runtime_execution.go",
+          "size": 4480,
+          "sha256": "9c544318522241f6d8cbf65371b89816b5e644906f980dfb059ded0020566d50",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/runtime_execution_test.go",
+          "size": 3404,
+          "sha256": "fae432b411723bca08015823bed860c82fdaec20e4736e940fa3a5b80c8a36bf",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/runtime_pty_test.go",
+          "size": 1199,
+          "sha256": "1adcdca76d7230269de0e08ce26ab6d9dcaac86e4d498fc878cedaaa6eca81dd",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        }
+      ],
+      "deletedFiles": []
     }
   ]
 }
