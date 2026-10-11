@@ -56,3 +56,23 @@
 - 207eb10 `feat(db): preserve portable configuration and adapt core history DAOs`
 - d72213e `feat(db): adapt portable approvals notifications and Unicode search`
 - 第三项 `test(db): cover portable persistence and DAO edge contracts` 提交包含本报告；确切 commit 在交接回复给出。
+
+## Task 2 fix round 1 — SQLite 连接复用保护接口
+
+修复基线：302345f。完整读取 task-2-review.md，并核实 modernc.org/sqlite v1.52.0 的 conn.go:860 / :870。审查 I1 成立：嵌入 driver.Conn 不会将底层动态连接的 SessionResetter/Validator 方法提升到包装类型，先前报告的 optional-interface 保留范围漏了这两个接口。
+
+最小源码变更仅 db/sqlite_values.go：显式委托 ResetSession(ctx) 和 IsValid()，直接返回底层结果；新增两个编译期 interface assertion。保留底层 ErrBadConn/false，不改变 context、SQL、参数规范化、数据库版本或 DAO。
+
+新测试文件 db/sqlite_values_test.go：
+
+- TestPortableConnectionReuseInterfaces 通过 Conn.Raw 检查两个真实包装接口与底层初始状态；直接关闭底层现代 SQLite 连接，再比较包装/底层的 false 和 ErrBadConn，并将关闭连接以 ErrBadConn 交还池，验证后续写入成功。没有用伪造错误 fixture。
+- TestPortableExecutingCancellationAndReuse 分 reader/writer，均固定 MaxOpenConns=1，在显式 Conn 上创建原生 *sql.Tx。递归聚合查询含 test-only scalar probe，probe 给出已经进入 SQLite 执行的信号后才取消 context；不会把等待占用池时超时算作执行取消。测试比较中断后底层与包装的两个接口返回值，再 rollback、归还连接并验证新写和新读成功。实测两个池均 `underlying_valid=false reset_bad_connection=true`。
+
+Red-Green：
+
+- 修复前 `go test ./db -run '^TestPortable(ConnectionReuseInterfaces|ExecutingCancellationAndReuse)$' -count=1 -v`：FAIL，接口测试报 `SQLite wrapper hides driver.SessionResetter`；真实执行取消的 writer/reader 子测试均报 `interrupted connection hides SessionResetter`（1.338s）。
+- 修复后同命令：PASS 1.509s，两个原生事务 rollback 和后续读写均成功。
+- 最终 `go test ./db -run '^TestPortable(ConnectionReuseInterfaces|ExecutingCancellationAndReuse|DateBindingsAndJSON|PreparedTimeAndScanners)$|^TestSQLite' -count=1 -v`：PASS 3.757s（进程退出码0）；包括原 Task1 全 SQLite suite、UTC绑定、native prepared Tx和新执行取消回归。唯一 SKIP 是 TestSQLiteFutureCrashFixture 在父进程的 helper 分支；真正崩溃 WAL 的子进程测试 PASS。
+- `go vet ./config ./db`：PASS，退出码0无诊断。`git diff --check`：PASS。
+
+本轮没有重跑无关 PostgreSQL业务、应用、MCP、LLM或通知，没有访问旧实例。M1 已记录为发布后约束：v1 中间文件未发布/交付，本次不阻塞；后续已发布 v1 的 default/trigger/时间格式变化必须新增真实迁移并验证历史值规范化，不能继续原地修改 v1 DDL。

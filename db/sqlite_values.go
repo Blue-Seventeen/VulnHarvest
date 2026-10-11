@@ -18,6 +18,11 @@ const sqliteTimeLayout = "2006-01-02 15:04:05.000000000"
 type sqliteValueDriver struct{ base driver.Driver }
 type sqliteValueConn struct{ driver.Conn }
 
+var (
+	_ driver.SessionResetter = (*sqliteValueConn)(nil)
+	_ driver.Validator       = (*sqliteValueConn)(nil)
+)
+
 func init() {
 	pool, err := sql.Open("sqlite", "")
 	if err != nil {
@@ -58,6 +63,15 @@ func (c *sqliteValueConn) QueryContext(ctx context.Context, q string, args []dri
 	return c.Conn.(driver.QueryerContext).QueryContext(ctx, q, args)
 }
 func (c *sqliteValueConn) Ping(ctx context.Context) error { return c.Conn.(driver.Pinger).Ping(ctx) }
+
+// Keep the underlying file connection's closed/interrupted checks visible to
+// database/sql when checking out and returning connections to either pool.
+func (c *sqliteValueConn) ResetSession(ctx context.Context) error {
+	return c.Conn.(driver.SessionResetter).ResetSession(ctx)
+}
+func (c *sqliteValueConn) IsValid() bool {
+	return c.Conn.(driver.Validator).IsValid()
+}
 
 // JSONScanner handles SQLite TEXT, PostgreSQL JSONB []byte and SQL NULL without
 // sharing driver-specific assumptions across DAO scan destinations.
