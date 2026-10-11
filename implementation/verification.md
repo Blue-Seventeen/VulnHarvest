@@ -50,9 +50,29 @@
 - 最终分项双库 suite：53 个测试 pass 事件及 1 个包 pass，0 fail、0 skip，20.540s。主代理独立运行 `TestPortableTaskContract`：50 个 pass 事件（含包），0 fail、0 skip，20.225s。全包编译入口通过，未当作全项目业务回归；独立差异审查通过，另记录并发测试同步确定性的一项非阻断建议，后续并发整合中处理。
 - 自审确认 SQLite `AFTER UPDATE` 与 `RETURNING` 的时间戳竞态，相关 DTO 在同一事务读取最终时间戳后返回。另修复 PostgreSQL 分类赋值的计数 CTE 读到更新前快照：清分类再赋回的场景由错误返回 0 修正为实际 1；两库覆盖真实返回值与锁/回滚合同。
 
+## 探索图、活动与意图（分项已审查）
+
+- 提交 `1839ebc` 适配图与活动 JSON、约束/摘要、来源查询、Unicode 搜索、UTC 日桶、令牌与会话统计、意图控制及递归谱系。16 个 worker 跨独立连接领取同一意图的断言实际执行；范围覆盖度、资产绑定及完整任务删除仍待后续分项。
+- 最终双库 suite：51 个测试 pass 事件及 1 个包 pass，0 fail、0 skip，20.939s；主代理独立复跑全部 `TestPortableExplorationContract`：52 个 pass 事件（含包），0 fail、0 skip，27.086s。全包编译入口、vet 和 diffcheck 通过；差异审查通过，另记录令牌 metrics 增加其余三维非零断言的非阻断建议。尚未做本项 race 或实际 Agent 验收。
+- 两处窄 PostgreSQL 行为修正：来源意图分页与计数补上其他来源读取接口已有的终态限制；软删除意图后，迟到的旁路快照写入返回父节点已失效，不能重建已删除会话。本任务自身未结束意图仍可见，原子领取 SQL 保持。
+- 固定 `1839ebc` 在独立 Linux amd64 容器运行 `go test -race -mod=readonly ./db -run '^TestPortable(Task|Exploration)Contract$/SQLite' -count=1 -timeout=240s`，30.880s，通过且无 race 报告；覆盖任务配置与探索图两组 SQLite 契约，包含 16-worker 领取、状态控制及真实 peer 事务。未选择 PostgreSQL 组，也未包含随后未提交的完整删除适配。
+
+## 任务资产、覆盖度与删除（分项已审查）
+
+- 提交 `f7a2524` 适配任务资产绑定、来源、范围及两种覆盖度查询、删除准备回调和共享资产保护。保留原导入用 Upsert 任意标签合同，实际 Agent、HTTP 资产接口及任务种子采用每项同一事务写入资产与必要关联；关联失败回滚该项并返回错误。
+- 完整任务分项检查串行执行：DB 151 个测试 pass 事件，138.679s；Agent 21 个，16.600s；Server 25 个，17.220s。另各有 1 个包 pass，均 0 fail、0 skip，合计 171 个叶用例。主代理读取 JSONL 核对结果；全包编译入口、`go vet ./...`、diffcheck 通过，独立差异审查通过。
+- PostgreSQL 窄修正包括保留资产时仍移除已删除任务成员关系，以及公司锁、来源任务锁与资产锁的统一顺序。真实 handler 的晚到写入在删除提交后被拒绝，失败注入检验证明资产、来源、范围和锚点不会部分提交。四维令牌统计和事务竞争观测补齐前项审查建议。
+- 本项发现 SQLite 原生 `ON DELETE RESTRICT` 可能返回扩展码 1811，当前共享外键分类尚未识别。删除回滚已验证，分类缺口明确交后续漏洞/证据分项集中修复，并要求区别普通触发器错误；不把此缺口标作已解决。
+- 固定 `f7a2524` 的独立 Linux amd64 容器实际运行 race：`TestPortableTaskBindingsContract/SQLite`（DB 17.560s），以及 SQLite 真实调用入口 `TestPortableTaskCompanyTools`（Agent 9.580s）、`TestPortableTaskAssetServer`（Server 8.994s），均通过且无竞态报告。首轮因缺少 CGO 编译器未运行测试；补齐临时容器测试依赖后重试成功。未连接 PG、未运行完整 Server 生命周期或模型；主机模块缓存只读。
+- 审查留下一项非阻断证据限制：SQLite 的原生忙等待由前置探测证实，真实调用另以连接占用和结果未返回观测；没有声称已观测到该调用内部的忙等待钩子。原子性与删除后的拒绝行为由最终持久状态验证。前项已审查的配置、探索图及底层驱动合同保留，并由本轮完整任务测试再次覆盖。
+
 ## 最终验收
 
 任务/探索图原源码聚焦基线：在专用 `vh_task3` 初始空库执行 `^Test(Task|Exploration|Intent|Constraint)`，21 个 pass 事件、0 fail、0 skip，7.076s；不是完整 DB 回归。
+
+漏洞/复测原源码聚焦基线：固定原始提交 `b183535` 的独立源码归档，在专用 `vh_findings` 初始空库执行 `go test -json ./db -run '^Test.*(Finding|Retest)' -count=1 -timeout=180s`，35 个测试 pass 事件及 1 个包 pass，0 fail、0 skip，9.063s。不包含服务器、磁盘证据或便携适配；后续同业务断言需在两种数据库实际运行。
+
+归档原源码聚焦基线：同一固定 `b183535` 独立源码归档，在专用 `vh_archives` 初始空库执行六项数据库归档测试（JSON 流、格式兼容、完整往返、排队依赖与中断后手动重试），6 个测试 pass 事件及 1 个包 pass，0 fail、0 skip，5.179s。未运行后台归档 Worker 或文件包层，不能代替后续 SQLite 往返与文件一致性验收。
 
 尚未完成。SQLite 全业务、Agent 闭环、文件持久化、运行时、UI、五平台构建与运行、PostgreSQL 回归逐项完成后填写准确证据。
 

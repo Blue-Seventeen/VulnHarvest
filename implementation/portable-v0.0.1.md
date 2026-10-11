@@ -43,9 +43,9 @@ Files: db/db.go seed, config.go, tools.go, settings.go, conversation.go, logs.go
 
 Files: db/tasks.go, exploration*.go, digest.go, intent_admission.go, constraints.go, task_context.go, task_assets*.go, task_scope.go, task_categories.go, task_templates.go, task_intercept.go.
 
-- [ ] 完整 CRUD、任务关联/上下文与 node/edge/anchor、队列领取、暂停恢复、删除屏障。
-- [ ] FOR UPDATE/SKIP LOCKED 在立即写事务内以 SQLite 原子条件更新实现；所有关联写入继续同一事务。
-- [ ] 并发 worker 不重复领取，删除不留孤儿，上下文与 token 记录重启保持。
+- [x] 完整 CRUD、任务关联/上下文与 node/edge/anchor、队列领取、暂停恢复、删除屏障。
+- [x] FOR UPDATE/SKIP LOCKED 在立即写事务内以 SQLite 原子条件更新实现；所有关联写入继续同一事务。
+- [x] 并发 worker 不重复领取，删除不留孤儿，上下文与 token 记录重启保持。存储分项通过；便携启动时的自动恢复限制仍由 Task5 交付。
 
 ### Task 4: 资产、漏洞和归档
 
