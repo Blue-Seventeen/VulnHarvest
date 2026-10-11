@@ -42,6 +42,13 @@
 - 分项提交 `92f470c` 包含八类资产、公司范围、JSON 无损合并、DSL 与纯读池接缝。主代理执行完整聚焦双库 suite：145 个 pass 事件（包含包）、0 fail、0 skip，83.126s。初轮审查发现四处反例：UTC 字符串缺时区、指数数值及负零排序、params 文本身份、映射 IPv6 的地址族匹配；后续修复及复审结果见下一条。
 - 审查确认的窄 PostgreSQL 兼容修正：auth 对象按值去重、重复 params 的显式 C 字节排序、数组反斜杠转义、A/AAAA 归属优先、副作用错误传播与删除原子性、DSL 的 OR 范围约束；未在启动时重写历史资产。
 - 修复提交 `d01d7db` 保留 UTC 时区、十进制 scale、PG 文本分组身份及 IPv6 地址族。修复后统一 suite：179 个测试 pass 事件及 1 个包 pass，0 fail、0 skip，117.943s。主代理另独立运行新增反例组：36 个 pass 事件（含包）、0 fail、0 skip，6.712s；复审确认全部问题已修复，无新增重要问题。
+- 固定 `d01d7db` 源码在独立 Linux amd64 容器执行 `go test -race -mod=readonly ./db -run '^TestPortableAsset(Contract|ReviewFixContract)$/SQLite' -count=1 -timeout=180s`，72.515s，通过且没有 race 报告。覆盖两组 SQLite 资产契约及真实 peer writer/reader；未选择 PostgreSQL 组，不代表后续任务或全应用 race 验收。
+
+## 任务配置与上下文（分项已审查）
+
+- 提交 `d6a3774` 适配任务配置、公司快照、直接来源、LLM 配置链与修订检查、分类、模板、拦截规则及三次批量上下文查询；完整探索图、范围覆盖度与删除并发仍在后续分项。
+- 最终分项双库 suite：53 个测试 pass 事件及 1 个包 pass，0 fail、0 skip，20.540s。主代理独立运行 `TestPortableTaskContract`：50 个 pass 事件（含包），0 fail、0 skip，20.225s。全包编译入口通过，未当作全项目业务回归；独立差异审查通过，另记录并发测试同步确定性的一项非阻断建议，后续并发整合中处理。
+- 自审确认 SQLite `AFTER UPDATE` 与 `RETURNING` 的时间戳竞态，相关 DTO 在同一事务读取最终时间戳后返回。另修复 PostgreSQL 分类赋值的计数 CTE 读到更新前快照：清分类再赋回的场景由错误返回 0 修正为实际 1；两库覆盖真实返回值与锁/回滚合同。
 
 ## 最终验收
 
