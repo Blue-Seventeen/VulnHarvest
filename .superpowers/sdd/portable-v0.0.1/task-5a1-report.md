@@ -157,13 +157,15 @@ Controller session `26265`（nested proxy）、`93089`（root traffic）均finis
 
 ```text
 # nested third_party/go-mitmproxy，Go1.27.2 Linux，gcc/musl owned fixture
-go test -race ./proxy -run 'TestReserved|TestClose|TestClientDisconnect|TestConcurrentServe|TestListenerOwnership|TestAttackerListener|TestShutdownDeadline|TestTransparentCONNECT|TestServeFailure|TestTransferWaits|TestColdStart|TestClosing|TestRunning|TestLifecycleError|TestConnection|TestProxyClose|TestProxyShutdown|TestWebSocket|TestSSE|TestAttackerHTTP2' -count=1
+go test -race -mod=readonly -p 1 ./proxy -run 'TestReserved|TestClose|TestClientDisconnect|TestConcurrentServe|TestListenerOwnership|TestAttackerListener|TestShutdownDeadline|TestTransparentCONNECT|TestServeFailure|TestTransferWaits|TestColdStart|TestClosing|TestRunning|TestLifecycleError|TestConnection|TestProxyClose|TestProxyShutdown|TestWebSocket|TestSSE|TestAttackerHTTP2' -count=1 -timeout=240s
 # root 同固定源码，完整traffic包
-go test -race ./traffic -count=1
+go test -race -mod=readonly -p 1 ./traffic -run '.' -count=1 -timeout=240s
 ```
 
 最终日志 `.superpowers/sdd/portable-v0.0.1/linux-proxy-fix1-final-race.log`：`ok github.com/lqqyt2423/go-mitmproxy/proxy 7.993s`；`.superpowers/sdd/portable-v0.0.1/linux-traffic-fix1-final-race.log`：`ok github.com/Autumn-27/artex/traffic 12.558s`。Source包为对应 `linux-proxy-fix1-final-source.tar`/`linux-traffic-fix1-final-source.tar`（controller归属，不暂存修改）。原 `linux-proxy-listeners-race.log`（f416cc2 DATA RACE）及 `linux-proxy-fix1-race.log`（ffadaa4冷并发功能FAIL）继续保留，不被最新GREEN覆盖。
 
 Windows证据映射准确指向最终修订，不把前ffadaa4的JSON计数冒充新source：完整根路径 `C:/Users/cy/.codex/worktrees/portable-v0-0-1/Hack3rX_2026_011_ARTEX/.superpowers/sdd/portable-v0.0.1/task-5a1-fix1-validation/` 下 `proxy-lifecycle-final.jsonl`、`proxy-upstream-final.jsonl`、`traffic-final.jsonl`、`root-compile-final.txt`、`summary-final.json`、`committed-provenance-final.txt` 对应93f4ddc最终生产/测试字节；同目录无-final旧文件只作为ffadaa4中间证据。最新验收均无fail/skip，计数与上段最终表一致。原始base和license/doc/source未被规范化，最新verifier/archive再PASS104baseline/6changed/2added；原zip+committedpatch实际apply得到106源文件等于93f4ddc tested SDK。
+
+最终native命令逐项核对 controller `linux-proxy-fix1-final-run.sh`/`linux-traffic-fix1-final-run.sh`：GOPROXY/GOSUMDB=off、CGO_ENABLED=1、-mod=readonly/-p1/240s，上述命令准确对应它们。两个final source.tar内106SDK文件、manifest和patch亦逐byte与93f4ddc tested worktree一致，再次确认没有以错误source.log结论代替最新源码。
 
 自有诊断容器 `task5a1-fix1-debug` 已按精确名称删除，保留所有必要trace/最小race日志；宿主SDK/cache源未修改，没有处理宿主已有lock例外。I1功能+racy初始化门槛已实际GREEN，M1真实日志分类与M2来源陈述测试/文档已完成；最终Task5a1验收仍待controller scoped review批准，不声明Task5a/Task5整体完成。本段后报告提交只改本文，生产源保持93f4ddc。
