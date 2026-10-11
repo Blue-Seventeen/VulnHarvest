@@ -1,5 +1,7 @@
 # Task5a1 实施与验证报告
 
+**验收状态：native Windows 普通 gate 已通过，controller Linux race gate 未通过；Task5a1 尚不能标记最终验收完成。** 固定源码 `f416cc2` 存在已经证明的 attacker HTTP server 初始化与 h2 ServeConn 竞态，见下方独立验证补充。按 controller 指示暂不修改源码，将该问题并入完整 review 后统一 fix1。
+
 本子项实现代理保留 listener 与完整 stop/join，接入 traffic 索引关闭；不声明 Task5a/Task5 或完整便携启动完成。源码固定提交 `f416cc2b3adaff92668165582a48168964bc88c6`，起点 `faa57b7f92f0ae0750bb515bd5616586ff9d09c3`；之后的报告提交只增加本报告与验收日志，生产文件和测试保持固定源码提交一致。未修改 controller implementation/verification 文件。
 
 ## 接口与归属（交 Task5b）
@@ -71,6 +73,16 @@ Root 全包 compile、root 全包 vet、嵌套 proxy compile/vet 均 exit 0；`r
 
 覆盖限制/实际失败：Windows `go test -race` 编译后运行得到 `exit status 0xc0000139`，不称 race 通过，controller 将用独立 Linux 容器固定源码做 race。嵌套模块全包 compile 曾因缺失 `github.com/samber/lo v1.53.0` 而触发 Go 下载尝试，网络 timeout；未声称 SDK addon/cmd/examples 全包通过，也未改 upstream go.mod/go.sum 或清理宿主 cache。该尝试留下 cache 的 `v1.53.0.lock`，不能宣称所有 cache 字节零变化；两个 SDK 源目录未修改，最终逐文件仍与缓存 zip 原始字节一致。另有 direct-toolchain/GOSUMDB=off 配置与 Windows 临时 exe handle 的失败尝试，已回到正常 Go launcher，仅命令范围 GOPROXY=off，并完成上述最终成功 gate；未修宿主环境。
 
+## Controller 独立 Linux race 补充（未通过）
+
+报告初版文档提交 `93650e251327649d4bb2877b4b4a6f819c665be1` 后，controller 对固定 source `f416cc2b3adaff92668165582a48168964bc88c6` 执行 nested proxy native Linux race gate，session 84475 exit 1。日志 `.superpowers/sdd/portable-v0.0.1/linux-proxy-listeners-race.log:21-130` 记录两处 `WARNING: DATA RACE`：
+
+- `http2.(*Server).serveConn` 在 `golang.org/x/net@v0.55.0/http2/server_wrap.go:114` 及 `:127` 读取 BaseConfig/调用 HTTP2 配置；调用来自项目副本 `proxy/attacker.go:171`。
+- 同时 attacker.start 的 `http.Server.Serve` 在 `net/http.(*Server).configureHTTP2` 写入相同 HTTP server 配置；对应 `proxy/attacker.go:131`、`proxy/lifecycle.go:114`。
+- `TestReservedListenerCapturesHTTPHTTPSAndH2/h2` 因 `race detected during execution of test` 失败。普通 Windows gate 的成功不能覆盖这项失败。Controller 保留原日志；本报告提交不暂存或修改 controller 的证据文件。
+
+已在最终报告中记录真实未通过状态，且没有提前修代码/更新 patch 来掩盖失败。完整 provenance/patch/application review 后由 controller 统一 fix1，再对固定修复源码复验 Linux race 与协议 gate。
+
 ## Provenance、patch 及 self-review
 
 - 原版本/模块声明、Go directive、MIT LICENSE（Copyright (c) 2020 liqiang）、docs/tests/dependency manifests 保留；只复制 go-mitmproxy，未 vendor transitive dependencies。根 require 仍为 v1.9.2，只增本地 replace。
@@ -81,4 +93,4 @@ Root 全包 compile、root 全包 vet、嵌套 proxy compile/vet 均 exit 0；`r
 - source 固定提交的 Git archive 与 `core.autocrlf=true` 全新 sparse clone 均再次通过 archive/manifest/patch 校验，106 文件也均与 native-tested source 完全相同，见 `committed-provenance.txt`。`.gitattributes` 狭义 `-text` 覆盖该 SDK/patch/manifest；保留原 README 等 6 个未改文件的 whitespace 例外及 patch context 语法例外，modified/new Go 源仍正常 whitespace 检查。全 staged/unstaged diffcheck exit 0。
 - Self-review 分来源层/完整 module-relative patch/app integration 三层完成：确认同一 closing gate 禁止 Wait 期间 Add；普通/hijacked、TLS/h2、copy/WS 与 disconnect callbacks 都有实际等待；callback 不在 registry 锁内执行；accepted-before-close 的 sink 在 index.Close 前完成；mutation barrier 与 reaping enrollments 共用 wmu；重复 Close 返回保存结果；listener reject/failure 不遗留 owner；PG 裸端口兼容已用真实 HTTP 验证。没有把 98 个未改 upstream 文件当作新增原创逻辑，也没有扩大到 5a2/5b 的生命周期归属。
 
-本报告与验证日志的后续 commit 不改变 `f416cc2` 的生产/测试字节，controller 对该 fixed source 的 review/race 结论可直接应用。剩余验收是 controller 的独立来源/补丁/application review 与 Linux native race；5b 组合关闭时须遵循上述 ownership 和 stage 完成边界。
+本报告与验证日志的后续 commit 不改变 `f416cc2` 的生产/测试字节，controller 对该 fixed source 的 review/race 结论可直接应用。剩余验收是 controller 的独立来源/补丁/application review、统一 fix1 修复已证实的 h2 竞态及 Linux race 复验；5b 组合关闭时须遵循上述 ownership 和 stage 完成边界。
