@@ -135,13 +135,28 @@ func (a *attacker) serveConn(clientTlsConn *tls.Conn, connCtx *ConnContext) {
 	connCtx.ClientConn.NegotiatedProtocol = clientTlsConn.ConnectionState().NegotiatedProtocol
 
 	if connCtx.ClientConn.NegotiatedProtocol == "h2" && connCtx.ServerConn != nil {
+		// This tunnel owns one already-handshaken upstream socket. Returning it
+		// from DialTLSContext permits concurrent transport dials to wrap/close
+		// the same socket (Go 1.27); initialize exactly one multiplexed client.
+		// ConfigureTransports also initializes the Go 1.27 net/http adapter
+		// needed by NewClientConn; a zero-value x/net transport is insufficient.
+		transport, err := http2.ConfigureTransports(&http.Transport{DisableCompression: true})
+		if err != nil {
+			clientTlsConn.Close()
+			connCtx.ServerConn.Conn.Close()
+			a.proxy.logError(log.WithField("in", "Proxy.attacker.serveConn"), err, "upstream h2 transport configuration")
+			return
+		}
+		transport.DisableCompression = true
+		client, err := transport.NewClientConn(connCtx.ServerConn.tlsConn)
+		if err != nil {
+			clientTlsConn.Close()
+			connCtx.ServerConn.Conn.Close()
+			a.proxy.logError(log.WithField("in", "Proxy.attacker.serveConn"), err, "upstream h2 initialization")
+			return
+		}
 		connCtx.ServerConn.client = &http.Client{
-			Transport: &http2.Transport{
-				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
-					return connCtx.ServerConn.tlsConn, nil
-				},
-				DisableCompression: true,
-			},
+			Transport: client,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				// 禁止自动重定向
 				return http.ErrUseLastResponse

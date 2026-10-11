@@ -38,6 +38,10 @@ Changes:
   register outgoing callback owners, including first/lazy TLS capture. H2 uses
   x/net's independent per-connection default configuration, retaining explicit
   handler/context instead of racing HTTP Serve's BaseConfig initialization.
+  Each tunnel initializes one HTTP2 ClientConn on its already-handshaken
+  upstream socket, so Go 1.27 transport dials cannot wrap/close that same socket
+  multiple times. ConfigureTransports initializes the cross-version adapter;
+  ClientConn.RoundTrip multiplexes the requests without redialing the socket.
 - `proxy/connection.go`: atomic close-after-response flag used by close
   callbacks; atomic internal TLS flag lives in wrapClientConn.
 - `proxy/helper.go`: close both endpoints and wait for both copy workers,

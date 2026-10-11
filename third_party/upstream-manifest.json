@@ -12,7 +12,7 @@
       "licenseEvidence": "MIT LICENSE, Copyright (c) 2020 liqiang; retained unchanged",
       "patchID": "vulnharvest-portable-proxy-lifecycle-1",
       "patchFile": "third_party/patches/go-mitmproxy-v1.9.2.patch",
-      "patchSHA256": "e222cf48406c1de6b4889bb6c4cfbb5788764d272e1a268162e044e1d37827ef",
+      "patchSHA256": "e2e1f5cb9024e0f265c596e44b07caa6bc539288433fb55bc6f8ac76e100b031",
       "upstreamFiles": [
         {
           "path": ".github/workflows/release.yml",
@@ -539,7 +539,7 @@
         {
           "path": "proxy/attacker.go",
           "upstreamSHA256": "9509f0c2dfbcb036d5e2f22192754964f56825b015bab819b46697dd314b6341",
-          "patchedSHA256": "6c84c7387c8ed9428501c77b7a46eca435fe2673604e94673f4543d60504f965",
+          "patchedSHA256": "0eb942db43ea7b07f1dbc1037e8aa6b997319488732d78c8f9b97359257c51de",
           "patchID": "vulnharvest-portable-proxy-lifecycle-1"
         },
         {

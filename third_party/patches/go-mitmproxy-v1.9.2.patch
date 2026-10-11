@@ -80,7 +80,41 @@
  		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
  			return context.WithValue(ctx, connContextKey, c.(*attackerConn).connCtx)
  		},
-@@ -116,17 +148,31 @@
+@@ -103,30 +135,59 @@
+ 	connCtx.ClientConn.NegotiatedProtocol = clientTlsConn.ConnectionState().NegotiatedProtocol
+ 
+ 	if connCtx.ClientConn.NegotiatedProtocol == "h2" && connCtx.ServerConn != nil {
++		// This tunnel owns one already-handshaken upstream socket. Returning it
++		// from DialTLSContext permits concurrent transport dials to wrap/close
++		// the same socket (Go 1.27); initialize exactly one multiplexed client.
++		// ConfigureTransports also initializes the Go 1.27 net/http adapter
++		// needed by NewClientConn; a zero-value x/net transport is insufficient.
++		transport, err := http2.ConfigureTransports(&http.Transport{DisableCompression: true})
++		if err != nil {
++			clientTlsConn.Close()
++			connCtx.ServerConn.Conn.Close()
++			a.proxy.logError(log.WithField("in", "Proxy.attacker.serveConn"), err, "upstream h2 transport configuration")
++			return
++		}
++		transport.DisableCompression = true
++		client, err := transport.NewClientConn(connCtx.ServerConn.tlsConn)
++		if err != nil {
++			clientTlsConn.Close()
++			connCtx.ServerConn.Conn.Close()
++			a.proxy.logError(log.WithField("in", "Proxy.attacker.serveConn"), err, "upstream h2 initialization")
++			return
++		}
+ 		connCtx.ServerConn.client = &http.Client{
+-			Transport: &http2.Transport{
+-				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+-					return connCtx.ServerConn.tlsConn, nil
+-				},
+-				DisableCompression: true,
+-			},
++			Transport: client,
+ 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+ 				// 禁止自动重定向
+ 				return http.ErrUseLastResponse
  			},
  		}
  
@@ -118,7 +152,7 @@
  			})
  		}()
  		return
-@@ -139,6 +185,11 @@
+@@ -139,6 +200,11 @@
  }
  
  func (a *attacker) ServeHTTP(res http.ResponseWriter, req *http.Request) {
@@ -130,7 +164,7 @@
  	if req.URL.Scheme == "" {
  		req.URL.Scheme = "https"
  	}
-@@ -173,7 +224,7 @@
+@@ -173,7 +239,7 @@
  		f.finish()
  
  		if err := a.proxy.webSocketHandler.handleWSS(res, req); err != nil {
@@ -139,7 +173,7 @@
  		}
  		return
  	}
-@@ -217,6 +268,9 @@
+@@ -217,6 +283,9 @@
  		for _, addon := range proxy.Addons {
  			addon.ServerConnected(connCtx)
  		}
@@ -149,7 +183,7 @@
  
  		return nil
  	}
-@@ -313,11 +367,16 @@
+@@ -313,11 +382,16 @@
  	for _, addon := range connCtx.proxy.Addons {
  		addon.ServerConnected(connCtx)
  	}
@@ -166,7 +200,7 @@
  	connCtx := cconn.(*wrapClientConn).connCtx
  	log := log.WithFields(log.Fields{
  		"in":   "Proxy.attacker.httpsTlsDial",
-@@ -325,11 +384,13 @@
+@@ -325,11 +399,13 @@
  	})
  
  	var clientHello *tls.ClientHelloInfo
@@ -182,7 +216,7 @@
  
  	clientTlsConn := tls.Server(cconn, &tls.Config{
  		SessionTicketsDisabled: true, // 设置此值为 true ，确保每次都会调用下面的 GetConfigForClient 方法
-@@ -339,6 +400,8 @@
+@@ -339,6 +415,8 @@
  
  			// wait server handshake finish
  			select {
@@ -191,7 +225,7 @@
  			case err := <-errChan2:
  				return nil, err
  			case serverTlsState := <-serverTlsStateChan:
-@@ -360,6 +423,7 @@
+@@ -360,6 +438,7 @@
  		},
  	})
  	go func() {
@@ -199,7 +233,7 @@
  		if err := clientTlsConn.HandshakeContext(ctx); err != nil {
  			errChan1 <- err
  			return
-@@ -372,7 +436,7 @@
+@@ -372,7 +451,7 @@
  	case err := <-errChan1:
  		cconn.Close()
  		conn.Close()
@@ -208,7 +242,7 @@
  		return
  	case clientHello = <-clientHelloChan:
  	}
-@@ -382,7 +446,7 @@
+@@ -382,7 +461,7 @@
  		cconn.Close()
  		conn.Close()
  		errChan2 <- err
@@ -217,7 +251,7 @@
  		return
  	}
  	serverTlsStateChan <- connCtx.ServerConn.tlsState
-@@ -392,7 +456,7 @@
+@@ -392,7 +471,7 @@
  	case err := <-errChan1:
  		cconn.Close()
  		conn.Close()
@@ -226,7 +260,7 @@
  		return
  	case <-clientHandshakeDoneChan:
  	}
-@@ -425,7 +489,7 @@
+@@ -425,7 +504,7 @@
  	})
  	if err := clientTlsConn.HandshakeContext(ctx); err != nil {
  		cconn.Close()
@@ -235,7 +269,7 @@
  		return
  	}
  
-@@ -484,19 +548,19 @@
+@@ -484,19 +563,19 @@
  		if body != nil {
  			err := copyStream(body)
  			if err != nil {
@@ -258,7 +292,7 @@
  			}
  		}
  	}
-@@ -606,7 +670,7 @@
+@@ -606,7 +685,7 @@
  		proxyRes, err = f.ConnContext.ServerConn.client.Do(proxyReq)
  	}
  	if err != nil {
@@ -267,7 +301,7 @@
  		for _, addon := range proxy.Addons {
  			addon.RequestError(f, err)
  		}
-@@ -615,7 +679,7 @@
+@@ -615,7 +694,7 @@
  	}
  
  	if proxyRes.Close {
