@@ -1,0 +1,204 @@
+{"Time":"2026-10-12T06:21:09.6795699+08:00","Action":"start","Package":"github.com/Autumn-27/artex/traffic"}
+{"Time":"2026-10-12T06:21:11.1184781+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficArchiveRoundTripAndCurrentRowWins"}
+{"Time":"2026-10-12T06:21:11.1184781+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficArchiveRoundTripAndCurrentRowWins","Output":"=== RUN   TestTrafficArchiveRoundTripAndCurrentRowWins\n"}
+{"Time":"2026-10-12T06:21:11.3372666+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficArchiveRoundTripAndCurrentRowWins","Output":"--- PASS: TestTrafficArchiveRoundTripAndCurrentRowWins (0.22s)\n"}
+{"Time":"2026-10-12T06:21:11.3372666+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficArchiveRoundTripAndCurrentRowWins","Elapsed":0.22}
+{"Time":"2026-10-12T06:21:11.3372666+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageRollsBackBeforePostgresCommit"}
+{"Time":"2026-10-12T06:21:11.3372666+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageRollsBackBeforePostgresCommit","Output":"=== RUN   TestRecoverArchiveHostDeleteStageRollsBackBeforePostgresCommit\n"}
+{"Time":"2026-10-12T06:21:11.4746119+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageRollsBackBeforePostgresCommit","Output":"--- PASS: TestRecoverArchiveHostDeleteStageRollsBackBeforePostgresCommit (0.14s)\n"}
+{"Time":"2026-10-12T06:21:11.4751421+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageRollsBackBeforePostgresCommit","Elapsed":0.14}
+{"Time":"2026-10-12T06:21:11.4751421+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageCompletesAfterPostgresCommit"}
+{"Time":"2026-10-12T06:21:11.4751421+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageCompletesAfterPostgresCommit","Output":"=== RUN   TestRecoverArchiveHostDeleteStageCompletesAfterPostgresCommit\n"}
+{"Time":"2026-10-12T06:21:11.6414336+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageCompletesAfterPostgresCommit","Output":"--- PASS: TestRecoverArchiveHostDeleteStageCompletesAfterPostgresCommit (0.17s)\n"}
+{"Time":"2026-10-12T06:21:11.6414336+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecoverArchiveHostDeleteStageCompletesAfterPostgresCommit","Elapsed":0.17}
+{"Time":"2026-10-12T06:21:11.6414336+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficReservedListenerCloseWaitsCaptureBeforeIndex"}
+{"Time":"2026-10-12T06:21:11.6414336+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficReservedListenerCloseWaitsCaptureBeforeIndex","Output":"=== RUN   TestTrafficReservedListenerCloseWaitsCaptureBeforeIndex\n"}
+{"Time":"2026-10-12T06:21:11.8153971+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficReservedListenerCloseWaitsCaptureBeforeIndex","Output":"time=\"2026-10-12T06:21:11+08:00\" level=info msg=\"Proxy start listen at 127.0.0.1:6243\\n\"\n"}
+{"Time":"2026-10-12T06:21:11.9523539+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficReservedListenerCloseWaitsCaptureBeforeIndex","Output":"--- PASS: TestTrafficReservedListenerCloseWaitsCaptureBeforeIndex (0.31s)\n"}
+{"Time":"2026-10-12T06:21:11.9523539+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficReservedListenerCloseWaitsCaptureBeforeIndex","Elapsed":0.31}
+{"Time":"2026-10-12T06:21:11.9523539+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficShutdownCanceledClosesIndex"}
+{"Time":"2026-10-12T06:21:11.9523539+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficShutdownCanceledClosesIndex","Output":"=== RUN   TestTrafficShutdownCanceledClosesIndex\n"}
+{"Time":"2026-10-12T06:21:12.1004721+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficShutdownCanceledClosesIndex","Output":"--- PASS: TestTrafficShutdownCanceledClosesIndex (0.15s)\n"}
+{"Time":"2026-10-12T06:21:12.1004721+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficShutdownCanceledClosesIndex","Elapsed":0.15}
+{"Time":"2026-10-12T06:21:12.1004721+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficCloseWaitsActiveDeleteStage"}
+{"Time":"2026-10-12T06:21:12.1004721+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficCloseWaitsActiveDeleteStage","Output":"=== RUN   TestTrafficCloseWaitsActiveDeleteStage\n"}
+{"Time":"2026-10-12T06:21:12.3133759+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficCloseWaitsActiveDeleteStage","Output":"--- PASS: TestTrafficCloseWaitsActiveDeleteStage (0.21s)\n"}
+{"Time":"2026-10-12T06:21:12.3139144+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficCloseWaitsActiveDeleteStage","Elapsed":0.21}
+{"Time":"2026-10-12T06:21:12.3139144+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficRejectedServeRetainsActualAddress"}
+{"Time":"2026-10-12T06:21:12.3139144+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficRejectedServeRetainsActualAddress","Output":"=== RUN   TestTrafficRejectedServeRetainsActualAddress\n"}
+{"Time":"2026-10-12T06:21:12.425256+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficRejectedServeRetainsActualAddress","Output":"time=\"2026-10-12T06:21:12+08:00\" level=info msg=\"Proxy start listen at 127.0.0.1:6254\\n\"\n"}
+{"Time":"2026-10-12T06:21:12.4375538+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficRejectedServeRetainsActualAddress","Output":"--- PASS: TestTrafficRejectedServeRetainsActualAddress (0.12s)\n"}
+{"Time":"2026-10-12T06:21:12.4375538+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficRejectedServeRetainsActualAddress","Elapsed":0.12}
+{"Time":"2026-10-12T06:21:12.4375538+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficStartPreservesLegacyLoopbackClientAddress"}
+{"Time":"2026-10-12T06:21:12.4375538+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficStartPreservesLegacyLoopbackClientAddress","Output":"=== RUN   TestTrafficStartPreservesLegacyLoopbackClientAddress\n"}
+{"Time":"2026-10-12T06:21:12.5522172+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficStartPreservesLegacyLoopbackClientAddress","Output":"time=\"2026-10-12T06:21:12+08:00\" level=info msg=\"Proxy start listen at [::]:6261\\n\"\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficStartPreservesLegacyLoopbackClientAddress","Output":"--- PASS: TestTrafficStartPreservesLegacyLoopbackClientAddress (0.13s)\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTrafficStartPreservesLegacyLoopbackClientAddress","Elapsed":0.13}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHostOnly"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHostOnly","Output":"=== RUN   TestHostOnly\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHostOnly","Output":"--- PASS: TestHostOnly (0.00s)\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHostOnly","Elapsed":0}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyCausedErr"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyCausedErr","Output":"=== RUN   TestProxyCausedErr\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyCausedErr","Output":"--- PASS: TestProxyCausedErr (0.00s)\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyCausedErr","Elapsed":0}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestMaybePassthroughFlagsHostOnce"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestMaybePassthroughFlagsHostOnce","Output":"=== RUN   TestMaybePassthroughFlagsHostOnce\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestMaybePassthroughFlagsHostOnce","Output":"2026/10/12 06:21:12 [traffic] 与 target.test 的 MITM 出错，改为透传（该 host 后续直连目标、不再记录，但请求照常）：protocol error: received DATA on a HEAD request\n"}
+{"Time":"2026-10-12T06:21:12.5708251+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestMaybePassthroughFlagsHostOnce","Output":"--- PASS: TestMaybePassthroughFlagsHostOnce (0.00s)\n"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestMaybePassthroughFlagsHostOnce","Elapsed":0}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestValidateProxyURL"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestValidateProxyURL","Output":"=== RUN   TestValidateProxyURL\n"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestValidateProxyURL","Output":"--- PASS: TestValidateProxyURL (0.00s)\n"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestValidateProxyURL","Elapsed":0}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestSetUpstreamProxyStoreClear"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestSetUpstreamProxyStoreClear","Output":"=== RUN   TestSetUpstreamProxyStoreClear\n"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestSetUpstreamProxyStoreClear","Output":"--- PASS: TestSetUpstreamProxyStoreClear (0.00s)\n"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestSetUpstreamProxyStoreClear","Elapsed":0}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyAddr"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyAddr","Output":"=== RUN   TestProxyAddr\n"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyAddr","Output":"--- PASS: TestProxyAddr (0.00s)\n"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestProxyAddr","Elapsed":0}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNewIndexEnablesIncrementalVacuum"}
+{"Time":"2026-10-12T06:21:12.571604+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNewIndexEnablesIncrementalVacuum","Output":"=== RUN   TestNewIndexEnablesIncrementalVacuum\n"}
+{"Time":"2026-10-12T06:21:12.641005+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNewIndexEnablesIncrementalVacuum","Output":"--- PASS: TestNewIndexEnablesIncrementalVacuum (0.07s)\n"}
+{"Time":"2026-10-12T06:21:12.641005+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNewIndexEnablesIncrementalVacuum","Elapsed":0.07}
+{"Time":"2026-10-12T06:21:12.641005+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteReclaimsIndexSpace"}
+{"Time":"2026-10-12T06:21:12.641005+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteReclaimsIndexSpace","Output":"=== RUN   TestDeleteReclaimsIndexSpace\n"}
+{"Time":"2026-10-12T06:21:13.0623515+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteReclaimsIndexSpace","Output":"--- PASS: TestDeleteReclaimsIndexSpace (0.42s)\n"}
+{"Time":"2026-10-12T06:21:13.0623515+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteReclaimsIndexSpace","Elapsed":0.42}
+{"Time":"2026-10-12T06:21:13.0623515+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimMergesFTSTombstones"}
+{"Time":"2026-10-12T06:21:13.0623515+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimMergesFTSTombstones","Output":"=== RUN   TestReclaimMergesFTSTombstones\n"}
+{"Time":"2026-10-12T06:21:13.6499353+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimMergesFTSTombstones","Output":"--- PASS: TestReclaimMergesFTSTombstones (0.59s)\n"}
+{"Time":"2026-10-12T06:21:13.6499353+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimMergesFTSTombstones","Elapsed":0.59}
+{"Time":"2026-10-12T06:21:13.6499353+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimOnLegacyIndexIsHarmless"}
+{"Time":"2026-10-12T06:21:13.6499353+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimOnLegacyIndexIsHarmless","Output":"=== RUN   TestReclaimOnLegacyIndexIsHarmless\n"}
+{"Time":"2026-10-12T06:21:13.7805765+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimOnLegacyIndexIsHarmless","Output":"2026/10/12 06:21:13 [traffic] 索引库未启用增量回收（auto_vacuum=0）：删除流量不会缩小 index.sqlite，需要执行一次存储压缩来转换\n"}
+{"Time":"2026-10-12T06:21:13.9643439+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimOnLegacyIndexIsHarmless","Output":"--- PASS: TestReclaimOnLegacyIndexIsHarmless (0.31s)\n"}
+{"Time":"2026-10-12T06:21:13.9643439+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestReclaimOnLegacyIndexIsHarmless","Elapsed":0.31}
+{"Time":"2026-10-12T06:21:13.9643439+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllPurgesAndCompacts"}
+{"Time":"2026-10-12T06:21:13.9643439+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllPurgesAndCompacts","Output":"=== RUN   TestDeleteAllPurgesAndCompacts\n"}
+{"Time":"2026-10-12T06:21:14.386983+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllPurgesAndCompacts","Output":"--- PASS: TestDeleteAllPurgesAndCompacts (0.42s)\n"}
+{"Time":"2026-10-12T06:21:14.386983+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllPurgesAndCompacts","Elapsed":0.42}
+{"Time":"2026-10-12T06:21:14.386983+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllConvertsLegacyIndex"}
+{"Time":"2026-10-12T06:21:14.386983+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllConvertsLegacyIndex","Output":"=== RUN   TestDeleteAllConvertsLegacyIndex\n"}
+{"Time":"2026-10-12T06:21:14.5027434+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllConvertsLegacyIndex","Output":"2026/10/12 06:21:14 [traffic] 索引库未启用增量回收（auto_vacuum=0）：删除流量不会缩小 index.sqlite，需要执行一次存储压缩来转换\n"}
+{"Time":"2026-10-12T06:21:14.9019899+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllConvertsLegacyIndex","Output":"--- PASS: TestDeleteAllConvertsLegacyIndex (0.52s)\n"}
+{"Time":"2026-10-12T06:21:14.9019899+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteAllConvertsLegacyIndex","Elapsed":0.52}
+{"Time":"2026-10-12T06:21:14.9025246+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordKeepsBodiesInIndex"}
+{"Time":"2026-10-12T06:21:14.9025246+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordKeepsBodiesInIndex","Output":"=== RUN   TestRecordKeepsBodiesInIndex\n"}
+{"Time":"2026-10-12T06:21:15.1209647+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordKeepsBodiesInIndex","Output":"--- PASS: TestRecordKeepsBodiesInIndex (0.22s)\n"}
+{"Time":"2026-10-12T06:21:15.1209647+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordKeepsBodiesInIndex","Elapsed":0.22}
+{"Time":"2026-10-12T06:21:15.1209647+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestFullTextSearchMatchesBodies"}
+{"Time":"2026-10-12T06:21:15.1209647+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestFullTextSearchMatchesBodies","Output":"=== RUN   TestFullTextSearchMatchesBodies\n"}
+{"Time":"2026-10-12T06:21:15.3231799+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestFullTextSearchMatchesBodies","Output":"--- PASS: TestFullTextSearchMatchesBodies (0.20s)\n"}
+{"Time":"2026-10-12T06:21:15.3231799+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestFullTextSearchMatchesBodies","Elapsed":0.2}
+{"Time":"2026-10-12T06:21:15.3231799+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestLargeBodySpillsButStaysSearchable"}
+{"Time":"2026-10-12T06:21:15.3231799+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestLargeBodySpillsButStaysSearchable","Output":"=== RUN   TestLargeBodySpillsButStaysSearchable\n"}
+{"Time":"2026-10-12T06:21:15.612136+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestLargeBodySpillsButStaysSearchable","Output":"--- PASS: TestLargeBodySpillsButStaysSearchable (0.29s)\n"}
+{"Time":"2026-10-12T06:21:15.612136+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestLargeBodySpillsButStaysSearchable","Elapsed":0.29}
+{"Time":"2026-10-12T06:21:15.612136+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestBinaryBodyStaysOutOfIndex"}
+{"Time":"2026-10-12T06:21:15.612136+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestBinaryBodyStaysOutOfIndex","Output":"=== RUN   TestBinaryBodyStaysOutOfIndex\n"}
+{"Time":"2026-10-12T06:21:15.8537081+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestBinaryBodyStaysOutOfIndex","Output":"--- PASS: TestBinaryBodyStaysOutOfIndex (0.24s)\n"}
+{"Time":"2026-10-12T06:21:15.8537081+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestBinaryBodyStaysOutOfIndex","Elapsed":0.24}
+{"Time":"2026-10-12T06:21:15.8537081+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGetFallsBackToLegacyTree"}
+{"Time":"2026-10-12T06:21:15.8537081+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGetFallsBackToLegacyTree","Output":"=== RUN   TestGetFallsBackToLegacyTree\n"}
+{"Time":"2026-10-12T06:21:16.1539667+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGetFallsBackToLegacyTree","Output":"--- PASS: TestGetFallsBackToLegacyTree (0.30s)\n"}
+{"Time":"2026-10-12T06:21:16.1539667+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGetFallsBackToLegacyTree","Elapsed":0.3}
+{"Time":"2026-10-12T06:21:16.1544905+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGCCollectsBlobsAndEmptyBuckets"}
+{"Time":"2026-10-12T06:21:16.1544905+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGCCollectsBlobsAndEmptyBuckets","Output":"=== RUN   TestGCCollectsBlobsAndEmptyBuckets\n"}
+{"Time":"2026-10-12T06:21:16.4630711+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGCCollectsBlobsAndEmptyBuckets","Output":"--- PASS: TestGCCollectsBlobsAndEmptyBuckets (0.31s)\n"}
+{"Time":"2026-10-12T06:21:16.4630711+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestGCCollectsBlobsAndEmptyBuckets","Elapsed":0.31}
+{"Time":"2026-10-12T06:21:16.4630711+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageSearchesBodies"}
+{"Time":"2026-10-12T06:21:16.4630711+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageSearchesBodies","Output":"=== RUN   TestPageSearchesBodies\n"}
+{"Time":"2026-10-12T06:21:16.6010998+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageSearchesBodies","Output":"--- PASS: TestPageSearchesBodies (0.14s)\n"}
+{"Time":"2026-10-12T06:21:16.6010998+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageSearchesBodies","Elapsed":0.14}
+{"Time":"2026-10-12T06:21:16.6010998+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageFiltersAndSort"}
+{"Time":"2026-10-12T06:21:16.6010998+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageFiltersAndSort","Output":"=== RUN   TestPageFiltersAndSort\n"}
+{"Time":"2026-10-12T06:21:16.8030867+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageFiltersAndSort","Output":"--- PASS: TestPageFiltersAndSort (0.20s)\n"}
+{"Time":"2026-10-12T06:21:16.8030867+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestPageFiltersAndSort","Elapsed":0.2}
+{"Time":"2026-10-12T06:21:16.8030867+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms"}
+{"Time":"2026-10-12T06:21:16.8030867+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms","Output":"=== RUN   TestQueryHostPortAndURLForms\n"}
+{"Time":"2026-10-12T06:21:17.0319941+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/bare_host"}
+{"Time":"2026-10-12T06:21:17.0319941+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/bare_host","Output":"=== RUN   TestQueryHostPortAndURLForms/bare_host\n"}
+{"Time":"2026-10-12T06:21:17.0319941+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/bare_host","Output":"--- PASS: TestQueryHostPortAndURLForms/bare_host (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.0319941+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/bare_host","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.0319941+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/host_and_port"}
+{"Time":"2026-10-12T06:21:17.0319941+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/host_and_port","Output":"=== RUN   TestQueryHostPortAndURLForms/host_and_port\n"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/host_and_port","Output":"--- PASS: TestQueryHostPortAndURLForms/host_and_port (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/host_and_port","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/full_URL"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/full_URL","Output":"=== RUN   TestQueryHostPortAndURLForms/full_URL\n"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/full_URL","Output":"--- PASS: TestQueryHostPortAndURLForms/full_URL (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/full_URL","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/IPv6_host_and_port"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/IPv6_host_and_port","Output":"=== RUN   TestQueryHostPortAndURLForms/IPv6_host_and_port\n"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/IPv6_host_and_port","Output":"--- PASS: TestQueryHostPortAndURLForms/IPv6_host_and_port (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.0332802+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms/IPv6_host_and_port","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms","Output":"--- PASS: TestQueryHostPortAndURLForms (0.25s)\n"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestQueryHostPortAndURLForms","Elapsed":0.25}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNormalizeSearchHost"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNormalizeSearchHost","Output":"=== RUN   TestNormalizeSearchHost\n"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNormalizeSearchHost","Output":"--- PASS: TestNormalizeSearchHost (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestNormalizeSearchHost","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTruncateUTF8"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTruncateUTF8","Output":"=== RUN   TestTruncateUTF8\n"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTruncateUTF8","Output":"--- PASS: TestTruncateUTF8 (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestTruncateUTF8","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestIsBinaryBody"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestIsBinaryBody","Output":"=== RUN   TestIsBinaryBody\n"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestIsBinaryBody","Output":"--- PASS: TestIsBinaryBody (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestIsBinaryBody","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordConcurrent"}
+{"Time":"2026-10-12T06:21:17.055016+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordConcurrent","Output":"=== RUN   TestRecordConcurrent\n"}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordConcurrent","Output":"--- PASS: TestRecordConcurrent (0.47s)\n"}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRecordConcurrent","Elapsed":0.47}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRequestHeaderLinesIncludesHost"}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRequestHeaderLinesIncludesHost","Output":"=== RUN   TestRequestHeaderLinesIncludesHost\n"}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRequestHeaderLinesIncludesHost","Output":"--- PASS: TestRequestHeaderLinesIncludesHost (0.00s)\n"}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestRequestHeaderLinesIncludesHost","Elapsed":0}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHost"}
+{"Time":"2026-10-12T06:21:17.5267636+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHost","Output":"=== RUN   TestDeleteHost\n"}
+{"Time":"2026-10-12T06:21:17.8402636+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHost","Output":"--- PASS: TestDeleteHost (0.31s)\n"}
+{"Time":"2026-10-12T06:21:17.8402636+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHost","Elapsed":0.31}
+{"Time":"2026-10-12T06:21:17.8402636+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHosts"}
+{"Time":"2026-10-12T06:21:17.8402636+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHosts","Output":"=== RUN   TestHosts\n"}
+{"Time":"2026-10-12T06:21:18.0260055+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHosts","Output":"--- PASS: TestHosts (0.19s)\n"}
+{"Time":"2026-10-12T06:21:18.0260055+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestHosts","Elapsed":0.19}
+{"Time":"2026-10-12T06:21:18.0260055+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExact"}
+{"Time":"2026-10-12T06:21:18.0260055+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExact","Output":"=== RUN   TestDeleteHostsExact\n"}
+{"Time":"2026-10-12T06:21:18.4270655+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExact","Output":"--- PASS: TestDeleteHostsExact (0.40s)\n"}
+{"Time":"2026-10-12T06:21:18.4270655+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExact","Elapsed":0.4}
+{"Time":"2026-10-12T06:21:18.4275946+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactReportsTreeRemovalFailure"}
+{"Time":"2026-10-12T06:21:18.4275946+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactReportsTreeRemovalFailure","Output":"=== RUN   TestDeleteHostsExactReportsTreeRemovalFailure\n"}
+{"Time":"2026-10-12T06:21:18.6125574+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactReportsTreeRemovalFailure","Output":"--- PASS: TestDeleteHostsExactReportsTreeRemovalFailure (0.19s)\n"}
+{"Time":"2026-10-12T06:21:18.6125574+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactReportsTreeRemovalFailure","Elapsed":0.19}
+{"Time":"2026-10-12T06:21:18.6125574+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactRollsBackWholeIndexBatch"}
+{"Time":"2026-10-12T06:21:18.6125574+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactRollsBackWholeIndexBatch","Output":"=== RUN   TestDeleteHostsExactRollsBackWholeIndexBatch\n"}
+{"Time":"2026-10-12T06:21:18.8626843+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactRollsBackWholeIndexBatch","Output":"--- PASS: TestDeleteHostsExactRollsBackWholeIndexBatch (0.25s)\n"}
+{"Time":"2026-10-12T06:21:18.8626843+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostsExactRollsBackWholeIndexBatch","Elapsed":0.25}
+{"Time":"2026-10-12T06:21:18.8626843+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackRestoresIndexAndTree"}
+{"Time":"2026-10-12T06:21:18.8626843+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackRestoresIndexAndTree","Output":"=== RUN   TestStageDeleteHostsExactRollbackRestoresIndexAndTree\n"}
+{"Time":"2026-10-12T06:21:19.0714941+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackRestoresIndexAndTree","Output":"--- PASS: TestStageDeleteHostsExactRollbackRestoresIndexAndTree (0.21s)\n"}
+{"Time":"2026-10-12T06:21:19.0714941+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackRestoresIndexAndTree","Elapsed":0.21}
+{"Time":"2026-10-12T06:21:19.0714941+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackReportsRestoreFailure"}
+{"Time":"2026-10-12T06:21:19.0714941+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackReportsRestoreFailure","Output":"=== RUN   TestStageDeleteHostsExactRollbackReportsRestoreFailure\n"}
+{"Time":"2026-10-12T06:21:19.2598889+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackReportsRestoreFailure","Output":"--- PASS: TestStageDeleteHostsExactRollbackReportsRestoreFailure (0.19s)\n"}
+{"Time":"2026-10-12T06:21:19.2598889+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestStageDeleteHostsExactRollbackReportsRestoreFailure","Elapsed":0.19}
+{"Time":"2026-10-12T06:21:19.2598889+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostGCBlobs"}
+{"Time":"2026-10-12T06:21:19.2598889+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostGCBlobs","Output":"=== RUN   TestDeleteHostGCBlobs\n"}
+{"Time":"2026-10-12T06:21:19.689925+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostGCBlobs","Output":"--- PASS: TestDeleteHostGCBlobs (0.43s)\n"}
+{"Time":"2026-10-12T06:21:19.689925+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDeleteHostGCBlobs","Elapsed":0.43}
+{"Time":"2026-10-12T06:21:19.689925+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestUpgradeFromOldInstall"}
+{"Time":"2026-10-12T06:21:19.689925+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestUpgradeFromOldInstall","Output":"=== RUN   TestUpgradeFromOldInstall\n"}
+{"Time":"2026-10-12T06:21:19.7937049+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestUpgradeFromOldInstall","Output":"2026/10/12 06:21:19 [traffic] 索引库未启用增量回收（auto_vacuum=0）：删除流量不会缩小 index.sqlite，需要执行一次存储压缩来转换\n"}
+{"Time":"2026-10-12T06:21:19.9503347+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestUpgradeFromOldInstall","Output":"    upgrade_test.go:87: 旧库 69632 字节，新版本接管后仍是同一文件\n"}
+{"Time":"2026-10-12T06:21:20.0239267+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestUpgradeFromOldInstall","Output":"--- PASS: TestUpgradeFromOldInstall (0.33s)\n"}
+{"Time":"2026-10-12T06:21:20.0239267+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestUpgradeFromOldInstall","Elapsed":0.33}
+{"Time":"2026-10-12T06:21:20.0239267+08:00","Action":"run","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDowngradeToOldBinary"}
+{"Time":"2026-10-12T06:21:20.0239267+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDowngradeToOldBinary","Output":"=== RUN   TestDowngradeToOldBinary\n"}
+{"Time":"2026-10-12T06:21:20.4938367+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDowngradeToOldBinary","Output":"--- PASS: TestDowngradeToOldBinary (0.47s)\n"}
+{"Time":"2026-10-12T06:21:20.4943539+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Test":"TestDowngradeToOldBinary","Elapsed":0.47}
+{"Time":"2026-10-12T06:21:20.4943539+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Output":"PASS\n"}
+{"Time":"2026-10-12T06:21:20.5085959+08:00","Action":"output","Package":"github.com/Autumn-27/artex/traffic","Output":"ok  \tgithub.com/Autumn-27/artex/traffic\t10.820s\n"}
+{"Time":"2026-10-12T06:21:20.5085959+08:00","Action":"pass","Package":"github.com/Autumn-27/artex/traffic","Elapsed":10.831}

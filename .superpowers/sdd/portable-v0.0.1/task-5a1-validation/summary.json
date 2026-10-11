@@ -1,0 +1,32 @@
+{
+  "proxy-lifecycle.jsonl": {
+    "topLevelPassed": 14,
+    "leafPassed": 19,
+    "testPassEvents": 22,
+    "failedEvents": 0,
+    "skippedEvents": 0,
+    "packageResult": [
+      "pass"
+    ]
+  },
+  "proxy-upstream-protocols.jsonl": {
+    "topLevelPassed": 14,
+    "leafPassed": 25,
+    "testPassEvents": 39,
+    "failedEvents": 0,
+    "skippedEvents": 0,
+    "packageResult": [
+      "pass"
+    ]
+  },
+  "traffic.jsonl": {
+    "topLevelPassed": 44,
+    "leafPassed": 47,
+    "testPassEvents": 48,
+    "failedEvents": 0,
+    "skippedEvents": 0,
+    "packageResult": [
+      "pass"
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+windows/amd64 traffic compile exit 0
+linux/amd64 traffic compile exit 0
+linux/arm64 traffic compile exit 0
+darwin/amd64 traffic compile exit 0
+darwin/arm64 traffic compile exit 0

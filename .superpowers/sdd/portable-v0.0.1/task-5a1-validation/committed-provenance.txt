@@ -1,0 +1,4 @@
+committed Git archive f416cc2b3adaff92668165582a48168964bc88c6: github.com/lqqyt2423/go-mitmproxy@v1.9.2: 104 baseline, 6 changed, 2 added, 0 deleted; verified with archive
+fresh sparse clone with core.autocrlf=true: github.com/lqqyt2423/go-mitmproxy@v1.9.2: 104 baseline, 6 changed, 2 added, 0 deleted; verified with archive
+archive: 106 SDK file bytes equal native-tested worktree
+clone: 106 SDK file bytes equal native-tested worktree
