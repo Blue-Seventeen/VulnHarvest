@@ -51,9 +51,9 @@ Files: db/tasks.go, exploration*.go, digest.go, intent_admission.go, constraints
 
 Files: db/assets.go, asset_dsl.go, companies.go, company_scope.go, finding*.go, task_archives*.go, server/manager.go, server/engine.go, server/task_archive_package.go 等直接 PG SQL。
 
-- [ ] 数组 JSON 合并/去重、网络地址匹配采用 SQLite JSON SQL 或 net/netip Go 实现；保留原归属规则。
-- [ ] 漏洞/复测/证据绑定/归档快照恢复完整且原子，保全所有关联和原文件路径。
-- [ ] 扫描业务层直接 PostgreSQL SQL，逐个适配及错误分类。
+- [x] 数组 JSON 合并/去重、网络地址匹配采用 SQLite JSON SQL 或 net/netip Go 实现；保留原归属规则。
+- [x] 漏洞/复测/证据绑定/归档快照恢复保全关联及原文件路径；数据库事务原子，文件移动使用日志补偿及恢复。
+- [x] 扫描业务层直接 PostgreSQL SQL，逐个适配及错误分类；存储分项已审查，完整应用调用验收仍由 Task 7 完成。
 
 ### Task 5: 便携运行时
 
