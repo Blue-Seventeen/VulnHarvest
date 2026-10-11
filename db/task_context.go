@@ -414,7 +414,7 @@ func (d *DB) ReplaceTaskLLMProfiles(taskID int64, profileIDs []int64, activeProf
 	// DeleteProfile. Inserts below may take KEY SHARE locks on llm_profiles for
 	// their foreign keys, so the task row must be locked before any of them.
 	var lockedID int64
-	if err := tx.QueryRow(`SELECT id FROM tasks WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, taskID).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(d.SQL(`SELECT id FROM tasks WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, `SELECT id FROM tasks WHERE id=$1 AND deleted_at IS NULL`), taskID).Scan(&lockedID); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("task %d not found", taskID)
 		}

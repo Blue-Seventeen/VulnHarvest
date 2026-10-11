@@ -23,6 +23,19 @@ func IsForeignKeyViolation(err error) bool {
 	return errors.As(err, &sq) && sq.Code() == 787
 }
 func IsBusyError(err error) bool {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "55P03"
+	}
 	var sq *sqlite.Error
 	return errors.As(err, &sq) && (sq.Code()&255 == 5 || sq.Code()&255 == 6)
+}
+
+func IsCheckViolation(err error) bool {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "23514"
+	}
+	var sq *sqlite.Error
+	return errors.As(err, &sq) && sq.Code() == 275
 }

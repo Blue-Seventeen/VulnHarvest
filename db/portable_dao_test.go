@@ -112,6 +112,12 @@ func TestPortableDAOContracts(t *testing.T) {
 			if err != nil || len(sums) < 1 {
 				t.Fatalf("summaries: %v %v", sums, err)
 			}
+			if d.IsSQLite() {
+				timestamp, err := time.Parse(time.RFC3339Nano, sums[0].CreatedAt)
+				if err != nil || !timestamp.Equal(c.CreatedAt) {
+					t.Fatalf("UTC summary timestamp: %q %v", sums[0].CreatedAt, err)
+				}
+			}
 			ids, err := d.DeleteConversations([]int64{c.ID, 922337})
 			if err != nil || len(ids) != 1 || ids[0] != c.ID {
 				t.Fatalf("delete: %v %v", ids, err)
@@ -140,6 +146,17 @@ func TestPortableDAOContracts(t *testing.T) {
 				t.Fatalf("idempotency: %+v %v", same, err)
 			}
 			e.Answer = "answer"
+			e.Usage.InputTokens = 321
+			e.Usage.OutputTokens = 45
+			e.Context = sidequestion.ContextInfo{Phase: "fixture", InputBudget: 4000, OutputTokens: 8192, HistorySummarized: true}
+			memory := sidequestion.Memory{History: "retained history", Through: e.Ordinal, SnapshotKey: "fixture", SnapshotSummary: "preserved checkpoint"}
+			if err = d.SaveSideMemory(ctx, *e, memory); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := d.SideMemory(ctx, *e)
+			if err != nil || loaded != memory {
+				t.Fatalf("side memory lost: %+v %v", loaded, err)
+			}
 			e.Status = "completed"
 			e.Sequence = 1
 			ok, err := d.UpdateSideRequest(ctx, *e)
@@ -149,6 +166,12 @@ func TestPortableDAOContracts(t *testing.T) {
 			history, err := d.SideHistory(ctx, s.Parent.Key(), 0, 10)
 			if err != nil || len(history) != 1 || history[0].Answer != "answer" {
 				t.Fatalf("history: %v %v", history, err)
+			}
+			if history[0].Usage != e.Usage || history[0].Context != e.Context {
+				t.Fatalf("side usage/context lost: %+v", history[0])
+			}
+			if replay, err := d.SideReplay(ctx, s.Parent.Key()); err != nil || len(replay) != 1 {
+				t.Fatalf("side replay: %v %v", replay, err)
 			}
 			if err = d.ClearSideHistory(ctx, s.Parent.Key()); err != nil {
 				t.Fatal(err)

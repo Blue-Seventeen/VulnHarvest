@@ -27,7 +27,7 @@ SELECT c.llm_profile_id, c.created_at::text,
 FROM conversations c
 LEFT JOIN conversation_activities ca ON ca.conversation_id = c.id AND ca.kind = 'result'
 GROUP BY c.id`, `
-SELECT c.llm_profile_id, CAST(c.created_at AS TEXT),
+SELECT c.llm_profile_id, replace(CAST(c.created_at AS TEXT),' ','T')||'Z',
        COALESCE(sum(ca.input_tokens),0), COALESCE(sum(ca.output_tokens),0),
        COALESCE(sum(ca.cache_read_tokens),0), COALESCE(sum(ca.cache_write_tokens),0)
 FROM conversations c
