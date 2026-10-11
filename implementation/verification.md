@@ -34,8 +34,18 @@
 - 未运行应用后台任务、通知发送、MCP 或模型调用；这些运行时验收仍在后续分项。
 - 本轮跨包检查 `go test ./... -run '^$'` 通过；这是编译与测试入口检查，没有运行业务断言，不计作全量回归。
 - 审查指出 SQLite 时间参数驱动包装遗漏连接复用接口；提交 `3f36cfd` 转发底层 `ResetSession` / `IsValid`。真实查询执行取消、原生事务回滚和后续读写回归通过，主代理聚焦复核 1.637s，通过复审。
+- Linux amd64 实际 race 检查：从固定 `3f36cfd` 的源码归档在独立 `golang:1.27.2-alpine` 临时容器运行 `go test -race -mod=readonly ./config ./db -run 'TestResolveMode|^TestSQLite|^TestPortable(ConnectionReuseInterfaces|ExecutingCancellationAndReuse|DateBindingsAndJSON|PreparedTimeAndScanners)$' -count=1`，config 1.025s、db 14.384s，通过且无竞态报告。只覆盖该基础范围，未代表整个应用 race 验收。
+
+## 资产与公司（分项已审查）
+
+- 原源码在专用 `vh_assets` 初始空库执行资产/公司聚焦基线，30 个 pass 测试事件、0 fail、0 skip（包含包事件），7.479s。后续双库适配由分项测试与审查验证。
+- 分项提交 `92f470c` 包含八类资产、公司范围、JSON 无损合并、DSL 与纯读池接缝。主代理执行完整聚焦双库 suite：145 个 pass 事件（包含包）、0 fail、0 skip，83.126s。初轮审查发现四处反例：UTC 字符串缺时区、指数数值及负零排序、params 文本身份、映射 IPv6 的地址族匹配；后续修复及复审结果见下一条。
+- 审查确认的窄 PostgreSQL 兼容修正：auth 对象按值去重、重复 params 的显式 C 字节排序、数组反斜杠转义、A/AAAA 归属优先、副作用错误传播与删除原子性、DSL 的 OR 范围约束；未在启动时重写历史资产。
+- 修复提交 `d01d7db` 保留 UTC 时区、十进制 scale、PG 文本分组身份及 IPv6 地址族。修复后统一 suite：179 个测试 pass 事件及 1 个包 pass，0 fail、0 skip，117.943s。主代理另独立运行新增反例组：36 个 pass 事件（含包）、0 fail、0 skip，6.712s；复审确认全部问题已修复，无新增重要问题。
 
 ## 最终验收
+
+任务/探索图原源码聚焦基线：在专用 `vh_task3` 初始空库执行 `^Test(Task|Exploration|Intent|Constraint)`，21 个 pass 事件、0 fail、0 skip，7.076s；不是完整 DB 回归。
 
 尚未完成。SQLite 全业务、Agent 闭环、文件持久化、运行时、UI、五平台构建与运行、PostgreSQL 回归逐项完成后填写准确证据。
 
