@@ -17,14 +17,7 @@ import (
 // Exercise the actual SDK event -> hook -> execution -> result path. No real
 // model or command is used; the probe tool only returns a fixed string.
 func TestCaptureApprovalLifecycle(t *testing.T) {
-	dsn, _, err := db.DSN()
-	if err != nil {
-		t.Skip("no test database configured")
-	}
-	d, err := db.Open(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := openTestDB(t)
 	t.Cleanup(func() { _ = d.Close() })
 	ic := intercept.New(d)
 	priorTools, err := ic.GetEnabledTools()

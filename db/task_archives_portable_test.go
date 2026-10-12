@@ -6,8 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,51 +19,18 @@ import (
 
 func archiveContractDB(t *testing.T) *DB {
 	t.Helper()
-	var d *DB
-	var err error
-	if strings.Contains(t.Name(), "/SQLite") {
-		d, err = OpenSQLite(filepath.Join(t.TempDir(), "archive.db"))
-	} else {
-		dsn := os.Getenv("ARTEX_ARCHIVE_TEST_PG_DSN")
-		if dsn == "" {
-			t.Fatal("ARTEX_ARCHIVE_TEST_PG_DSN required")
-		}
-		pool, e := sql.Open("pgx", dsn)
-		if e != nil {
-			t.Fatal(e)
-		}
-		var name string
-		e = pool.QueryRow(`SELECT current_database()`).Scan(&name)
-		if e != nil || name != "vh_archives" {
-			pool.Close()
-			t.Fatalf("refusing reset %q: %v", name, e)
-		}
-		_, e = pool.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
-		pool.Close()
-		if e != nil {
-			t.Fatal(e)
-		}
-		d, err = Open(dsn)
-	}
-	if err != nil {
+	d := contractTestDB(t)
+	if err := d.EnsureLLMRecordsTable(); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.EnsureLLMRecordsTable(); err != nil {
+	if err := d.EnsureLLMUsageTable(); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.EnsureLLMUsageTable(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := d.Close(); err != nil {
-			t.Error(err)
-		}
-	})
 	return d
 }
 
 func TestPortableArchiveEdgeContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("ConsistentReaderWriter", testArchiveConsistentReaderWriter)
 			t.Run("SharedAndRemappedAssets", testArchiveSharedAndRemappedAssets)
@@ -726,7 +693,7 @@ func testArchiveLegacyDefaults(t *testing.T) {
 }
 
 func TestPortableArchiveContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			d := archiveContractDB(t)
 			task, err := d.CreateTaskWithOptions("中文 空格", "retain contexts", TaskCreateOptions{Name: "归档任务"})

@@ -14,11 +14,11 @@ import (
 //
 // 这两个测试把 handler 的连接池关掉来制造读取失败，断言两处都 fail closed。
 func TestAuthStatusFailsClosedWhenDataSourceUnavailable(t *testing.T) {
-	m, err := NewManager(t.TempDir(), "")
+	m, err := newTestManager(t, t.TempDir())
 	if err != nil {
-		t.Skipf("postgres unavailable (%v)", err)
+		t.Fatalf("postgres unavailable (%v)", err)
 	}
-	defer m.Close()
+
 	// 关掉池子，让后续 GetSetting 返回 error 而不是 sql.ErrNoRows。
 	if err := m.pg.Close(); err != nil {
 		t.Fatal(err)
@@ -40,11 +40,11 @@ func TestAuthStatusFailsClosedWhenDataSourceUnavailable(t *testing.T) {
 }
 
 func TestAuthInitFailsClosedWhenDataSourceUnavailable(t *testing.T) {
-	m, err := NewManager(t.TempDir(), "")
+	m, err := newTestManager(t, t.TempDir())
 	if err != nil {
-		t.Skipf("postgres unavailable (%v)", err)
+		t.Fatalf("postgres unavailable (%v)", err)
 	}
-	defer m.Close()
+
 	if err := m.pg.Close(); err != nil {
 		t.Fatal(err)
 	}

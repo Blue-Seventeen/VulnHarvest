@@ -3,17 +3,15 @@ package server
 import (
 	"context"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestRuntimePostgresOwnedDatabaseStartup(t *testing.T) {
-	pw := os.Getenv("VULNHARVEST_PORTABLE_TEST_PG_PASSWORD")
-	if pw == "" {
-		t.Skip("dedicated portable PG password not provided by controller")
-	}
-	dsn := "postgres://vh_test:" + pw + "@127.0.0.1:27347/vh_runtime?sslmode=disable"
+	dsn := testenv.RequirePostgres(t)
+	testenv.ResetContract(t)
 	t.Setenv("ARTEX_PG_DSN", dsn)
 	t.Setenv("VULNHARVEST_MODE", "postgres")
 	probe, e := db.Open(dsn)
@@ -21,7 +19,7 @@ func TestRuntimePostgresOwnedDatabaseStartup(t *testing.T) {
 		t.Fatal(e)
 	}
 	var name string
-	if e = probe.QueryRow("SELECT current_database()").Scan(&name); e != nil || name != "vh_runtime" {
+	if e = probe.QueryRow("SELECT current_database()").Scan(&name); e != nil || name != "vh_final" {
 		probe.Close()
 		t.Fatalf("wrong database %q: %v", name, e)
 	}

@@ -2,13 +2,11 @@ package server
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"log"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,40 +17,7 @@ import (
 
 // These fixtures inject only storage; they never construct a runtime Manager,
 // background Server, listener, Agent, model, notifier or MCP session.
-func taskAssetServerDB(t *testing.T) *db.DB {
-	t.Helper()
-	var d *db.DB
-	var err error
-	if strings.Contains(t.Name(), "/SQLite/") {
-		d, err = db.OpenSQLite(filepath.Join(t.TempDir(), "task-assets.db"))
-	} else {
-		dsn := os.Getenv("ARTEX_TASK_TEST_PG_DSN")
-		if dsn == "" {
-			t.Fatal("ARTEX_TASK_TEST_PG_DSN required")
-		}
-		pool, err := sql.Open("pgx", dsn)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer pool.Close()
-		var name string
-		if err := pool.QueryRow(`SELECT current_database()`).Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		if name != "vh_task3" {
-			t.Fatalf("refusing reset of %q", name)
-		}
-		if _, err := pool.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-			t.Fatal(err)
-		}
-		d, err = db.Open(dsn)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return d
-}
+func taskAssetServerDB(t *testing.T) *db.DB { t.Helper(); return contractTestDB(t) }
 
 func taskAssetServerFixture(t *testing.T, d *db.DB) (*Server, *Task) {
 	t.Helper()
@@ -79,7 +44,7 @@ func taskAssetHTTP(t *testing.T, s *Server, taskID, domain string) map[string]an
 }
 
 func TestPortableTaskAssetServer(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("DeletedTask", testTaskAssetServerDeletedTask)
 			t.Run("Rollback", testTaskAssetServerRollback)
@@ -231,7 +196,7 @@ func testTaskAssetServerPrepareBarrier(t *testing.T) {
 				}
 				peer, err = db.OpenSQLite(file)
 			} else {
-				peer, err = db.Open(os.Getenv("ARTEX_TASK_TEST_PG_DSN"))
+				peer, err = db.Open(testenv.DSN(t))
 			}
 			if err != nil {
 				t.Fatal(err)

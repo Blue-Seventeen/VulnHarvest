@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"strings"
 	"testing"
 	"time"
@@ -18,19 +18,15 @@ func openExplorationTestDB(t *testing.T) (*DB, error) {
 	if strings.HasPrefix(t.Name(), "TestPortableExplorationContract/") || strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/") {
 		return taskContractDB(t), nil
 	}
-	return Open(testDSN(t))
+	return openTestDB(t)
 }
 
 // Contract factories own Close through Cleanup, after all test cleanups. Legacy
 // directly invoked tests retain their original deferred close ordering.
-func closeExplorationTestDB(t *testing.T, d *DB) {
-	if !(strings.HasPrefix(t.Name(), "TestPortableExplorationContract/") || strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/")) {
-		d.Close()
-	}
-}
+func closeExplorationTestDB(t *testing.T, d *DB) { /* fixture cleanup owns closure */ }
 
 func TestPortableExplorationContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("Flow", TestExplorationFlow)
 			t.Run("IntentControls", TestIntentPauseResumeAndCancelCleanup)
@@ -548,7 +544,7 @@ func testExplorationClaim16Workers(t *testing.T) {
 			t.Fatal(err)
 		}
 	} else {
-		pool, err := sql.Open("pgx", os.Getenv("ARTEX_TASK_TEST_PG_DSN"))
+		pool, err := sql.Open("pgx", testenv.DSN(t))
 		if err != nil {
 			t.Fatal(err)
 		}

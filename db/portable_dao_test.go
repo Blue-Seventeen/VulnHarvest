@@ -2,9 +2,8 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"os"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"reflect"
 	"testing"
 	"time"
@@ -286,36 +285,8 @@ func TestPortableDAOContracts(t *testing.T) {
 
 func task2Stores(t *testing.T, test func(*testing.T, *DB)) {
 	t.Helper()
-	t.Run("sqlite", func(t *testing.T) { test(t, portableDB(t)) })
-	if dsn := os.Getenv("TASK2_PG_DSN"); dsn != "" {
-		t.Run("postgres", func(t *testing.T) {
-			// Never reset a shared application database. The one disposable development
-			// database is recreated before each contract so repeat runs have no leftovers.
-			raw, err := sql.Open("pgx", dsn)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var name string
-			if err = raw.QueryRow(`SELECT current_database()`).Scan(&name); err != nil {
-				raw.Close()
-				t.Fatal(err)
-			}
-			if name != "vh_task2" {
-				raw.Close()
-				t.Fatalf("refuse reset of non-task2 database %q", name)
-			}
-			if _, err = raw.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-				raw.Close()
-				t.Fatal(err)
-			}
-			raw.Close()
-			d, err := Open(dsn)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { d.Close() })
-			test(t, d)
-		})
+	for _, engine := range testenv.Engines(t) {
+		t.Run(engine, func(t *testing.T) { test(t, contractTestDB(t)) })
 	}
 }
 

@@ -3,6 +3,8 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -90,6 +92,7 @@ func (helper *testProxyHelper) init(t *testing.T) {
 
 	// start proxy
 	testProxy, err := NewProxy(&Options{
+		CaRootPath:  t.TempDir(),
 		Addr:        helper.proxyAddr, // some random port
 		SslInsecure: true,
 	})
@@ -275,7 +278,8 @@ func TestProxy(t *testing.T) {
 			if err == nil {
 				t.Fatal("should have error")
 			}
-			if !strings.Contains(err.Error(), "certificate is not trusted") {
+			var untrusted x509.UnknownAuthorityError
+			if !errors.As(err, &untrusted) {
 				t.Fatal("should get not trusted error, but got", err.Error())
 			}
 		})

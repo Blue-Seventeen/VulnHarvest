@@ -19,11 +19,11 @@ import (
 // → llm_records. The unit tests cover each hop; this proves the raw bodies
 // actually survive all the way into the row an operator opens when debugging.
 func TestRecorderPersistsRawWireBodies(t *testing.T) {
-	m, err := NewManager(t.TempDir(), "")
+	m, err := newTestManager(t, t.TempDir())
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer m.Close()
+
 	pg := m.PG()
 	if err := pg.EnsureLLMRecordsTable(); err != nil {
 		t.Fatalf("ensure table: %v", err)

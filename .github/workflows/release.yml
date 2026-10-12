@@ -34,6 +34,7 @@ jobs:
           echo "runner=$(uname -s) machine=$(uname -m) goos=$(go env GOOS) goarch=$(go env GOARCH)"
           test "$(go env GOOS)" = "${{ matrix.goos }}"
           test "$(go env GOARCH)" = "${{ matrix.goarch }}"
+          printf 'Source SHA: `%s`\n\nNative runner: `%s %s`; Go: `%s/%s`\n' "$GITHUB_SHA" "$(uname -s)" "$(uname -m)" "$(go env GOOS)" "$(go env GOARCH)" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -60,19 +61,27 @@ jobs:
           ARTEX_TEST_BACKEND: sqlite
         run: |
           set -euxo pipefail
-          if test -f portable/task7-business-ready; then
-            go test -p 1 -count=1 -timeout=20m ./...
+          export ARTEX_CONFIG="$RUNNER_TEMP/task7-isolated-config.json"
+          printf '{}' > "$ARTEX_CONFIG"
+          export ARTEX_PG_DSN='' TASK2_PG_DSN='' ARTEX_ASSET_TEST_PG_DSN='' ARTEX_TASK_TEST_PG_DSN='' ARTEX_FINDING_TEST_PG_DSN='' ARTEX_ARCHIVE_TEST_PG_DSN=''
+          export ARTEX_LLM_PROVIDER='' ANTHROPIC_API_KEY='' OPENAI_API_KEY='' ARTEX_REVIEW_LIVE_CONFIG=''
+          if go test -p 1 -count=1 -timeout=20m ./...; then
+            printf '\nSQLite ordinary full suite: **PASS**\n\n`ARTEX_TEST_BACKEND=sqlite go test -p 1 -count=1 -timeout=20m ./...`\n' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo 'DEFERRED: Task7 ordinary SQLite factories/harness not integrated yet.'
+            code=$?
+            printf '\nSQLite ordinary full suite: **FAIL (exit %s)**\n\n`ARTEX_TEST_BACKEND=sqlite go test -p 1 -count=1 -timeout=20m ./...`\n' "$code" >> "$GITHUB_STEP_SUMMARY"
+            exit "$code"
           fi
       - name: Task7 scoped nested SDK tests
         shell: bash
         run: |
           set -euxo pipefail
-          if test -f portable/task7-nested-tests.sh; then
-            bash portable/task7-nested-tests.sh
+          if bash portable/task7-nested-tests.sh; then
+            printf '\nNested SDK gate: **PASS** (patched norma tool/mcp scope; full proxy package). See commands in `portable/task7-nested-tests.sh`.\n' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo 'DEFERRED: Task7 patched-scope nested SDK gate and baseline classification.'
+            code=$?
+            printf '\nNested SDK gate: **FAIL (exit %s)** (patched norma tool/mcp scope; full proxy package).\n' "$code" >> "$GITHUB_STEP_SUMMARY"
+            exit "$code"
           fi
       - uses: actions/upload-artifact@v4
         with:

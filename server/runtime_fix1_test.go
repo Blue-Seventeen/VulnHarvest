@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,7 @@ func TestRuntimeFix1SideSnapshotOwnership(t *testing.T) {
 	id := "00000000-0000-4000-8000-000000000001"
 	for _, kind := range []string{"other-conversation", "absent-request", "invalid-id"} {
 		t.Run(kind, func(t *testing.T) {
-			data := t.TempDir()
+			data := testenv.LinkTempDir(t)
 			extracted := filepath.Join(data, "archives", "tasks", ".restore", "1-test")
 			name := "exp0-btw-" + id + ".jsonl"
 			snapshot := &db.TaskArchiveSnapshot{TaskID: 1, ExplorationID: 1, Tables: map[string]json.RawMessage{"conversations": json.RawMessage(`[{"id":7}]`), "side_question_requests": json.RawMessage(`[{"id":"` + id + `","session_key":"conv-8"}]`)}}
@@ -41,7 +42,7 @@ func TestRuntimeFix1SideSnapshotOwnership(t *testing.T) {
 }
 
 func TestRuntimeFix1JournalLateJunctionSwap(t *testing.T) {
-	data, outside := t.TempDir(), t.TempDir()
+	data, outside := testenv.LinkTempDir(t), testenv.LinkTempDir(t)
 	source := filepath.Join(data, "tasks", "1", "keep")
 	destination := filepath.Join(data, "archives", "tasks", ".staging", "1", "payload", "files", "tasks", "1", "keep")
 	os.MkdirAll(filepath.Dir(source), 0700)
@@ -71,7 +72,7 @@ func TestRuntimeFix1JournalLateJunctionSwap(t *testing.T) {
 func TestRuntimeFix1MaliciousJournals(t *testing.T) {
 	for _, kind := range []string{"restore-outside-source", "staging-traversal", "staging-task-mismatch", "staging-state-junction", "restore-state-junction", "relocated-legacy"} {
 		t.Run(kind, func(t *testing.T) {
-			base := t.TempDir()
+			base := testenv.LinkTempDir(t)
 			m, s := runtimeFixture(t, base)
 			defer m.Close()
 			defer s.Shutdown(context.Background())
@@ -84,7 +85,7 @@ func TestRuntimeFix1MaliciousJournals(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			outside := t.TempDir()
+			outside := testenv.LinkTempDir(t)
 			keep := filepath.Join(outside, "keep.txt")
 			os.WriteFile(keep, []byte("unchanged"), 0600)
 			source := filepath.Join(m.dir, "tasks", task.ID)
@@ -145,7 +146,7 @@ func TestRuntimeFix1MaliciousJournals(t *testing.T) {
 func TestRuntimeFix1RootOverlapRejectedBeforeStore(t *testing.T) {
 	for _, kind := range []string{"data-base", "data-state", "data-under-state", "data-link-state", "skill-base", "skill-state", "skill-link-state"} {
 		t.Run(kind, func(t *testing.T) {
-			base := t.TempDir()
+			base := testenv.LinkTempDir(t)
 			state := filepath.Join(base, "state")
 			data := filepath.Join(base, "data")
 			skills := filepath.Join(base, "skills")
@@ -182,8 +183,8 @@ func TestRuntimeFix1RootOverlapRejectedBeforeStore(t *testing.T) {
 			}
 		})
 	}
-	base := t.TempDir()
-	external := t.TempDir()
+	base := testenv.LinkTempDir(t)
+	external := testenv.LinkTempDir(t)
 	data := filepath.Join(external, "data")
 	skills := filepath.Join(external, "skills")
 	t.Setenv("ARTEX_SKILL_DIR", skills)

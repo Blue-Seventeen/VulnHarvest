@@ -14,22 +14,26 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"github.com/Autumn-27/artex/server"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestPostgresActualBinaryRuntimeCheckAndSelection(t *testing.T) {
-	password := os.Getenv("VULNHARVEST_PORTABLE_TEST_PG_PASSWORD")
-	if password == "" {
-		t.Skip("dedicated vh_runtime password not provided")
+	dsn := testenv.RequirePostgres(t)
+	testenv.ResetContract(t)
+	pgcfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal("invalid owned test configuration")
 	}
-	dsn := "postgres://vh_test:" + password + "@127.0.0.1:27347/vh_runtime?sslmode=disable"
+	password := pgcfg.Password
 	probe, err := db.Open(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var database string
-	if err = probe.QueryRow("SELECT current_database()").Scan(&database); err != nil || database != "vh_runtime" {
+	if err = probe.QueryRow("SELECT current_database()").Scan(&database); err != nil || database != "vh_final" {
 		probe.Close()
 		t.Fatal("wrong dedicated database")
 	}
@@ -157,7 +161,7 @@ func main(){
 	if status != 200 || json.Unmarshal(raw, &info) != nil || info.Tools.Generation != generation+1 {
 		t.Fatalf("PG rescan=%d: %s", status, raw)
 	}
-	if strings.Contains(string(raw), password) {
+	if password != "" && strings.Contains(string(raw), password) {
 		t.Fatal("runtime password leak")
 	}
 	auditRaw, err := os.ReadFile(audit)

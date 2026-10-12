@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,66 +14,19 @@ import (
 	"time"
 )
 
-func findingContractDB(t *testing.T) *DB {
-	t.Helper()
-	if strings.Contains(t.Name(), "/SQLite/") {
-		d, err := OpenSQLite(filepath.Join(t.TempDir(), "findings.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := d.Close(); err != nil {
-				t.Error(err)
-			}
-		})
-		return d
-	}
-	dsn := os.Getenv("ARTEX_FINDING_TEST_PG_DSN")
-	if dsn == "" {
-		t.Fatal("ARTEX_FINDING_TEST_PG_DSN required")
-	}
-	pool, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	var name string
-	if err = pool.QueryRow(`SELECT current_database()`).Scan(&name); err != nil {
-		t.Fatal(err)
-	}
-	if name != "vh_findings" {
-		t.Fatalf("refusing reset of %q", name)
-	}
-	if _, err = pool.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatal(err)
-	}
-	d, err := Open(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := d.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return d
-}
+func findingContractDB(t *testing.T) *DB { t.Helper(); return contractTestDB(t) }
 
 func openFindingTestDB(t *testing.T) (*DB, error) {
 	if strings.HasPrefix(t.Name(), "TestPortableFindingContract/") {
 		return findingContractDB(t), nil
 	}
-	return Open(testDSN(t))
+	return openTestDB(t)
 }
 
-func closeFindingTestDB(t *testing.T, d *DB) {
-	if !strings.HasPrefix(t.Name(), "TestPortableFindingContract/") {
-		d.Close()
-	}
-}
+func closeFindingTestDB(t *testing.T, d *DB) { /* fixture cleanup owns closure */ }
 
 func TestPortableFindingContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("Delete", TestDeleteFinding)
 			t.Run("PageStats", TestFindingsPageAndStats)
@@ -262,7 +215,7 @@ func testFindingRestart(t *testing.T) {
 	if path != "" {
 		reopened, err = OpenSQLite(path)
 	} else {
-		reopened, err = Open(os.Getenv("ARTEX_FINDING_TEST_PG_DSN"))
+		reopened, err = Open(testenv.DSN(t))
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -422,7 +375,7 @@ func testFindingConcurrentTaskOperations(t *testing.T) {
 	wg.Go(func() {
 		<-start
 		_, _, _, err := d.CreateFindingRetest(t.Context(), f.FindingID, "concurrent")
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrFindingNotFound) {
 			results <- err
 		}
 	})
@@ -489,7 +442,12 @@ func TestSQLiteConstraintClassification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.Close()
+
+	t.Cleanup(func() {
+		if err := d.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	for _, q := range []string{
 		`CREATE TABLE classifier_parent(id INTEGER PRIMARY KEY)`,
 		`CREATE TABLE classifier_child(id INTEGER PRIMARY KEY,parent_id INTEGER REFERENCES classifier_parent(id) ON DELETE RESTRICT)`,

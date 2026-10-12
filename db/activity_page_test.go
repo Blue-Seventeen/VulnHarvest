@@ -6,11 +6,10 @@ import "testing"
 // for the SSE remediation: Main/Plan/Worker filtering, before-cursor paging without
 // gaps/overlap, hasMore, and the task-level snapshot cursor. Mirrors docs §11.1.
 func TestActivityPageSessions(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
 
 	expID, err := d.CreateExploration("test", "分页历史")
 	if err != nil {
@@ -127,11 +126,10 @@ func TestActivityPageSessions(t *testing.T) {
 // TestListByKindPage covers the paged worker(intent) list that lets the session list
 // reach past the old fixed 300 cap (docs §8 / §11.1 item 10).
 func TestListByKindPage(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
 
 	expID, err := d.CreateExploration("test", "意图分页")
 	if err != nil {

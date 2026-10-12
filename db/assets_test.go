@@ -20,9 +20,9 @@ func testSetup(t *testing.T) (*DB, *AssetStore, *CompanyStore) {
 		d := assetContractDB(t)
 		return d, d.Assets(), d.Companies()
 	}
-	d, err := Open(testDSN(t))
+	d, err := openTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v)", err)
+		t.Fatalf("postgres unavailable (%v)", err)
 	}
 	return d, d.Assets(), d.Companies()
 }
@@ -38,7 +38,6 @@ func deleteAsset(d *DB, id int64) {
 
 func TestUpsertRootDomain(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id1, err := av2.UpsertRootDomain(UpsertRootDomainReq{Domain: "roottest.io", ICP: "A12345", TaskID: 1})
 	if err != nil {
@@ -60,19 +59,22 @@ func TestUpsertRootDomain(t *testing.T) {
 
 	// task_ids should now contain both 1 and 2
 	var taskIDs []byte
-	d.QueryRow(`SELECT task_ids FROM assets WHERE id = $1`, id1).Scan(&taskIDs)
+	if err := d.QueryRow(`SELECT task_ids FROM assets WHERE id = $1`, id1).Scan(&taskIDs); err != nil {
+		t.Fatal(err)
+	}
 
 	// ICP should still be set (COALESCE keeps existing)
 	var icp *string
-	d.QueryRow(`SELECT icp FROM assets WHERE id = $1`, id1).Scan(&icp)
+	if err := d.QueryRow(`SELECT icp FROM assets WHERE id = $1`, id1).Scan(&icp); err != nil {
+		t.Fatal(err)
+	}
 	if icp == nil || *icp != "A12345" {
 		t.Errorf("ICP not preserved: %v", icp)
 	}
 }
 
 func TestUpsertRootDomainEmpty(t *testing.T) {
-	d, av2, _ := testSetup(t)
-	defer d.Close()
+	_, av2, _ := testSetup(t)
 
 	_, err := av2.UpsertRootDomain(UpsertRootDomainReq{Domain: ""})
 	if err == nil {
@@ -86,7 +88,6 @@ func TestUpsertRootDomainEmpty(t *testing.T) {
 
 func TestUpsertIP(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id1, err := av2.UpsertIP(UpsertIPReq{
 		IP:        "192.168.10.5",
@@ -100,7 +101,9 @@ func TestUpsertIP(t *testing.T) {
 
 	// c_segment should be 192.168.10.0/24
 	var cseg *string
-	d.QueryRow(d.SQL(`SELECT c_segment::text FROM assets WHERE id = $1`, `SELECT c_segment FROM assets WHERE id = $1`), id1).Scan(&cseg)
+	if err := d.QueryRow(d.SQL(`SELECT c_segment::text FROM assets WHERE id = $1`, `SELECT c_segment FROM assets WHERE id = $1`), id1).Scan(&cseg); err != nil {
+		t.Fatal(err)
+	}
 	if cseg == nil || *cseg != "192.168.10.0/24" {
 		t.Errorf("c_segment: want 192.168.10.0/24, got %v", cseg)
 	}
@@ -120,7 +123,9 @@ func TestUpsertIP(t *testing.T) {
 
 	// verify all 3 ports present
 	var cnt int
-	d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id1).Scan(&cnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id1).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
 	if cnt != 3 {
 		t.Errorf("open_ports merge: want 3 ports, got %d", cnt)
 	}
@@ -128,7 +133,6 @@ func TestUpsertIP(t *testing.T) {
 
 func TestUpsertIPBoundDomains(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id, err := av2.UpsertIP(UpsertIPReq{
 		IP:           "10.1.2.3",
@@ -152,7 +156,9 @@ func TestUpsertIPBoundDomains(t *testing.T) {
 	}
 
 	var cnt int
-	d.QueryRow(d.SQL(`SELECT array_length(bound_domains, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(bound_domains) FROM assets WHERE id = $1`), id).Scan(&cnt)
+	if err := d.QueryRow(d.SQL(`SELECT array_length(bound_domains, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(bound_domains) FROM assets WHERE id = $1`), id).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
 	if cnt != 2 {
 		t.Errorf("bound_domains merge: want 2, got %d", cnt)
 	}
@@ -160,7 +166,6 @@ func TestUpsertIPBoundDomains(t *testing.T) {
 
 func TestAppendIPPort(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id, err := av2.UpsertIP(UpsertIPReq{IP: "10.9.8.7"})
 	if err != nil {
@@ -176,7 +181,9 @@ func TestAppendIPPort(t *testing.T) {
 	}
 
 	var cnt int
-	d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id).Scan(&cnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE id = $1`, `SELECT json_array_length(open_ports) FROM assets WHERE id = $1`), id).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
 	if cnt != 2 {
 		t.Errorf("AppendIPPort: want 2 ports, got %d", cnt)
 	}
@@ -188,7 +195,6 @@ func TestAppendIPPort(t *testing.T) {
 
 func TestUpsertSubdomain(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id, err := av2.UpsertSubdomain(UpsertSubdomainReq{
 		Domain:      "sub.subdtest.com",
@@ -208,21 +214,27 @@ func TestUpsertSubdomain(t *testing.T) {
 
 	// verify root_domain auto-populated
 	var rootDomain string
-	d.QueryRow(`SELECT COALESCE(root_domain,'') FROM assets WHERE id = $1`, id).Scan(&rootDomain)
+	if err := d.QueryRow(`SELECT COALESCE(root_domain,'') FROM assets WHERE id = $1`, id).Scan(&rootDomain); err != nil {
+		t.Fatal(err)
+	}
 	if rootDomain != "subdtest.com" {
 		t.Errorf("root_domain: want subdtest.com, got %q", rootDomain)
 	}
 
 	// side effect: root domain asset should exist
 	var rootCnt int
-	d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type = 'root_domain' AND domain = 'subdtest.com'`).Scan(&rootCnt)
+	if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type = 'root_domain' AND domain = 'subdtest.com'`).Scan(&rootCnt); err != nil {
+		t.Fatal(err)
+	}
 	if rootCnt != 1 {
 		t.Error("side-effect root domain not created")
 	}
 
 	// side effect: IP asset with bound_domain
 	var ipCnt int
-	d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type = 'ip' AND ip = '1.2.3.4'`).Scan(&ipCnt)
+	if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type = 'ip' AND ip = '1.2.3.4'`).Scan(&ipCnt); err != nil {
+		t.Fatal(err)
+	}
 	if ipCnt != 1 {
 		t.Error("side-effect IP asset not created")
 	}
@@ -230,7 +242,6 @@ func TestUpsertSubdomain(t *testing.T) {
 
 func TestUpsertSubdomainDedup(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id1, err := av2.UpsertSubdomain(UpsertSubdomainReq{Domain: "dedup.subdtest2.net", RecordType: "A", RecordValue: []string{"5.5.5.5"}})
 	if err != nil {
@@ -253,7 +264,6 @@ func TestUpsertSubdomainDedup(t *testing.T) {
 
 func TestUpsertAppByBundle(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id1, err := av2.UpsertApp(UpsertAppReq{Name: "MyApp", BundleID: "com.example.myapp", Category: "tools"})
 	if err != nil {
@@ -273,7 +283,6 @@ func TestUpsertAppByBundle(t *testing.T) {
 
 func TestUpsertAppByName(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id1, err := av2.UpsertApp(UpsertAppReq{Name: "UniqueAppNoBundle", Category: "utility"})
 	if err != nil {
@@ -296,7 +305,6 @@ func TestUpsertAppByName(t *testing.T) {
 
 func TestUpsertHTTPService(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	sc := 200
 	cl := int64(1024)
@@ -319,7 +327,9 @@ func TestUpsertHTTPService(t *testing.T) {
 
 	// verify technology was stored
 	var techCnt int
-	d.QueryRow(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt)
+	if err := d.QueryRow(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt); err != nil {
+		t.Fatal(err)
+	}
 	if techCnt != 2 {
 		t.Errorf("technologies: want 2, got %d", techCnt)
 	}
@@ -337,7 +347,9 @@ func TestUpsertHTTPService(t *testing.T) {
 		t.Errorf("http service dedup failed: %d vs %d", id2, id1)
 	}
 
-	d.QueryRow(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt)
+	if err := d.QueryRow(d.SQL(`SELECT array_length(technologies, 1) FROM assets WHERE id = $1`, `SELECT json_array_length(technologies) FROM assets WHERE id = $1`), id1).Scan(&techCnt); err != nil {
+		t.Fatal(err)
+	}
 	if techCnt != 4 {
 		t.Errorf("technologies merge: want 4, got %d", techCnt)
 	}
@@ -345,7 +357,6 @@ func TestUpsertHTTPService(t *testing.T) {
 
 func TestUpsertHTTPServiceAuthAppend(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	auth1 := []map[string]any{{"type": "basic", "username": "admin", "password": "pass"}}
 	id1, err := av2.UpsertHTTPService(UpsertHTTPServiceReq{
@@ -373,7 +384,9 @@ func TestUpsertHTTPServiceAuthAppend(t *testing.T) {
 
 	// auth should have 2 items now
 	var authCnt int
-	d.QueryRow(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt); err != nil {
+		t.Fatal(err)
+	}
 	if authCnt != 2 {
 		t.Errorf("auth append: want 2, got %d", authCnt)
 	}
@@ -385,7 +398,6 @@ func TestUpsertHTTPServiceAuthAppend(t *testing.T) {
 
 func TestUpsertOtherService(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id1, err := av2.UpsertOtherService(UpsertOtherServiceReq{
 		IP:          "172.16.0.1",
@@ -417,7 +429,9 @@ func TestUpsertOtherService(t *testing.T) {
 
 	// side-effect: IP asset should have port 22 in open_ports
 	var cnt int
-	d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE type='ip' AND ip='172.16.0.1'`, `SELECT json_array_length(open_ports) FROM assets WHERE type='ip' AND ip='172.16.0.1'`)).Scan(&cnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE type='ip' AND ip='172.16.0.1'`, `SELECT json_array_length(open_ports) FROM assets WHERE type='ip' AND ip='172.16.0.1'`)).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
 	if cnt == 0 {
 		t.Error("side-effect: IP open_ports not populated")
 	}
@@ -425,7 +439,6 @@ func TestUpsertOtherService(t *testing.T) {
 
 func TestUpsertOtherServiceAuthAppend(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	auth1 := []map[string]any{{"username": "admin", "password": "secret"}}
 	id1, err := av2.UpsertOtherService(UpsertOtherServiceReq{
@@ -451,7 +464,9 @@ func TestUpsertOtherServiceAuthAppend(t *testing.T) {
 	}
 
 	var authCnt int
-	d.QueryRow(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(auth) FROM assets WHERE id = $1`, `SELECT json_array_length(auth) FROM assets WHERE id = $1`), id1).Scan(&authCnt); err != nil {
+		t.Fatal(err)
+	}
 	if authCnt != 2 {
 		t.Errorf("auth append: want 2, got %d", authCnt)
 	}
@@ -463,7 +478,6 @@ func TestUpsertOtherServiceAuthAppend(t *testing.T) {
 
 func TestUpsertEndpoint(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	params1 := []map[string]any{{"location": "query", "name": "id", "value": "1"}}
 	id1, err := av2.UpsertEndpoint(UpsertEndpointReq{
@@ -497,15 +511,16 @@ func TestUpsertEndpoint(t *testing.T) {
 
 	// params should be merged (2 distinct params)
 	var paramCnt int
-	d.QueryRow(d.SQL(`SELECT cardinality(params) FROM assets WHERE id = $1`, `SELECT json_array_length(params) FROM assets WHERE id = $1`), id1).Scan(&paramCnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(params) FROM assets WHERE id = $1`, `SELECT json_array_length(params) FROM assets WHERE id = $1`), id1).Scan(&paramCnt); err != nil {
+		t.Fatal(err)
+	}
 	if paramCnt != 2 {
 		t.Errorf("params merge: want 2, got %d", paramCnt)
 	}
 }
 
 func TestUpsertEndpointRequiredFields(t *testing.T) {
-	d, av2, _ := testSetup(t)
-	defer d.Close()
+	_, av2, _ := testSetup(t)
 
 	_, err := av2.UpsertEndpoint(UpsertEndpointReq{URL: "", Method: "GET"})
 	if err == nil {
@@ -524,7 +539,6 @@ func TestUpsertEndpointRequiredFields(t *testing.T) {
 
 func TestQueryByType(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id, err := av2.UpsertRootDomain(UpsertRootDomainReq{Domain: "querytest.example.net"})
 	if err != nil {
@@ -550,7 +564,6 @@ func TestQueryByType(t *testing.T) {
 // TestDeleteByTaskID: 独有资产被删,与其他任务共享的资产仅解除关联(保留),host 反查正确。
 func TestDeleteByTaskID(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	const taskA = int64(90001)
 	const taskB = int64(90002)
@@ -602,7 +615,6 @@ func TestDeleteByTaskID(t *testing.T) {
 
 func TestQueryByTask(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	const taskID = int64(99999)
 	id, err := av2.UpsertRootDomain(UpsertRootDomainReq{Domain: "taskquery.net", TaskID: taskID})
@@ -651,7 +663,6 @@ func TestQueryByTask(t *testing.T) {
 // 任务资产列表按页取,不再被固定条数截断:60 条资产用 25/页要能完整翻出来。
 func TestQueryByTaskPaging(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	const taskID = int64(99998)
 	const n = 60
@@ -695,7 +706,6 @@ func TestQueryByTaskPaging(t *testing.T) {
 
 func TestQueryByCompany(t *testing.T) {
 	d, av2, cs := testSetup(t)
-	defer d.Close()
 
 	companyID, _, err := cs.UpsertCompany("QueryByCompanyCorp", "")
 	if err != nil {
@@ -750,7 +760,6 @@ func TestQueryByCompany(t *testing.T) {
 // 企业资产列表同样按页取,不被固定条数截断。
 func TestQueryByCompanyPaging(t *testing.T) {
 	d, av2, cs := testSetup(t)
-	defer d.Close()
 
 	companyID, _, err := cs.UpsertCompany("QueryByCompanyPagingCorp", "")
 	if err != nil {
@@ -803,7 +812,6 @@ func TestQueryByCompanyPaging(t *testing.T) {
 
 func TestCountsByType(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	id, err := av2.UpsertRootDomain(UpsertRootDomainReq{Domain: "counttest.example.biz"})
 	if err != nil {
@@ -826,7 +834,6 @@ func TestCountsByType(t *testing.T) {
 
 func TestCompanyAttributionAtInsertTime(t *testing.T) {
 	d, av2, cs := testSetup(t)
-	defer d.Close()
 
 	companyID, _, err := cs.UpsertCompany("InsertAttrCorp", "")
 	if err != nil {
@@ -844,7 +851,9 @@ func TestCompanyAttributionAtInsertTime(t *testing.T) {
 	defer deleteAsset(d, assetID)
 
 	var cid *int64
-	d.QueryRow(`SELECT company_id FROM assets WHERE id = $1`, assetID).Scan(&cid)
+	if err := d.QueryRow(`SELECT company_id FROM assets WHERE id = $1`, assetID).Scan(&cid); err != nil {
+		t.Fatal(err)
+	}
 	if cid == nil || *cid != companyID {
 		t.Errorf("attribution at insert time: want company %d, got %v", companyID, cid)
 	}
@@ -910,7 +919,6 @@ func TestNormalizeURL(t *testing.T) {
 
 func TestAssetPaginationUsesStableIDTieBreaker(t *testing.T) {
 	d, assets, _ := testSetup(t)
-	defer d.Close()
 
 	stamp := time.Now().UnixNano()
 	taskID := stamp
@@ -963,7 +971,6 @@ func TestAssetPaginationUsesStableIDTieBreaker(t *testing.T) {
 // refuse a non-address, and the message must tell the caller how to fix it.
 func TestAssetIPRejectsHostname(t *testing.T) {
 	d, av2, _ := testSetup(t)
-	defer d.Close()
 
 	hostname := "d63cd476.cdn.ucloud.com.cn"
 	cases := []struct {
@@ -1017,7 +1024,6 @@ func TestAssetIPRejectsHostname(t *testing.T) {
 // are excluded. Direct source tasks' scope is included.
 func TestQueryDSLInScopeMembership(t *testing.T) {
 	d, assets, _ := testSetup(t)
-	defer d.Close()
 
 	task, err := createAssetScopeTestTask(t, d, "scope membership")
 	if err != nil {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,17 +12,10 @@ import (
 )
 
 func TestInterceptFilterHTTP(t *testing.T) {
-	dsn, _, err := db.DSN()
-	if err != nil {
-		t.Skip("no test database configured")
-	}
-	d, err := db.Open(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := openTestDB(t)
 	t.Cleanup(func() { _ = d.Close() })
 	m := &Manager{pg: d, interceptor: intercept.New(d)}
-	s := &Server{m: m, jwtKey: []byte("approval-filter-test-key")}
+	s := &Server{ctx: context.Background(), m: m, jwtKey: []byte("approval-filter-test-key")}
 	h := s.Handler()
 	token, err := signJWT(s.jwtKey)
 	if err != nil {

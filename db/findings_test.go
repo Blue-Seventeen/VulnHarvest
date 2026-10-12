@@ -15,7 +15,7 @@ import (
 func TestDeleteFinding(t *testing.T) {
 	d, err := openFindingTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeFindingTestDB(t, d)
 
@@ -64,7 +64,7 @@ func TestDeleteFinding(t *testing.T) {
 func TestFindingsPageAndStats(t *testing.T) {
 	d, err := openFindingTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeFindingTestDB(t, d)
 
@@ -219,7 +219,7 @@ func TestFindingsPageAndStats(t *testing.T) {
 func TestListFindingsPageUsesStableIDTieBreaker(t *testing.T) {
 	d, err := openFindingTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeFindingTestDB(t, d)
 
@@ -267,7 +267,7 @@ func TestListFindingsPageUsesStableIDTieBreaker(t *testing.T) {
 func TestFindingGroupsAndUnassignedPaging(t *testing.T) {
 	d, err := openFindingTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeFindingTestDB(t, d)
 
@@ -411,7 +411,7 @@ func TestFindingGroupsAndUnassignedPaging(t *testing.T) {
 func TestAddFindingFollowUpIntent(t *testing.T) {
 	d, err := openFindingTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeFindingTestDB(t, d)
 

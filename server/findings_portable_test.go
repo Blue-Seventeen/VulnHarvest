@@ -2,12 +2,11 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,47 +15,10 @@ import (
 	"github.com/Autumn-27/artex/traffic"
 )
 
-func findingServerDB(t *testing.T) *db.DB {
-	t.Helper()
-	var d *db.DB
-	var err error
-	if strings.Contains(t.Name(), "/SQLite/") {
-		d, err = db.OpenSQLite(filepath.Join(t.TempDir(), "server.db"))
-	} else {
-		dsn := os.Getenv("ARTEX_FINDING_TEST_PG_DSN")
-		if dsn == "" {
-			t.Fatal("ARTEX_FINDING_TEST_PG_DSN required")
-		}
-		pool, err := sql.Open("pgx", dsn)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer pool.Close()
-		var name string
-		if err := pool.QueryRow(`SELECT current_database()`).Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		if name != "vh_findings" {
-			t.Fatalf("refusing reset of %q", name)
-		}
-		if _, err := pool.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-			t.Fatal(err)
-		}
-		d, err = db.Open(dsn)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := d.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return d
-}
+func findingServerDB(t *testing.T) *db.DB { t.Helper(); return contractTestDB(t) }
 
 func TestPortableFindingServerContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("Seed", testPortableFindingSeed)
 			t.Run("ErrorClassification", testPortableFindingErrorClassification)

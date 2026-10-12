@@ -6,7 +6,7 @@ import (
 )
 
 func TestInterceptApprovalFilters(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTestDB(t)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"testing"
 	"time"
 
@@ -53,23 +54,15 @@ func TestApplySchemaRetriesOnlyDeadlocks(t *testing.T) {
 
 // testDSN returns the configured DSN, skipping the test when neither the env var
 // nor a config file supplies one (DSN no longer has a built-in default).
-func testDSN(t *testing.T) string {
-	t.Helper()
-	dsn, _, err := DSN()
-	if err != nil {
-		t.Skipf("no database config (%v) — skipping", err)
-	}
-	return dsn
-}
+func testDSN(t *testing.T) string { t.Helper(); return testenv.RequirePostgres(t) }
 
 // TestOpenSeed opens the live dev PG, applies schema, seeds, and verifies the
 // builtin agents + their variable catalog exist. Skips if PG is unreachable.
 func TestOpenSeed(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
 
 	wantAgents := len(builtinAgents)
 	var agents int
@@ -100,7 +93,7 @@ WHERE a.key = 'planner'`).Scan(&plannerVars); err != nil {
 	}
 
 	// re-open must be idempotent (no duplicate agents)
-	d2, err := Open(testDSN(t))
+	d2, err := reopenTestDB(t, d)
 	if err != nil {
 		t.Fatal(err)
 	}

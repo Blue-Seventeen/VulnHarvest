@@ -117,11 +117,11 @@ func TestChatMentionPagination(t *testing.T) {
 }
 
 func TestChatMentionWorkerReceivesServerDetails(t *testing.T) {
-	m, err := NewManager(t.TempDir(), "")
+	m, err := newTestManager(t, t.TempDir())
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer m.Close()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{ctx: ctx, m: m, engine: NewEngine(m)}
 	task, err := m.CreateTask("Worker mention test", "Read referenced records", nil, 0, 0)

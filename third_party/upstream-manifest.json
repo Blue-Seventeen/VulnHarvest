@@ -12,7 +12,7 @@
       "licenseEvidence": "MIT LICENSE, Copyright (c) 2020 liqiang; retained unchanged",
       "patchID": "vulnharvest-portable-proxy-lifecycle-1",
       "patchFile": "third_party/patches/go-mitmproxy-v1.9.2.patch",
-      "patchSHA256": "e2e1f5cb9024e0f265c596e44b07caa6bc539288433fb55bc6f8ac76e100b031",
+      "patchSHA256": "da46643ad7c9e1277431465c81fa8ad3d2162a236171de3beed3dd661cf649e3",
       "upstreamFiles": [
         {
           "path": ".github/workflows/release.yml",
@@ -567,9 +567,39 @@
           "patchID": "vulnharvest-portable-proxy-lifecycle-1"
         },
         {
+          "path": "proxy/proxy_test.go",
+          "upstreamSHA256": "36c608c181cf14ba04557ef2d5ee64b4134d3b3c80a96907c5bb190e62348e98",
+          "patchedSHA256": "dd6e1ad9691db2d64cb7f904a71dbe54e5d5a417eda6bda09c9870d98916ef6b",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/sse_hook_test.go",
+          "upstreamSHA256": "338f1bf513e34e54f9620c10652b52bb9c2605c126dbe65a0de55abff39b1544",
+          "patchedSHA256": "edc2753228c7556aff2da32389efab5f09782bcb938884f39c07265d03876d3d",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/sse_realtime_test.go",
+          "upstreamSHA256": "03fb44955bf218f603869678c524c44dcc920a67dd1e89111dcea2f47b6683b6",
+          "patchedSHA256": "3d881a0b737723de2fbc018a48513d7dbcbb73a0151e55bc3f79c49532808356",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/sse_test.go",
+          "upstreamSHA256": "a0d20e455dc20a6b7e52a12acab29a6603a075ac2f15c5d214179b64f1b92647",
+          "patchedSHA256": "428e079e0970b98f24bd74d89e66c89fd0cbf817a7f208df15ba52073c3bacac",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
           "path": "proxy/websocket.go",
           "upstreamSHA256": "ad5e530c1f6e7b85a420c6691078f39b841356934c3ac475b6976f06250f45c3",
           "patchedSHA256": "333bb4dc678f4bbb92b9f4229ab47ccacc5c4fe0b4a09c42f9b22e68ae881906",
+          "patchID": "vulnharvest-portable-proxy-lifecycle-1"
+        },
+        {
+          "path": "proxy/websocket_test.go",
+          "upstreamSHA256": "85e391149514be893afbaf658a29c18d581d04bef40cab35ac3c435c82b83401",
+          "patchedSHA256": "33919ad8599e210f4b8426f55fbe92532cfd76a13aa61fbccaf2a946f53706ec",
           "patchID": "vulnharvest-portable-proxy-lifecycle-1"
         }
       ],

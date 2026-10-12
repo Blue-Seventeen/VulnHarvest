@@ -22,20 +22,11 @@ import (
 func evidenceFixture(t *testing.T) (*Store, db.RecordFindingInput, string) {
 	t.Helper()
 	var pg *db.DB
-	var err error
 	if strings.HasPrefix(t.Name(), "TestPortableEvidenceContract/") {
 		pg = portableEvidenceDB(t)
 	} else {
-		dsn := os.Getenv("ARTEX_PG_DSN")
-		if dsn == "" {
-			t.Skip("ARTEX_PG_DSN is required for evidence integration tests")
-		}
-		pg, err = db.Open(dsn)
-		if err != nil {
-			t.Fatal(err)
-		}
+		pg = openTestDB(t)
 	}
-	t.Cleanup(func() { pg.Close() })
 	task, err := pg.CreateTask("evidence integration "+t.Name(), "local fixtures", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)

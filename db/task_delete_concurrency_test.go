@@ -12,10 +12,16 @@ import (
 func TestDeleteTaskTrafficHostsUseOneLockedTransaction(t *testing.T) {
 	dsn := testDSN(t)
 	d, err := Open(dsn)
+	t.Cleanup(func() {
+		if d != nil {
+			if err := d.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	t.Run("sharing committed before deletion lock is observed", func(t *testing.T) {
 		first, second, host, rootAssetID := createTaskDeleteRaceFixture(t, d)

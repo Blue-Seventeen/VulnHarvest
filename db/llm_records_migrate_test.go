@@ -10,10 +10,17 @@ import (
 // that is always rolled back — PG does transactional DDL, so nothing persists.
 func TestLLMRecordsMigrateAddsRawColumnsToOldTable(t *testing.T) {
 	d, err := Open(testDSN(t))
+	t.Cleanup(func() {
+		if d != nil {
+			if err := d.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
+
 	if err := d.EnsureLLMRecordsTable(); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 func TestInterceptDetails(t *testing.T) {
-	d, err := Open(testDSN(t))
+	d, err := openTestDB(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,22 @@ func TestInterceptDetails(t *testing.T) {
 		for _, legacy := range []bool{true, false} {
 			id := create(t, &InterceptAudit{InitialAction: "ask", ExecutionStatus: "not_started"})
 			var raw []byte
-			if err := d.QueryRow(`SELECT row_to_json(ip) FROM intercept_pending ip WHERE id=$1`, id).Scan(&raw); err != nil {
+			if d.IsSQLite() {
+				tx, err := d.Begin()
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, _, err := sqliteArchiveRows(tx, "intercept_pending", `SELECT * FROM intercept_pending WHERE id=$1`, nil, id)
+				_ = tx.Rollback()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var records []json.RawMessage
+				if err = json.Unmarshal(rows, &records); err != nil || len(records) != 1 {
+					t.Fatalf("archive row %s: %v", rows, err)
+				}
+				raw = records[0]
+			} else if err := d.QueryRow(`SELECT row_to_json(ip) FROM intercept_pending ip WHERE id=$1`, id).Scan(&raw); err != nil {
 				t.Fatal(err)
 			}
 			var row map[string]any
@@ -136,7 +151,7 @@ func TestInterceptDetails(t *testing.T) {
 			if _, err := tx.Exec(`DELETE FROM intercept_pending WHERE id=$1`, id); err != nil {
 				t.Fatal(err)
 			}
-			if err := restoreInterceptRows(tx, archived); err != nil {
+			if err := restoreInterceptRows(tx, archived, d); err != nil {
 				t.Fatalf("legacy=%t: %v", legacy, err)
 			}
 			var status, source string

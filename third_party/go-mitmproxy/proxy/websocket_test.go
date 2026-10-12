@@ -65,7 +65,7 @@ func testTLSWebSocketServer(t *testing.T, handler func(*websocket.Conn)) *testTL
 	}
 
 	// 生成自签名证书
-	ca, err := cert.NewSelfSignCA("")
+	ca, err := cert.NewSelfSignCA(t.TempDir())
 	if err != nil {
 		t.Fatalf("Failed to create CA: %v", err)
 	}
@@ -157,7 +157,8 @@ func TestWebSocketWSProxy(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
-			Addr: ":29090",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29090",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create proxy: %v", err)
@@ -221,7 +222,8 @@ func TestWebSocketWSProxy(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
-			Addr: ":29091",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29091",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create proxy: %v", err)
@@ -291,6 +293,7 @@ func TestWebSocketWSSProxy(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
+			CaRootPath:  t.TempDir(),
 			Addr:        ":29092",
 			SslInsecure: true,
 		})
@@ -368,7 +371,8 @@ func TestWebSocketUpstreamProxy(t *testing.T) {
 
 		// 启动 upstream proxy (第二层代理)
 		upstreamProxy, err := NewProxy(&Options{
-			Addr: ":29093",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29093",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create upstream proxy: %v", err)
@@ -379,8 +383,9 @@ func TestWebSocketUpstreamProxy(t *testing.T) {
 
 		// 启动客户端 proxy (第一层代理)，配置 upstream 指向上层代理
 		clientProxy, err := NewProxy(&Options{
-			Addr:     ":29094",
-			Upstream: "http://127.0.0.1:29093",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29094",
+			Upstream:   "http://127.0.0.1:29093",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create client proxy: %v", err)
@@ -438,6 +443,7 @@ func TestWebSocketUpstreamProxy(t *testing.T) {
 
 		// 启动 upstream proxy (第二层代理)
 		upstreamProxy, err := NewProxy(&Options{
+			CaRootPath:  t.TempDir(),
 			Addr:        ":29095",
 			SslInsecure: true,
 		})
@@ -450,6 +456,7 @@ func TestWebSocketUpstreamProxy(t *testing.T) {
 
 		// 启动客户端 proxy (第一层代理)，配置 upstream 指向上层代理
 		clientProxy, err := NewProxy(&Options{
+			CaRootPath:  t.TempDir(),
 			Addr:        ":29096",
 			Upstream:    "http://127.0.0.1:29095",
 			SslInsecure: true,

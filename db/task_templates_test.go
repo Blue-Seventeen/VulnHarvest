@@ -12,9 +12,8 @@ import (
 func TestTaskTemplateCRUDAndNormalizedUniqueness(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer d.Close()
 
 	suffix := time.Now().UnixNano()
 	name := fmt.Sprintf("Template %d", suffix)
@@ -83,9 +82,8 @@ func TestTaskTemplateCRUDAndNormalizedUniqueness(t *testing.T) {
 func TestTaskTemplateDisjointPatchesCompose(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	created, err := d.CreateTaskTemplate(TaskTemplateInput{
 		Name:        fmt.Sprintf("Concurrent template %d", time.Now().UnixNano()),

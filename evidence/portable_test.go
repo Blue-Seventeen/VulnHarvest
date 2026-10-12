@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,43 +16,10 @@ import (
 	"github.com/Autumn-27/artex/db"
 )
 
-func portableEvidenceDB(t *testing.T) *db.DB {
-	t.Helper()
-	if strings.Contains(t.Name(), "/SQLite/") {
-		d, err := db.OpenSQLite(filepath.Join(t.TempDir(), "evidence.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return d
-	}
-	dsn := os.Getenv("ARTEX_FINDING_TEST_PG_DSN")
-	if dsn == "" {
-		t.Fatal("ARTEX_FINDING_TEST_PG_DSN required")
-	}
-	pool, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	var name string
-	if err := pool.QueryRow(`SELECT current_database()`).Scan(&name); err != nil {
-		t.Fatal(err)
-	}
-	if name != "vh_findings" {
-		t.Fatalf("refusing reset of %q", name)
-	}
-	if _, err := pool.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatal(err)
-	}
-	d, err := db.Open(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
-}
+func portableEvidenceDB(t *testing.T) *db.DB { t.Helper(); return contractTestDB(t) }
 
 func TestPortableEvidenceContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("Lifecycle", TestEvidenceBindingLifecycle)
 			t.Run("AtomicFailures", TestEvidenceAtomicFailuresAndLegacy)
@@ -134,7 +102,7 @@ func testEvidenceTaskOperations(t *testing.T) {
 	wg.Go(func() {
 		<-start
 		_, _, _, err := s.DB.CreateFindingRetest(ctx, f.FindingID, "race")
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, db.ErrFindingNotFound) {
 			results <- err
 		}
 	})
@@ -205,7 +173,7 @@ func testInstalledSameWriter(t *testing.T) {
 		}
 		peer, err = db.OpenSQLite(path)
 	} else {
-		peer, err = db.Open(os.Getenv("ARTEX_FINDING_TEST_PG_DSN"))
+		peer, err = db.Open(testenv.DSN(t))
 	}
 	if err != nil {
 		t.Fatal(err)

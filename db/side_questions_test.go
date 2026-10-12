@@ -15,7 +15,7 @@ import (
 
 func sideFixture(t *testing.T) (*DB, sidequestion.Snapshot) {
 	t.Helper()
-	d, err := Open(testDSN(t))
+	d, err := openTestDB(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,12 @@ func TestSideArchiveRowsWithoutNewFields(t *testing.T) {
 	rows := map[string]json.RawMessage{}
 	for _, table := range []string{"side_question_sessions", "side_question_requests"} {
 		var raw []byte
-		if err = tx.QueryRow(`SELECT json_agg(t) FROM `+table+` t WHERE session_key=$1`, s.Parent.Key()).Scan(&raw); err != nil {
+		if d.IsSQLite() {
+			raw, _, err = sqliteArchiveRows(tx, table, `SELECT * FROM `+table+` WHERE session_key=$1`, nil, s.Parent.Key())
+		} else {
+			err = tx.QueryRow(`SELECT json_agg(t) FROM `+table+` t WHERE session_key=$1`, s.Parent.Key()).Scan(&raw)
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
 		var items []map[string]json.RawMessage
@@ -248,7 +253,7 @@ func TestSideArchiveRowsWithoutNewFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"side_question_sessions", "side_question_requests"} {
-		if err = insertArchiveRows(tx, table, rows[table]); err != nil {
+		if err = insertArchiveRows(tx, table, rows[table], d); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -320,11 +325,11 @@ func TestSideClearLateWritersAndDeletedParent(t *testing.T) {
 func TestSideTaskArchiveVersions(t *testing.T) {
 	for _, version := range []int{1, 2, 3} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
-			d, err := Open(testDSN(t))
+			d, err := openTestDB(t)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer d.Close()
+
 			if err := d.EnsureLLMRecordsTable(); err != nil {
 				t.Fatal(err)
 			}

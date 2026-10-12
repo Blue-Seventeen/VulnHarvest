@@ -3,12 +3,13 @@ package db
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"testing"
 	"time"
 )
 
 func TestPortableAssetReviewFixContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("AssetUTCInstant", testReviewAssetUTC)
 			t.Run("CompanyUTCInstant", testReviewCompanyUTC)

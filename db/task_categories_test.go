@@ -11,9 +11,8 @@ import (
 func TestTaskCategoryCRUDAndTaskAssignment(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	name := fmt.Sprintf("Category %d", time.Now().UnixNano())
 	category, err := d.CreateTaskCategory("  " + strings.ReplaceAll(name, " ", "   ") + "  ")
@@ -76,9 +75,8 @@ func TestTaskCategoryCRUDAndTaskAssignment(t *testing.T) {
 func TestCreateTaskRejectsMissingCategoryAtomically(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	missing := int64(1 << 62)
 	description := fmt.Sprintf("missing-category-%d", time.Now().UnixNano())
@@ -97,9 +95,8 @@ func TestCreateTaskRejectsMissingCategoryAtomically(t *testing.T) {
 func TestSetTasksCategoryBatch(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	stamp := time.Now().UnixNano()
 	category, err := d.CreateTaskCategory(fmt.Sprintf("Batch %d", stamp))
@@ -154,9 +151,8 @@ func TestSetTasksCategoryBatch(t *testing.T) {
 func TestSetTasksCategoryRejectsBadInputAtomically(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	stamp := time.Now().UnixNano()
 	task, err := d.CreateTaskWithOptions(fmt.Sprintf("batch-reject-%d", stamp), "goal", TaskCreateOptions{})

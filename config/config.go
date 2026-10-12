@@ -36,8 +36,14 @@ type Config struct {
 // SetRuntimeMode pins startup's selected mode before resolving runtime paths.
 // Call once, before creating services; PostgreSQL settings remain lazy.
 var runtimeMode string
+var modeConfigPath string
 
-func SetRuntimeMode(mode string) { runtimeMode = strings.ToLower(strings.TrimSpace(mode)) }
+func SetRuntimeMode(mode string) {
+	runtimeMode = strings.ToLower(strings.TrimSpace(mode))
+	if runtimeMode == "" {
+		modeConfigPath = ""
+	}
+}
 func portableMode() bool {
 	if runtimeMode != "" {
 		return runtimeMode == "portable"
@@ -48,12 +54,17 @@ func portableMode() bool {
 // ResolveMode resolves the startup mode without inspecting the PostgreSQL DSN.
 // Only the highest-priority nonempty source is validated.
 func ResolveMode(cli string) (string, error) {
+	modeConfigPath = ""
 	mode := strings.TrimSpace(cli)
 	if mode == "" {
 		mode = strings.TrimSpace(os.Getenv("VULNHARVEST_MODE"))
 	}
 	if mode == "" {
+		path := Path()
 		mode = strings.TrimSpace(Load().Mode)
+		if mode != "" {
+			modeConfigPath = path
+		}
 	}
 	if mode == "" {
 		mode = "postgres"
@@ -113,7 +124,11 @@ func Path() string {
 	if v := strings.TrimSpace(os.Getenv("ARTEX_CONFIG")); v != "" {
 		return v
 	}
-	if portableMode() || BaseDir() != "." {
+	// A mode selected from a file keeps that file when runtime mode is pinned.
+	if modeConfigPath != "" {
+		return modeConfigPath
+	}
+	if portableMode() {
 		return filepath.Join(BaseDir(), "config.json")
 	}
 	var candidates []string
@@ -161,6 +176,9 @@ func SkillPath() string {
 		d = v
 	} else {
 		d = filepath.Join(BaseDir(), "skills")
+	}
+	if portableMode() && !filepath.IsAbs(d) {
+		d = filepath.Join(BaseDir(), d)
 	}
 	return d
 }

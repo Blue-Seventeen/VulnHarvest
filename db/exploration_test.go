@@ -8,7 +8,7 @@ import (
 func TestExplorationFlow(t *testing.T) {
 	d, err := openExplorationTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeExplorationTestDB(t, d)
 
@@ -119,7 +119,7 @@ func TestExplorationFlow(t *testing.T) {
 func TestIntentPauseResumeAndCancelCleanup(t *testing.T) {
 	d, err := openExplorationTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeExplorationTestDB(t, d)
 
@@ -252,7 +252,7 @@ func TestIntentPauseResumeAndCancelCleanup(t *testing.T) {
 func TestNodesPageQueryMatchesID(t *testing.T) {
 	d, err := openExplorationTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	defer closeExplorationTestDB(t, d)
 

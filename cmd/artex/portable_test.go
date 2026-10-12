@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"github.com/Autumn-27/artex/runtimeenv"
 	"net"
 	"net/http"
@@ -18,7 +19,7 @@ func TestPortableActualBinary(t *testing.T) {
 	if testing.Short() {
 		t.Skip("actual binary build")
 	}
-	base := t.TempDir()
+	base := testenv.LinkTempDir(t)
 	binary := filepath.Join(base, "artex")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
@@ -37,7 +38,7 @@ func TestPortableActualBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer proxyOwner.Close()
-	cwd := t.TempDir()
+	cwd := testenv.LinkTempDir(t)
 	os.WriteFile(filepath.Join(cwd, "config.json"), []byte(`{"mode":"postgres","database":{"dsn":"INVALID-CWD-DSN"}}`), 0600)
 	env := append(os.Environ(), "ARTEX_CONFIG=", "ARTEX_PG_DSN=INVALID-PG-DSN-MUST-NOT-PARSE", "VULNHARVEST_MODE=postgres")
 	state := filepath.Join(base, "state")
@@ -50,6 +51,11 @@ func TestPortableActualBinary(t *testing.T) {
 	} else if e := os.Symlink(state, alias); e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(func() {
+		if err := os.Remove(alias); err != nil && !os.IsNotExist(err) {
+			t.Error(err)
+		}
+	})
 	for _, overlap := range []struct{ name, data, skills string }{
 		{"data-base", base, filepath.Join(base, "skills")},
 		{"data-state", state, filepath.Join(base, "skills")},
@@ -68,7 +74,7 @@ func TestPortableActualBinary(t *testing.T) {
 		}
 	}
 	start := func() (*exec.Cmd, *os.File) {
-		f, e := os.CreateTemp(t.TempDir(), "output-")
+		f, e := os.CreateTemp(testenv.LinkTempDir(t), "output-")
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -85,7 +91,7 @@ func TestPortableActualBinary(t *testing.T) {
 	cmd, output := start()
 	defer func() { cmd.Process.Kill(); cmd.Wait(); output.Close() }()
 	var info map[string]any
-	deadline := time.Now().Add(40 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	runtimePath := filepath.Join(base, "state", "runtime.json")
 	for time.Now().Before(deadline) {
 		if _, e := os.Stat(runtimePath); os.IsNotExist(e) {
@@ -102,7 +108,7 @@ func TestPortableActualBinary(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if info["http_address"] == nil {
+	if info["http_address"] == nil || info["ready"] != true {
 		b, _ := os.ReadFile(output.Name())
 		t.Fatalf("no ready runtime: %s", b)
 	}

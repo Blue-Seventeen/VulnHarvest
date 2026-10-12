@@ -89,8 +89,8 @@ SumDB check.
 
 `upstream-manifest.json` records every one of the 104 upstream files using raw
 byte size/SHA-256, the compressed zip SHA-256, Go h1 content checksum, and all
-changed/added/deleted files. Six upstream files are changed; two lifecycle
-files are added; 98 files remain byte-for-byte unchanged; no files are deleted.
+changed/added/deleted files. Eleven upstream files are changed; two lifecycle
+files are added; 93 files remain byte-for-byte unchanged; no files are deleted.
 The narrowly scoped `-text` Git attributes preserve those bytes across Windows
 and other checkouts. `patches/go-mitmproxy-v1.9.2.patch` is the standalone
 module-relative baseline-to-patched unified diff, including new tests.
@@ -127,6 +127,13 @@ Changes:
 - `proxy/listener_lifecycle_test.go` (added): local reserved-listener HTTP,
   HTTPS, h2, WSS, transparent CONNECT payload, stalled TLS, callback/copy joins,
   listener failure/ownership and concurrent Close regression tests.
+- `proxy/proxy_test.go`, `proxy/sse_hook_test.go`, `proxy/sse_realtime_test.go`,
+  `proxy/sse_test.go` and `proxy/websocket_test.go`: isolate all 15 proxy CA
+  constructors and the two direct CA constructors in `t.TempDir()`. The
+  untrusted-certificate assertion checks `x509.UnknownAuthorityError` rather
+  than a platform-specific message. TLS, SSE and WebSocket behavior assertions
+  remain intact. Two HTTP immediate-close baseline failures remain a separate
+  response-completion correction; full proxy success is not claimed here.
 
 Shutdown is deliberately stop-and-join, including live tunnels. It shares
 Close's force-stop boundary; an expired context is returned only after all

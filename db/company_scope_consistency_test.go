@@ -3,14 +3,15 @@ package db
 import (
 	"errors"
 	"fmt"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestAssetUpsertWaitsForCompanyScopeMutation(t *testing.T) {
+	testenv.RequirePostgres(t)
 	d, assets, companies := testSetup(t)
-	defer d.Close()
 
 	stamp := time.Now().UnixNano()
 	domain := fmt.Sprintf("scope-lock-%d.example", stamp)
@@ -90,7 +91,6 @@ func TestAssetUpsertWaitsForCompanyScopeMutation(t *testing.T) {
 
 func TestResolveAndRecomputeUseStableCompanyIDTieBreak(t *testing.T) {
 	d, assets, companies := testSetup(t)
-	defer d.Close()
 
 	stamp := time.Now().UnixNano()
 	first, _, err := companies.UpsertCompany(fmt.Sprintf("Tie Break First %d", stamp), "")
@@ -186,7 +186,7 @@ func TestCompanyScopeLimitsAndCheckedErrors(t *testing.T) {
 	}
 
 	d, _, companies := testSetup(t)
-	defer d.Close()
+
 	stamp := time.Now().UnixNano()
 	companyID, _, err := companies.UpsertCompany(fmt.Sprintf("Scope Limits %d", stamp), "")
 	if err != nil {
@@ -230,7 +230,7 @@ func TestCompanyScopeLimitsAndCheckedErrors(t *testing.T) {
 func TestCompanyScopeCheckedReturnsSystemErrorSeparately(t *testing.T) {
 	d, err := openAssetTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v)", err)
+		t.Fatalf("postgres unavailable (%v)", err)
 	}
 	companies := d.Companies()
 	if err := d.Close(); err != nil {

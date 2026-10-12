@@ -52,7 +52,8 @@ func TestSSEHook(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
-			Addr: ":29103",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29103",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create proxy: %v", err)
@@ -159,7 +160,8 @@ func TestSSEEventParsing(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
-			Addr: ":29104",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29104",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create proxy: %v", err)

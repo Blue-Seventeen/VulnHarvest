@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"strings"
 	"testing"
 	"time"
@@ -14,52 +13,17 @@ import (
 
 // Reset only the explicitly supplied, disposable Task3 database. Never consult
 // application configuration or infer a database from the user's installation.
-func taskContractDB(t *testing.T) *DB {
-	t.Helper()
-	if strings.Contains(t.Name(), "/SQLite/") {
-		d, err := OpenSQLite(filepath.Join(t.TempDir(), "tasks.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { d.Close() })
-		return d
-	}
-	dsn := os.Getenv("ARTEX_TASK_TEST_PG_DSN")
-	if dsn == "" {
-		t.Fatal("ARTEX_TASK_TEST_PG_DSN required")
-	}
-	pool, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	var name string
-	if err = pool.QueryRow("SELECT current_database()").Scan(&name); err != nil {
-		t.Fatal(err)
-	}
-	if name != "vh_task3" {
-		t.Fatalf("refusing reset of %q", name)
-	}
-	if _, err = pool.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
-		t.Fatal(err)
-	}
-	d, err := Open(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return d
-}
+func taskContractDB(t *testing.T) *DB { t.Helper(); return contractTestDB(t) }
 
 func openTaskTestDB(t *testing.T) (*DB, error) {
 	if strings.HasPrefix(t.Name(), "TestPortableTaskContract/") || strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/") {
 		return taskContractDB(t), nil
 	}
-	return Open(testDSN(t))
+	return openTestDB(t)
 }
 
 func TestPortableTaskContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("PeerCompanySnapshot", testTaskPeerCompanySnapshot)
 			t.Run("PeerStaleRevision", testTaskPeerStaleRevision)
@@ -326,7 +290,7 @@ func reopenTaskDB(t *testing.T, d *DB) *DB {
 		if err = d.Close(); err != nil {
 			t.Fatal(err)
 		}
-		next, err = Open(os.Getenv("ARTEX_TASK_TEST_PG_DSN"))
+		next, err = Open(testenv.DSN(t))
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +443,7 @@ func taskPeerDB(t *testing.T, d *DB) *DB {
 		}
 		peer, err = OpenSQLite(path)
 	} else {
-		peer, err = Open(os.Getenv("ARTEX_TASK_TEST_PG_DSN"))
+		peer, err = Open(testenv.DSN(t))
 	}
 	if err != nil {
 		t.Fatal(err)

@@ -15,15 +15,7 @@ func testDB(t *testing.T) *db.DB {
 	if strings.HasPrefix(t.Name(), "TestPortableTaskCompanyTools/") {
 		return taskCompanyToolDB(t)
 	}
-	dsn, _, err := db.DSN()
-	if err != nil {
-		t.Skipf("no database config (%v)", err)
-	}
-	d, err := db.Open(dsn)
-	if err != nil {
-		t.Skipf("postgres unavailable (%v)", err)
-	}
-	return d
+	return openTestDB(t)
 }
 
 // callInsertAssets calls the insert_assets tool with the given payload.
@@ -49,7 +41,6 @@ func callInsertAssets(t *testing.T, ts *ToolSet, payload any) map[string]any {
 // =====================================================================
 func TestInsertAssetsSubdomainSideEffects(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
 
 	ts := NewToolSet(nil, "")
 	ts.SetAssetStore(d.Assets(), d.Companies())
@@ -78,7 +69,9 @@ func TestInsertAssetsSubdomainSideEffects(t *testing.T) {
 
 	// root_domain should exist
 	var rootCnt int
-	d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type='root_domain' AND domain='sideeffect-test.com'`).Scan(&rootCnt)
+	if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type='root_domain' AND domain='sideeffect-test.com'`).Scan(&rootCnt); err != nil {
+		t.Fatal(err)
+	}
 	if rootCnt != 1 {
 		t.Errorf("side-effect: root_domain not created, got %d", rootCnt)
 	}
@@ -86,7 +79,9 @@ func TestInsertAssetsSubdomainSideEffects(t *testing.T) {
 	// IP asset should exist with bound_domains containing our subdomain
 	var ipID int64
 	var boundDomains []byte
-	d.QueryRow(`SELECT id, array_to_json(bound_domains)::text FROM assets WHERE type='ip' AND ip='7.8.9.10'`).Scan(&ipID, &boundDomains)
+	if err := d.QueryRow(d.SQL(`SELECT id, array_to_json(bound_domains)::text FROM assets WHERE type='ip' AND ip='7.8.9.10'`, `SELECT id, bound_domains FROM assets WHERE type='ip' AND ip='7.8.9.10'`)).Scan(&ipID, &boundDomains); err != nil {
+		t.Fatal(err)
+	}
 	if ipID == 0 {
 		t.Error("side-effect: IP asset not created")
 	}
@@ -104,7 +99,9 @@ func TestInsertAssetsSubdomainSideEffects(t *testing.T) {
 
 	// record_value stored as array
 	var rvRaw []byte
-	d.QueryRow(`SELECT array_to_json(record_value)::text FROM assets WHERE type='subdomain' AND domain='ia-sub.sideeffect-test.com'`).Scan(&rvRaw)
+	if err := d.QueryRow(d.SQL(`SELECT array_to_json(record_value)::text FROM assets WHERE type='subdomain' AND domain='ia-sub.sideeffect-test.com'`, `SELECT record_value FROM assets WHERE type='subdomain' AND domain='ia-sub.sideeffect-test.com'`)).Scan(&rvRaw); err != nil {
+		t.Fatal(err)
+	}
 	var rv []string
 	json.Unmarshal(rvRaw, &rv)
 	if len(rv) == 0 || rv[0] != "7.8.9.10" {
@@ -118,7 +115,6 @@ func TestInsertAssetsSubdomainSideEffects(t *testing.T) {
 // =====================================================================
 func TestInsertAssetsMultiIPSubdomain(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
 
 	ts := NewToolSet(nil, "")
 	ts.SetAssetStore(d.Assets(), d.Companies())
@@ -141,8 +137,12 @@ func TestInsertAssetsMultiIPSubdomain(t *testing.T) {
 
 	// Both IPs should have IP assets
 	var ip1Cnt, ip2Cnt int
-	d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type='ip' AND ip='1.1.1.1'`).Scan(&ip1Cnt)
-	d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type='ip' AND ip='2.2.2.2'`).Scan(&ip2Cnt)
+	if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type='ip' AND ip='1.1.1.1'`).Scan(&ip1Cnt); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type='ip' AND ip='2.2.2.2'`).Scan(&ip2Cnt); err != nil {
+		t.Fatal(err)
+	}
 	if ip1Cnt != 1 {
 		t.Error("IP 1.1.1.1 asset not created")
 	}
@@ -152,7 +152,9 @@ func TestInsertAssetsMultiIPSubdomain(t *testing.T) {
 
 	// record_value should contain both IPs
 	var rvRaw []byte
-	d.QueryRow(`SELECT array_to_json(record_value)::text FROM assets WHERE type='subdomain' AND domain='multi.multiip-test.io'`).Scan(&rvRaw)
+	if err := d.QueryRow(d.SQL(`SELECT array_to_json(record_value)::text FROM assets WHERE type='subdomain' AND domain='multi.multiip-test.io'`, `SELECT record_value FROM assets WHERE type='subdomain' AND domain='multi.multiip-test.io'`)).Scan(&rvRaw); err != nil {
+		t.Fatal(err)
+	}
 	var rv []string
 	json.Unmarshal(rvRaw, &rv)
 	if len(rv) != 2 {
@@ -166,7 +168,6 @@ func TestInsertAssetsMultiIPSubdomain(t *testing.T) {
 // =====================================================================
 func TestInsertAssetsHTTPServiceTechnologies(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
 
 	ts := NewToolSet(nil, "")
 	ts.SetAssetStore(d.Assets(), d.Companies())
@@ -192,7 +193,9 @@ func TestInsertAssetsHTTPServiceTechnologies(t *testing.T) {
 
 	// technologies should be stored
 	var techCnt int
-	d.QueryRow(`SELECT array_length(technologies,1) FROM assets WHERE url='https://tech-test.example.com'`).Scan(&techCnt)
+	if err := d.QueryRow(d.SQL(`SELECT array_length(technologies,1) FROM assets WHERE url='https://tech-test.example.com'`, `SELECT json_array_length(technologies) FROM assets WHERE url='https://tech-test.example.com'`)).Scan(&techCnt); err != nil {
+		t.Fatal(err)
+	}
 	if techCnt != 3 {
 		t.Errorf("technologies: want 3, got %d", techCnt)
 	}
@@ -220,7 +223,9 @@ func TestInsertAssetsHTTPServiceTechnologies(t *testing.T) {
 	var ipID int64
 	var bdRaw []byte
 	var portCnt int
-	d.QueryRow(`SELECT id, array_to_json(bound_domains)::text FROM assets WHERE type='ip' AND ip='3.4.5.6'`).Scan(&ipID, &bdRaw)
+	if err := d.QueryRow(d.SQL(`SELECT id, array_to_json(bound_domains)::text FROM assets WHERE type='ip' AND ip='3.4.5.6'`, `SELECT id, bound_domains FROM assets WHERE type='ip' AND ip='3.4.5.6'`)).Scan(&ipID, &bdRaw); err != nil {
+		t.Fatal(err)
+	}
 	if ipID == 0 {
 		t.Error("side-effect: IP asset not created for HTTP service IP")
 	}
@@ -237,7 +242,9 @@ func TestInsertAssetsHTTPServiceTechnologies(t *testing.T) {
 	}
 
 	// side effect: IP open_ports should contain port 443
-	d.QueryRow(`SELECT cardinality(open_ports) FROM assets WHERE type='ip' AND ip='3.4.5.6'`).Scan(&portCnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE type='ip' AND ip='3.4.5.6'`, `SELECT json_array_length(open_ports) FROM assets WHERE type='ip' AND ip='3.4.5.6'`)).Scan(&portCnt); err != nil {
+		t.Fatal(err)
+	}
 	if portCnt == 0 {
 		t.Error("side-effect: IP open_ports not set for HTTP service")
 	}
@@ -249,7 +256,6 @@ func TestInsertAssetsHTTPServiceTechnologies(t *testing.T) {
 // =====================================================================
 func TestInsertAssetsOtherService(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
 
 	ts := NewToolSet(nil, "")
 	ts.SetAssetStore(d.Assets(), d.Companies())
@@ -276,21 +282,27 @@ func TestInsertAssetsOtherService(t *testing.T) {
 
 	// c_segment should be auto-set on the service
 	var cseg *string
-	d.QueryRow(`SELECT c_segment::text FROM assets WHERE type='service' AND ip='10.20.30.40'`).Scan(&cseg)
+	if err := d.QueryRow(d.SQL(`SELECT c_segment::text FROM assets WHERE type='service' AND ip='10.20.30.40'`, `SELECT c_segment FROM assets WHERE type='service' AND ip='10.20.30.40'`)).Scan(&cseg); err != nil {
+		t.Fatal(err)
+	}
 	if cseg == nil || *cseg != "10.20.30.0/24" {
 		t.Errorf("c_segment: want 10.20.30.0/24, got %v", cseg)
 	}
 
 	// IP side-effect: port 3306 in open_ports
 	var portCnt int
-	d.QueryRow(`SELECT cardinality(open_ports) FROM assets WHERE type='ip' AND ip='10.20.30.40'`).Scan(&portCnt)
+	if err := d.QueryRow(d.SQL(`SELECT cardinality(open_ports) FROM assets WHERE type='ip' AND ip='10.20.30.40'`, `SELECT json_array_length(open_ports) FROM assets WHERE type='ip' AND ip='10.20.30.40'`)).Scan(&portCnt); err != nil {
+		t.Fatal(err)
+	}
 	if portCnt == 0 {
 		t.Error("side-effect: IP open_ports should contain port 3306")
 	}
 
 	// IP side-effect: bound_domains contains the service domain
 	var bdRaw []byte
-	d.QueryRow(`SELECT array_to_json(bound_domains)::text FROM assets WHERE type='ip' AND ip='10.20.30.40'`).Scan(&bdRaw)
+	if err := d.QueryRow(d.SQL(`SELECT array_to_json(bound_domains)::text FROM assets WHERE type='ip' AND ip='10.20.30.40'`, `SELECT bound_domains FROM assets WHERE type='ip' AND ip='10.20.30.40'`)).Scan(&bdRaw); err != nil {
+		t.Fatal(err)
+	}
 	var bd []string
 	json.Unmarshal(bdRaw, &bd)
 	hasDomain := false
@@ -310,7 +322,6 @@ func TestInsertAssetsOtherService(t *testing.T) {
 // =====================================================================
 func TestInsertAssetsMixedBatch(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
 
 	ts := NewToolSet(nil, "")
 	ts.SetAssetStore(d.Assets(), d.Companies())
@@ -348,13 +359,21 @@ func TestInsertAssetsMixedBatch(t *testing.T) {
 		var cnt int
 		switch typ {
 		case "root_domain":
-			d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND domain='batch-test.org'`, typ).Scan(&cnt)
+			if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND domain='batch-test.org'`, typ).Scan(&cnt); err != nil {
+				t.Fatal(err)
+			}
 		case "subdomain":
-			d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND domain='batch-sub.batch-test.org'`, typ).Scan(&cnt)
+			if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND domain='batch-sub.batch-test.org'`, typ).Scan(&cnt); err != nil {
+				t.Fatal(err)
+			}
 		case "service":
-			d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND url='https://batch-test.org/api'`, typ).Scan(&cnt)
+			if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND url='https://batch-test.org/api'`, typ).Scan(&cnt); err != nil {
+				t.Fatal(err)
+			}
 		case "endpoint":
-			d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND url='https://batch-test.org/api/users'`, typ).Scan(&cnt)
+			if err := d.QueryRow(`SELECT COUNT(*) FROM assets WHERE type=$1 AND url='https://batch-test.org/api/users'`, typ).Scan(&cnt); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if cnt != 1 {
 			t.Errorf("mixed batch: %s not found in DB", typ)
@@ -368,7 +387,6 @@ func TestInsertAssetsMixedBatch(t *testing.T) {
 // =====================================================================
 func TestInsertAssetsDedup(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
 
 	ts := NewToolSet(nil, "")
 	ts.SetAssetStore(d.Assets(), d.Companies())
@@ -406,7 +424,6 @@ func TestInsertAssetsDedup(t *testing.T) {
 // =====================================================================
 func TestInsertAssetsRejectsHostnameIPPerItem(t *testing.T) {
 	d := testDB(t)
-	defer d.Close()
 
 	ts := NewToolSet(nil, "")
 	ts.SetAssetStore(d.Assets(), d.Companies())

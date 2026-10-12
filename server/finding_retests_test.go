@@ -37,18 +37,10 @@ func (p retestProvider) Stream(context.Context, llm.CompletionRequest) iter.Seq2
 func newRetestServer(t *testing.T) (*Server, int64) {
 	t.Helper()
 	var pg *db.DB
-	var err error
 	if strings.HasPrefix(t.Name(), "TestPortableFindingServerContract/") {
 		pg = findingServerDB(t)
 	} else {
-		dsn, _, err := db.DSN()
-		if err != nil {
-			t.Skip("test postgres not configured")
-		}
-		pg, err = db.Open(dsn)
-		if err != nil {
-			t.Fatal(err)
-		}
+		pg = openTestDB(t)
 	}
 	td := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,7 +65,6 @@ func newRetestServer(t *testing.T) (*Server, int64) {
 		agent.ToolAugment, agent.ToolResolve, agent.PromptOverride = oldAugment, oldResolve, oldPrompt
 		_, _ = pg.Exec(`DELETE FROM conversations WHERE id IN (SELECT conversation_id FROM finding_retests WHERE finding_id=$1)`, fid)
 		_, _ = pg.DeleteFinding(fid)
-		pg.Close()
 	})
 	return s, fid
 }

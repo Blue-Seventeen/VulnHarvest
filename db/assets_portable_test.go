@@ -1,11 +1,9 @@
 package db
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"slices"
 	"strings"
 	"testing"
@@ -13,52 +11,17 @@ import (
 )
 
 // Only this contract suite may reset the explicitly named disposable database.
-func assetContractDB(t *testing.T) *DB {
-	t.Helper()
-	if strings.Contains(t.Name(), "/SQLite/") {
-		d, err := OpenSQLite(filepath.Join(t.TempDir(), "assets.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { d.Close() })
-		return d
-	}
-	dsn := os.Getenv("ARTEX_ASSET_TEST_PG_DSN")
-	if dsn == "" {
-		t.Fatal("ARTEX_ASSET_TEST_PG_DSN required for PostgreSQL contract")
-	}
-	pool, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	var name string
-	if err = pool.QueryRow("SELECT current_database()").Scan(&name); err != nil {
-		t.Fatal(err)
-	}
-	if name != "vh_assets" {
-		t.Fatalf("refusing reset of %q", name)
-	}
-	if _, err = pool.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
-		t.Fatal(err)
-	}
-	d, err := Open(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return d
-}
+func assetContractDB(t *testing.T) *DB { t.Helper(); return contractTestDB(t) }
 
 func openAssetTestDB(t *testing.T) (*DB, error) {
 	if strings.HasPrefix(t.Name(), "TestPortableAssetContract/") {
 		return assetContractDB(t), nil
 	}
-	return Open(testDSN(t))
+	return openTestDB(t)
 }
 
 func TestPortableAssetContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			if engine == "SQLite" {
 				t.Run("PeerScopeMutation", testAssetPeerScopeMutation)

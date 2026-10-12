@@ -123,7 +123,7 @@ func TestSideHTTPPreparationCancellationAndClear(t *testing.T) {
 				t.Fatalf("cancel usage: %+v", row)
 			}
 			var memory string
-			if err = f.m.pg.QueryRow(`SELECT memory::text FROM side_question_sessions WHERE session_key=$1`, p.Key()).Scan(&memory); err != nil || memory != "{}" {
+			if err = f.m.pg.QueryRow(f.m.pg.SQL(`SELECT memory::text FROM side_question_sessions WHERE session_key=$1`, `SELECT memory FROM side_question_sessions WHERE session_key=$1`), p.Key()).Scan(&memory); err != nil || memory != "{}" {
 				t.Fatalf("late summary saved: %s %v", memory, err)
 			}
 		})
@@ -140,12 +140,14 @@ type sideHTTPFixture struct {
 
 func newSideHTTPFixture(t *testing.T) *sideHTTPFixture {
 	t.Helper()
-	m, err := NewManager(t.TempDir(), "")
+	m, err := newTestManager(t, t.TempDir())
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) — skipping", err)
+		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{m: m, engine: NewEngine(m), ctx: ctx, jwtKey: []byte("btw-test-signing-key-only"), chatBusy: map[string]bool{}}
+	s.cancel = func(error) { cancel() }
+	m.owner = s
 	s.initSideQuestions()
 	p := &sideHTTPProvider{started: make(chan llm.CompletionRequest, 16), release: make(chan struct{})}
 	cfg := agent.Config{Format: llm.FormatOpenAI, BaseURL: "http://fixture.invalid", Model: "fixture", Stream: true}
@@ -160,13 +162,9 @@ func newSideHTTPFixture(t *testing.T) *sideHTTPFixture {
 	}
 	f := &sideHTTPFixture{s: s, m: m, provider: p, handler: s.Handler(), token: token}
 	t.Cleanup(func() {
-		cancel()
-		for _, done := range s.cancelSideWhere(func(sidequestion.Parent) bool { return true }) {
-			<-done
+		if err := s.Shutdown(context.Background()); err != nil {
+			t.Error(err)
 		}
-		<-s.side.done
-		s.flushSideSnapshots()
-		m.Close()
 	})
 	return f
 }

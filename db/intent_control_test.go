@@ -11,7 +11,7 @@ import (
 func TestCompareAndSetIntentStateAllowsSingleWinner(t *testing.T) {
 	d, err := openExplorationTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
 	defer closeExplorationTestDB(t, d)
 	expID, err := d.CreateExploration("intent CAS", "only one controller wins")
@@ -61,7 +61,7 @@ func TestCompareAndSetIntentStateAllowsSingleWinner(t *testing.T) {
 func TestCancelIntentPreservesTokenMeteringWithoutDoubleCount(t *testing.T) {
 	d, err := openExplorationTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
 	defer closeExplorationTestDB(t, d)
 	expID, err := d.CreateExploration("cancel token rollup", "preserve consumed tokens")
@@ -232,7 +232,7 @@ func assertDailyTokenBucketsEqual(t *testing.T, got, want map[string]DailyTokenB
 func TestCancelIntentPreservesOutputsYieldedByAnotherIntent(t *testing.T) {
 	d, err := openExplorationTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
 	defer closeExplorationTestDB(t, d)
 	expID, err := d.CreateExploration("shared intent output", "preserve shared facts and findings")

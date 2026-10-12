@@ -25,7 +25,7 @@ func trafficEvidenceServer(t *testing.T) (*Server, *db.RecordedFinding, func(str
 	if strings.HasPrefix(t.Name(), "TestPortableFindingServerContract/") {
 		return portableTrafficEvidenceServer(t)
 	}
-	m, err := NewManager(t.TempDir(), "")
+	m, err := newTestManager(t, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,11 +42,12 @@ func trafficEvidenceServer(t *testing.T) (*Server, *db.RecordedFinding, func(str
 	t.Cleanup(func() { m.pg.Exec(`DELETE FROM task_archives WHERE task_id=$1`, tid); m.pg.DeleteTask(tid) })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s := New(ctx, m, t.TempDir(), t.TempDir(), t.TempDir())
+	s := newTestServer(t, ctx, m, t.TempDir(), t.TempDir(), t.TempDir())
 	s.archiveWG.Wait()
 	// The archive test below replaces the cancelled service context. Wait for
 	// the side-question snapshot writer too before reusing this fixture.
 	<-s.side.done
+	s.ownerWG.Wait()
 	token, err := signJWT(s.jwtKey)
 	if err != nil {
 		t.Fatal(err)
@@ -309,20 +310,20 @@ func TestFindingTrafficArchiveV3RoundTripAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Force a database error after validated body installation; then retry normally.
-	if _, err = s.m.pg.Exec(`CREATE FUNCTION fail_evidence_restore_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'restore fixture failure'; END $$`); err != nil {
+	if _, err = s.m.pg.Exec(s.m.pg.SQL(`CREATE FUNCTION fail_evidence_restore_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'restore fixture failure'; END $$`, `CREATE TRIGGER fail_evidence_restore_test BEFORE INSERT ON finding_traffic_bindings BEGIN SELECT RAISE(ABORT,'restore fixture failure'); END`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.m.pg.Exec(`CREATE TRIGGER fail_evidence_restore_test BEFORE INSERT ON finding_traffic_bindings FOR EACH ROW EXECUTE FUNCTION fail_evidence_restore_test()`); err != nil {
+	if _, err = s.m.pg.Exec(s.m.pg.SQL(`CREATE TRIGGER fail_evidence_restore_test BEFORE INSERT ON finding_traffic_bindings FOR EACH ROW EXECUTE FUNCTION fail_evidence_restore_test()`, `SELECT 1`)); err != nil {
 		t.Fatal(err)
 	}
-	defer s.m.pg.Exec(`DROP FUNCTION IF EXISTS fail_evidence_restore_test() CASCADE`)
+	defer s.m.pg.Exec(s.m.pg.SQL(`DROP FUNCTION IF EXISTS fail_evidence_restore_test() CASCADE`, `DROP TRIGGER IF EXISTS fail_evidence_restore_test`))
 	if err = s.runOneTaskArchiveJob(); err == nil {
 		t.Fatal("expected restore failure")
 	}
 	if got, _ := s.m.pg.GetFinding(f.FindingID); got != nil {
 		t.Fatal("partial restore")
 	}
-	if _, err = s.m.pg.Exec(`DROP FUNCTION fail_evidence_restore_test() CASCADE`); err != nil {
+	if _, err = s.m.pg.Exec(s.m.pg.SQL(`DROP FUNCTION fail_evidence_restore_test() CASCADE`, `DROP TRIGGER fail_evidence_restore_test`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.m.pg.QueueTaskArchiveRestore(job.ID); err != nil {

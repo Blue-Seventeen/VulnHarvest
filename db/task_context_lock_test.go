@@ -10,10 +10,16 @@ import (
 func TestTaskLLMProfileMutationsLockTaskBeforeProfile(t *testing.T) {
 	dsn := testDSN(t)
 	d, err := Open(dsn)
+	t.Cleanup(func() {
+		if d != nil {
+			if err := d.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	suffix := time.Now().UnixNano()
 	first, err := d.SaveProfile(&LLMProfile{
@@ -109,10 +115,16 @@ func TestDeleteProfileLocksNonTaskReferencesBeforeProfile(t *testing.T) {
 
 	t.Run("agent", func(t *testing.T) {
 		d, err := Open(dsn)
+		t.Cleanup(func() {
+			if d != nil {
+				if err := d.Close(); err != nil {
+					t.Error(err)
+				}
+			}
+		})
 		if err != nil {
-			t.Skipf("postgres unavailable (%v) - skipping", err)
+			t.Fatalf("postgres unavailable (%v) - skipping", err)
 		}
-		defer d.Close()
 
 		suffix := time.Now().UnixNano()
 		profileID, err := d.SaveProfile(&LLMProfile{
@@ -166,10 +178,16 @@ func TestDeleteProfileLocksNonTaskReferencesBeforeProfile(t *testing.T) {
 
 	t.Run("conversation", func(t *testing.T) {
 		d, err := Open(dsn)
+		t.Cleanup(func() {
+			if d != nil {
+				if err := d.Close(); err != nil {
+					t.Error(err)
+				}
+			}
+		})
 		if err != nil {
-			t.Skipf("postgres unavailable (%v) - skipping", err)
+			t.Fatalf("postgres unavailable (%v) - skipping", err)
 		}
-		defer d.Close()
 
 		suffix := time.Now().UnixNano()
 		profileID, err := d.SaveProfile(&LLMProfile{
@@ -222,10 +240,16 @@ func TestNonTaskProfileMutationsLockReferenceBeforeProfile(t *testing.T) {
 
 	t.Run("agent", func(t *testing.T) {
 		d, err := Open(dsn)
+		t.Cleanup(func() {
+			if d != nil {
+				if err := d.Close(); err != nil {
+					t.Error(err)
+				}
+			}
+		})
 		if err != nil {
-			t.Skipf("postgres unavailable (%v) - skipping", err)
+			t.Fatalf("postgres unavailable (%v) - skipping", err)
 		}
-		defer d.Close()
 
 		suffix := time.Now().UnixNano()
 		profileID, err := d.SaveProfile(&LLMProfile{
@@ -270,10 +294,16 @@ func TestNonTaskProfileMutationsLockReferenceBeforeProfile(t *testing.T) {
 
 	t.Run("conversation", func(t *testing.T) {
 		d, err := Open(dsn)
+		t.Cleanup(func() {
+			if d != nil {
+				if err := d.Close(); err != nil {
+					t.Error(err)
+				}
+			}
+		})
 		if err != nil {
-			t.Skipf("postgres unavailable (%v) - skipping", err)
+			t.Fatalf("postgres unavailable (%v) - skipping", err)
 		}
-		defer d.Close()
 
 		suffix := time.Now().UnixNano()
 		profileID, err := d.SaveProfile(&LLMProfile{
@@ -320,10 +350,16 @@ func TestNonTaskProfileMutationsLockReferenceBeforeProfile(t *testing.T) {
 func TestCreateConversationAndDeleteProfileDoNotDeadlock(t *testing.T) {
 	dsn := testDSN(t)
 	d, err := Open(dsn)
+	t.Cleanup(func() {
+		if d != nil {
+			if err := d.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	suffix := time.Now().UnixNano()
 	profileID, err := d.SaveProfile(&LLMProfile{
@@ -400,10 +436,16 @@ func TestCreateConversationAndDeleteProfileDoNotDeadlock(t *testing.T) {
 func TestDeleteProfileRetriesReferenceCommittedAfterInitialScan(t *testing.T) {
 	dsn := testDSN(t)
 	d, err := Open(dsn)
+	t.Cleanup(func() {
+		if d != nil {
+			if err := d.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer d.Close()
 
 	suffix := time.Now().UnixNano()
 	profileID, err := d.SaveProfile(&LLMProfile{

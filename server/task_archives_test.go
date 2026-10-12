@@ -12,11 +12,11 @@ import (
 )
 
 func TestTaskArchiveAPIQueueListAndLimits(t *testing.T) {
-	m, err := NewManager(t.TempDir(), "")
+	m, err := newTestManager(t, t.TempDir())
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer m.Close()
+
 	task, err := m.CreateTask("archive api", "verify 202", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -25,18 +25,25 @@ func TestTaskArchiveAPIQueueListAndLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		_, _ = m.pg.Exec(`DELETE FROM task_archives WHERE task_id=$1`, taskID)
 		_ = m.pg.DeleteTask(taskID)
-	}()
+	})
 
 	// Start with an already-cancelled context so the background archive worker
 	// exits before these route-contract assertions enqueue work.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	dataDir := t.TempDir()
-	s := New(ctx, m, dataDir, dataDir, dataDir)
+	s := newTestServer(t, ctx, m, dataDir, dataDir, dataDir)
 	s.archiveWG.Wait()
+	// Portable startup pauses persisted tasks; this route contract starts running.
+	if err := m.pg.SetStatus(taskID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.pg.SetPaused(taskID, false); err != nil {
+		t.Fatal(err)
+	}
 	token, err := signJWT(s.jwtKey)
 	if err != nil {
 		t.Fatal(err)

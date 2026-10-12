@@ -89,7 +89,7 @@ func testTLSSSEServer(t *testing.T, eventCount int) *testTLSServer {
 	}
 
 	// 生成自签名证书
-	ca, err := cert.NewSelfSignCA("")
+	ca, err := cert.NewSelfSignCA(t.TempDir())
 	if err != nil {
 		t.Fatalf("Failed to create CA: %v", err)
 	}
@@ -153,7 +153,8 @@ func TestSSEProxy(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
-			Addr: ":29097",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29097",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create proxy: %v", err)
@@ -206,6 +207,7 @@ func TestSSEProxy(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
+			CaRootPath:  t.TempDir(),
 			Addr:        ":29098",
 			SslInsecure: true,
 		})
@@ -277,7 +279,8 @@ func TestSSEWithStreamModifier(t *testing.T) {
 
 		// 启动代理
 		proxy, err := NewProxy(&Options{
-			Addr: ":29099",
+			CaRootPath: t.TempDir(),
+			Addr:       ":29099",
 		})
 		if err != nil {
 			t.Fatalf("Failed to create proxy: %v", err)

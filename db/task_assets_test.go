@@ -10,7 +10,7 @@ import (
 func TestRegisterTaskAssetScopesCreatesAssetsAndPersistsTextScope(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
 	defer closeTaskBindingsDB(t, d)
 
@@ -89,7 +89,7 @@ func TestRegisterTaskAssetScopesCreatesAssetsAndPersistsTextScope(t *testing.T) 
 func TestTaskAssetAttachDetachPreservesGlobalAssetAndAnchors(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
 	defer closeTaskBindingsDB(t, d)
 
@@ -142,7 +142,7 @@ func TestTaskAssetAttachDetachPreservesGlobalAssetAndAnchors(t *testing.T) {
 func TestIntentAssetsIncludesDirectSourceProvenance(t *testing.T) {
 	d, err := openTaskTestDB(t)
 	if err != nil {
-		t.Skipf("postgres unavailable (%v) - skipping", err)
+		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
 	defer closeTaskBindingsDB(t, d)
 

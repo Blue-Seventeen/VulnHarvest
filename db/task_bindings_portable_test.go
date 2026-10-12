@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"fmt"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ func closeTaskBindingsDB(t *testing.T, d *DB) {
 	}
 }
 func TestPortableTaskBindingsContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			t.Run("RegisterScopes", TestRegisterTaskAssetScopesCreatesAssetsAndPersistsTextScope)
 			t.Run("AttachDetach", TestTaskAssetAttachDetachPreservesGlobalAssetAndAnchors)

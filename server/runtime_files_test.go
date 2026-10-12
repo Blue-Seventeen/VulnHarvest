@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -13,6 +14,11 @@ import (
 
 func runtimeLink(t *testing.T, target, link string) {
 	t.Helper()
+	t.Cleanup(func() {
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			t.Error(err)
+		}
+	})
 	if err := os.Symlink(target, link); err == nil {
 		return
 	}
@@ -24,7 +30,7 @@ func runtimeLink(t *testing.T, target, link string) {
 	}
 }
 func TestRuntimeFileBoundary(t *testing.T) {
-	base := t.TempDir()
+	base := testenv.LinkTempDir(t)
 	data := filepath.Join(base, "data")
 	state := filepath.Join(base, "state")
 	skills := filepath.Join(base, "skills")

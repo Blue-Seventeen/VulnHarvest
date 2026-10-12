@@ -3,10 +3,11 @@ package llmrec
 import (
 	"context"
 	"iter"
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/transcript"
 	"github.com/google/uuid"
@@ -83,15 +84,20 @@ func (meteredStreamProvider) Stream(context.Context, llm.CompletionRequest) iter
 }
 
 func TestSideUsageRecordedOnceOnConsumerCancellation(t *testing.T) {
-	dsn := os.Getenv("ARTEX_PG_DSN")
-	if dsn == "" {
-		t.Skip("requires isolated ARTEX_PG_DSN")
+	var pg *db.DB
+	var err error
+	if testenv.SQLite(t) {
+		pg, err = db.OpenSQLite(filepath.Join(t.TempDir(), "metering.sqlite"))
+	} else {
+		pg, err = db.Open(testenv.DSN(t))
 	}
-	pg, err := db.Open(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pg.Close()
+	if err := pg.EnsureLLMUsageTable(); err != nil {
+		t.Fatal(err)
+	}
 	for _, early := range []bool{false, true} {
 		profile := "btw-metering-" + uuid.NewString()
 		ctx, cancel := context.WithCancel(transcript.WithSessionID(t.Context(), "exp0-btw-test"))

@@ -3,11 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,52 +29,26 @@ import (
 
 func archiveServerDB(t *testing.T) (*db.DB, string) {
 	t.Helper()
-	var d *db.DB
-	var err error
-	path := filepath.Join(t.TempDir(), "server.db")
-	if strings.Contains(t.Name(), "/SQLite/") {
-		d, err = db.OpenSQLite(path)
-	} else {
-		path = os.Getenv("ARTEX_ARCHIVE_TEST_PG_DSN")
-		if path == "" {
-			t.Fatal("ARTEX_ARCHIVE_TEST_PG_DSN required")
-		}
-		pool, e := sql.Open("pgx", path)
-		if e != nil {
-			t.Fatal(e)
-		}
-		var name string
-		e = pool.QueryRow(`SELECT current_database()`).Scan(&name)
-		if e != nil || name != "vh_archives" {
-			pool.Close()
-			t.Fatalf("refusing reset %q: %v", name, e)
-		}
-		_, e = pool.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
-		pool.Close()
-		if e != nil {
-			t.Fatal(e)
-		}
-		d, err = db.Open(path)
-	}
-	if err != nil {
+	d := contractTestDB(t)
+	if err := d.EnsureLLMRecordsTable(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := d.Close(); err != nil {
-			t.Error(err)
+	if err := d.EnsureLLMUsageTable(); err != nil {
+		t.Fatal(err)
+	}
+	if d.IsSQLite() {
+		var seq int
+		var name, file string
+		if err := d.DB.QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &file); err != nil {
+			t.Fatal(err)
 		}
-	})
-	if err = d.EnsureLLMRecordsTable(); err != nil {
-		t.Fatal(err)
+		return d, file
 	}
-	if err = d.EnsureLLMUsageTable(); err != nil {
-		t.Fatal(err)
-	}
-	return d, path
+	return d, testenv.DSN(t)
 }
 
 func TestPortableArchiveServerContract(t *testing.T) {
-	for _, engine := range []string{"SQLite", "PostgreSQL"} {
+	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {
 			for _, scenario := range []string{"SuccessGC", "RowRollback", "CommitRollback", "FileCommitRetry"} {
 				t.Run(scenario, testPortableArchiveServerRestore)
@@ -141,9 +117,16 @@ func testPortableArchiveConversationAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.archiveTask(job); err == nil {
+	var expectedLog bytes.Buffer
+	oldLog := log.Writer()
+	func() { log.SetOutput(&expectedLog); defer log.SetOutput(oldLog); err = s.archiveTask(job) }()
+	if err == nil {
 		t.Fatal("unflushed side context archived")
 	}
+	if !strings.Contains(expectedLog.String(), "context persistence failure") {
+		t.Fatalf("missing expected checkpoint diagnostic: %s", expectedLog.String())
+	}
+
 	if len(s.archiveConversationPins) != 0 || len(s.side.pending) != 1 {
 		t.Fatal("failed flush lost checkpoint or kept pin")
 	}
@@ -340,6 +323,13 @@ func testPortableArchiveServerRestore(t *testing.T) {
 	}()
 	scenario := t.Name()[strings.LastIndex(t.Name(), "/")+1:]
 	var held *os.File
+	var workers sync.WaitGroup
+	t.Cleanup(func() {
+		workers.Wait()
+		if held != nil {
+			_ = held.Close()
+		}
+	})
 	barrier := func() error {
 		if scenario == "FileCommitRetry" {
 			matches, e := filepath.Glob(filepath.Join(taskArchiveRoot(dir), ".restore", "*", "restore-journal.json"))
@@ -388,10 +378,12 @@ func testPortableArchiveServerRestore(t *testing.T) {
 		if _, err = d.Exec(`CREATE FUNCTION archive_barrier_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(7337741099); ` + failure + ` RETURN NEW; END $$; CREATE TRIGGER archive_barrier BEFORE INSERT ON findings FOR EACH ROW EXECUTE FUNCTION archive_barrier_fn()`); err != nil {
 			t.Fatal(err)
 		}
+		workers.Add(1)
 		go func() {
+			defer workers.Done()
 			for {
 				var waiting bool
-				e := peer.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname='vh_archives' AND wait_event='advisory' AND query LIKE 'INSERT INTO findings%')`).Scan(&waiting)
+				e := peer.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory' AND query LIKE 'INSERT INTO findings%')`).Scan(&waiting)
 				if e != nil {
 					return
 				}
@@ -422,7 +414,11 @@ func testPortableArchiveServerRestore(t *testing.T) {
 		}
 	}
 	done := make(chan error, 1)
-	go func() { done <- s.restoreTaskArchive(job) }()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		done <- s.restoreTaskArchive(job)
+	}()
 	select {
 	case <-entered:
 	case e := <-done:
@@ -432,7 +428,11 @@ func testPortableArchiveServerRestore(t *testing.T) {
 	}
 	collector := evidence.New(peer, tr, filepath.Join(dir, "evidence"))
 	gc := make(chan error, 1)
-	go func() { gc <- collector.Collect(ctx, time.Now().Add(72*time.Hour)) }()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		gc <- collector.Collect(ctx, time.Now().Add(72*time.Hour))
+	}()
 	select {
 	case err := <-gc:
 		t.Fatalf("GC escaped uncommitted restore: %v", err)

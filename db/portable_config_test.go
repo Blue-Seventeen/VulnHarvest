@@ -2,7 +2,7 @@ package db
 
 import (
 	"encoding/json"
-	"os"
+	"github.com/Autumn-27/artex/internal/testenv"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -94,12 +94,17 @@ func TestPortableSeedPreservesEdits(t *testing.T) {
 		if sqliteStore {
 			d, err = OpenSQLite(path)
 		} else {
-			d, err = Open(os.Getenv("TASK2_PG_DSN"))
+			d, err = Open(testenv.DSN(t))
 		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer d.Close()
+
+		t.Cleanup(func() {
+			if err := d.Close(); err != nil {
+				t.Error(err)
+			}
+		})
 		after, err := d.GetAgentByKey("worker")
 		if err != nil || !reflect.DeepEqual(before, after) {
 			t.Fatalf("agent overwritten: %+v / %+v / %v", before, after, err)
