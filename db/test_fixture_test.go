@@ -7,29 +7,11 @@ import (
 
 func openTestDB(t *testing.T) (*DB, error) {
 	t.Helper()
-	var d *DB
-	var err error
-	if testenv.SQLite(t) {
-		d, err = OpenSQLite(testenv.SQLitePath(t))
-	} else {
-		d, err = Open(testenv.DSN(t))
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := d.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return d, err
+	return testenv.OpenFixture(t, false, OpenSQLite, Open), nil
 }
 func contractTestDB(t *testing.T) *DB {
 	t.Helper()
-	testenv.ResetContract(t)
-	t.Cleanup(func() { testenv.ResetContract(t) })
-	d, _ := openTestDB(t)
-	return d
+	return testenv.OpenFixture(t, true, OpenSQLite, Open)
 }
 
 func reopenTestDB(t *testing.T, d *DB) (*DB, error) {

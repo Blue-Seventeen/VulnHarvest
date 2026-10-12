@@ -12,13 +12,16 @@ func TestRegisterTaskAssetScopesCreatesAssetsAndPersistsTextScope(t *testing.T) 
 	if err != nil {
 		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer closeTaskBindingsDB(t, d)
 
 	task, err := d.CreateTask("manual scope registration", "goal", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+	t.Cleanup(func() {
+		if err := d.DeleteTask(task.ID); err != nil {
+			t.Error("delete scope task:", err)
+		}
+	})
 	suffix := time.Now().UnixNano()
 	domain := fmt.Sprintf("manual-scope-%d.example.test", suffix)
 	ip := fmt.Sprintf("203.0.%d.%d", (suffix/250)%250, suffix%250+1)
@@ -48,7 +51,11 @@ func TestRegisterTaskAssetScopesCreatesAssetsAndPersistsTextScope(t *testing.T) 
 			t.Fatalf("unexpected task asset provenance: %+v", asset)
 		}
 	}
-	t.Cleanup(func() { _, _ = d.Assets().DeleteByIDs(assetIDs) })
+	t.Cleanup(func() {
+		if _, err := d.Assets().DeleteByIDs(assetIDs); err != nil {
+			t.Error("delete scope assets:", err)
+		}
+	})
 	scopes, err := d.Assets().ListTaskScope(task.ID)
 	if err != nil || len(scopes) != 5 {
 		t.Fatalf("task scope=%+v err=%v", scopes, err)
@@ -91,18 +98,25 @@ func TestTaskAssetAttachDetachPreservesGlobalAssetAndAnchors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer closeTaskBindingsDB(t, d)
 
 	task, err := d.CreateTask("asset editing", "goal", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+	t.Cleanup(func() {
+		if err := d.DeleteTask(task.ID); err != nil {
+			t.Error("delete editing task:", err)
+		}
+	})
 	assetID, err := d.Assets().UpsertRootDomain(UpsertRootDomainReq{Domain: fmt.Sprintf("manual-%d.example.test", time.Now().UnixNano())})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = d.Assets().DeleteByIDs([]int64{assetID}) })
+	t.Cleanup(func() {
+		if _, err := d.Assets().DeleteByIDs([]int64{assetID}); err != nil {
+			t.Error("delete editing asset:", err)
+		}
+	})
 
 	mutation, err := d.Assets().AttachAssetsToTask(task.ID, []int64{assetID, assetID}, "授权资产清单第 3 项")
 	if err != nil {
@@ -144,7 +158,6 @@ func TestIntentAssetsIncludesDirectSourceProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("postgres unavailable (%v) - skipping", err)
 	}
-	defer closeTaskBindingsDB(t, d)
 
 	source, err := d.CreateTask("source assets", "goal", nil, 0, 0)
 	if err != nil {
@@ -154,7 +167,14 @@ func TestIntentAssetsIncludesDirectSourceProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.DeleteTask(current.ID); _ = d.DeleteTask(source.ID) })
+	t.Cleanup(func() {
+		if err := d.DeleteTask(current.ID); err != nil {
+			t.Error("delete current task:", err)
+		}
+		if err := d.DeleteTask(source.ID); err != nil {
+			t.Error("delete source task:", err)
+		}
+	})
 
 	assetID, err := d.Assets().UpsertHTTPService(UpsertHTTPServiceReq{
 		URL: fmt.Sprintf("https://intent-%d.example.test", time.Now().UnixNano()), TaskID: source.ID,
@@ -162,7 +182,11 @@ func TestIntentAssetsIncludesDirectSourceProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = d.Assets().DeleteByIDs([]int64{assetID}) })
+	t.Cleanup(func() {
+		if _, err := d.Assets().DeleteByIDs([]int64{assetID}); err != nil {
+			t.Error("delete provenance asset:", err)
+		}
+	})
 	intentID, err := d.Exploration(source.ExplorationID).AddIntent(map[string]any{"summary": "source worker"}, 5, []int64{assetID}, "planner")
 	if err != nil {
 		t.Fatal(err)

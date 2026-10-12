@@ -49,7 +49,10 @@ func TestTaskTemplateHTTPCRUD(t *testing.T) {
 		t.Fatalf("create status=%d body=%v", code, created)
 	}
 	id := int64(created["id"].(float64))
-	t.Cleanup(func() { _, _ = m.pg.DeleteTaskTemplate(id) })
+	cleanupTestManagerRows(t, m, func() error {
+		_, err := m.pg.DeleteTaskTemplate(id)
+		return err
+	})
 
 	code, duplicate := do(http.MethodPost, "/api/task-templates", map[string]any{
 		"name": "  " + name + "  ", "description": "other", "goal": "other",
@@ -95,7 +98,7 @@ func TestConversationPatchReturnsPinState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = m.pg.DeleteConversation(conversation.ID) })
+	cleanupTestManagerRows(t, m, func() error { return m.pg.DeleteConversation(conversation.ID) })
 	token, err := signJWT(s.jwtKey)
 	if err != nil {
 		t.Fatal(err)

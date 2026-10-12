@@ -4,16 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Autumn-27/artex/internal/testenv"
-	"strings"
 	"testing"
 	"time"
 )
 
-func closeTaskBindingsDB(t *testing.T, d *DB) {
-	if !strings.HasPrefix(t.Name(), "TestPortableTaskBindingsContract/") {
-		d.Close()
-	}
-}
 func TestPortableTaskBindingsContract(t *testing.T) {
 	for _, engine := range testenv.Engines(t) {
 		t.Run(engine, func(t *testing.T) {

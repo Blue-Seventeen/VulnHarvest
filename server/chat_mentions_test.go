@@ -128,22 +128,31 @@ func TestChatMentionWorkerReceivesServerDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
+	var fid int64
+	t.Cleanup(func() {
 		cancel()
 		drain, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
-		_ = s.waitTaskQuiescent(drain, task.ID)
-		_, _ = m.DeleteTask(task.ID, DeleteTaskOptions{})
-	}()
+		if err := s.waitTaskQuiescent(drain, task.ID); err != nil {
+			t.Error(err)
+		}
+		if fid != 0 {
+			if _, err := m.pg.DeleteFinding(fid); err != nil {
+				t.Error(err)
+			}
+		}
+		if _, err := m.DeleteTask(task.ID, DeleteTaskOptions{}); err != nil {
+			t.Error(err)
+		}
+	})
 	iid, err := task.Store.AddNode(db.KindIntent, map[string]any{"summary": "Read referenced records only"}, 1, "paused", "human", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fid, err := m.pg.AddFinding(0, 0, "xss", "Worker mention", "low", "summary", "worker-hidden-proof", "test", nil)
+	fid, err = m.pg.AddFinding(0, 0, "xss", "Worker mention", "low", "summary", "worker-hidden-proof", "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer m.pg.DeleteFinding(fid)
 	requests := make(chan llm.CompletionRequest, 10)
 	worker := agent.NewWorker(retestProvider{complete: func(_ context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
 		requests <- req

@@ -23,7 +23,7 @@ func TestTaskMetadataPatchReturnsRenameAndPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	taskID, _ := strconv.ParseInt(task.ID, 10, 64)
-	defer func() { _ = m.pg.DeleteTask(taskID) }()
+	cleanupTestManagerRows(t, m, func() error { return m.pg.DeleteTask(taskID) })
 	s := newTestServer(t, context.Background(), m, t.TempDir(), t.TempDir(), t.TempDir())
 	token, err := signJWT(s.jwtKey)
 	if err != nil {
@@ -71,15 +71,12 @@ func TestConversationBatchDeleteReportsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupTestManagerRows(t, m, func() error { return m.pg.DeleteConversation(first.ID) })
 	second, err := m.pg.CreateConversation("mainagent", "batch-http-second", nil)
 	if err != nil {
-		_ = m.pg.DeleteConversation(first.ID)
 		t.Fatal(err)
 	}
-	defer func() {
-		_ = m.pg.DeleteConversation(first.ID)
-		_ = m.pg.DeleteConversation(second.ID)
-	}()
+	cleanupTestManagerRows(t, m, func() error { return m.pg.DeleteConversation(second.ID) })
 	token, err := signJWT(s.jwtKey)
 	if err != nil {
 		t.Fatal(err)

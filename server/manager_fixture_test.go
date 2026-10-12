@@ -56,3 +56,19 @@ func newTestServer(t *testing.T, ctx context.Context, m *Manager, skills, data, 
 	})
 	return s
 }
+
+func cleanupTestManagerRows(t *testing.T, m *Manager, cleanup func() error) {
+	t.Helper()
+	t.Cleanup(func() {
+		// NewManager's previously registered cleanup closes the store later.
+		// This also works before a Server is created or after an early Fatal.
+		if m.owner != nil {
+			if err := m.owner.Shutdown(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}
+		if err := cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+}

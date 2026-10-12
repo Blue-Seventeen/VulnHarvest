@@ -86,7 +86,6 @@ func TestTaskDeleteCascadeAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("postgres unavailable (%v) — skipping", err)
 	}
-	defer closeTaskBindingsDB(t, d)
 
 	first, err := d.CreateTask("级联删除测试", "目标A", nil, 0, 0)
 	if err != nil {
@@ -137,9 +136,15 @@ func TestTaskDeleteCascadeAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = d.DeleteTask(first.ID)
-		_ = d.DeleteTask(second.ID)
-		_, _ = assets.DeleteByIDs([]int64{exclusiveID, sharedID, anchorOnlyID, protectedID})
+		if err := d.DeleteTask(first.ID); err != nil {
+			t.Error("delete first task:", err)
+		}
+		if err := d.DeleteTask(second.ID); err != nil {
+			t.Error("delete second task:", err)
+		}
+		if _, err := assets.DeleteByIDs([]int64{exclusiveID, sharedID, anchorOnlyID, protectedID}); err != nil {
+			t.Error("delete cascade assets:", err)
+		}
 	})
 
 	hosts, err := assets.HostsByTask(first.ID)

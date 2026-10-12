@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -38,9 +39,9 @@ func TestChatUnavailableReasonDistinguishesStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, id)
-		_ = m.pg.DeleteProfile(id)
+	cleanupTestManagerRows(t, m, func() error {
+		_, resetErr := m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, id)
+		return errors.Join(resetErr, m.pg.DeleteProfile(id))
 	})
 
 	// Profile exists but is not activated.
@@ -81,7 +82,7 @@ func TestResolveChatAgentHonoursConversationProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = m.pg.DeleteProfile(id) })
+	cleanupTestManagerRows(t, m, func() error { return m.pg.DeleteProfile(id) })
 
 	// A conversation that pinned this profile resolves a chat agent despite the
 	// nil global fallback; without the fix the send precheck rejected it outright.

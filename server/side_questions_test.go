@@ -186,7 +186,7 @@ func (f *sideHTTPFixture) conversation(t *testing.T) (sidequestion.Parent, strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = f.m.pg.DeleteConversation(c.ID) })
+	cleanupTestManagerRows(t, f.m, func() error { return f.m.pg.DeleteConversation(c.ID) })
 	return sidequestion.Parent{ConversationID: c.ID}, fmt.Sprintf("/api/conversations/%d/side-questions", c.ID)
 }
 func (f *sideHTTPFixture) checkpoint(t *testing.T, p sidequestion.Parent) sidequestion.Snapshot {
@@ -326,7 +326,7 @@ func TestSideHTTPGlobalLimitTaskWorkerAndDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := strconv.ParseInt(task.ID, 10, 64)
-	t.Cleanup(func() { _ = f.m.pg.DeleteTask(id) })
+	cleanupTestManagerRows(t, f.m, func() error { return f.m.pg.DeleteTask(id) })
 	iid, err := task.Store.AddNode(db.KindIntent, map[string]any{"summary": "own worker"}, 1, "paused", "planner", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -387,8 +387,15 @@ func TestSideCheckpointPersistsBeforeAdmissionAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx2, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	restarted := &Server{m: f.m, ctx: ctx2, llmCfg: f.s.llmCfg, llmDirect: bound, llmOn: true}
+	restarted.cancel = func(error) { cancel() }
+	// This second publisher is not m.owner. Register its join after the row
+	// cleanup so LIFO stops it before the shared Manager's rows are deleted.
+	t.Cleanup(func() {
+		if err := restarted.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	restarted.initSideQuestions()
 	if got := waitSide(t, f.m.pg, orphan.ID, "interrupted"); got.Answer != "saved before crash" {
 		t.Fatal("restart discarded partial answer")
@@ -418,7 +425,13 @@ func TestSideRejectsDeletedOrChangedCachedProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = f.m.pg.DeleteProfile(id) })
+	profileDeleted := false
+	cleanupTestManagerRows(t, f.m, func() error {
+		if profileDeleted {
+			return nil
+		}
+		return f.m.pg.DeleteProfile(id)
+	})
 	cfg, ok := f.s.loadProfileConfig(id)
 	if !ok {
 		t.Fatal("profile unavailable")
@@ -437,6 +450,7 @@ func TestSideRejectsDeletedOrChangedCachedProfile(t *testing.T) {
 	if err = f.m.pg.DeleteProfile(id); err != nil {
 		t.Fatal(err)
 	}
+	profileDeleted = true
 	if _, err = f.s.sideProvider(model); err == nil {
 		t.Fatal("deleted profile remained usable from cache")
 	}
@@ -449,7 +463,7 @@ func TestSideTaskDrainPersistsBeforeArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := strconv.ParseInt(task.ID, 10, 64)
-	t.Cleanup(func() { _ = f.m.pg.DeleteTask(id) })
+	cleanupTestManagerRows(t, f.m, func() error { return f.m.pg.DeleteTask(id) })
 	p := sidequestion.Parent{TaskID: id, ExplorationID: task.ExpID}
 	f.checkpoint(t, p)
 	path := "/api/tasks/" + task.ID + "/chat/side-questions"
@@ -494,7 +508,7 @@ func TestSideRestoredWorkerRuntimePublishesNewCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := strconv.ParseInt(task.ID, 10, 64)
-	t.Cleanup(func() { _ = f.m.pg.DeleteTask(id) })
+	cleanupTestManagerRows(t, f.m, func() error { return f.m.pg.DeleteTask(id) })
 	if err := f.m.pg.SetPaused(id, true); err != nil {
 		t.Fatal(err)
 	}
