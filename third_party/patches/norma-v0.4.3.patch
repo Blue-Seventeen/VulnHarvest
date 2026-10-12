@@ -387,6 +387,49 @@
  	out, err := cmd.Output()
  	if err != nil {
 --- /dev/null
++++ b/tool/runtime_cleanup_test.go
+@@ -0,0 +1,40 @@
++package tool
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"testing"
++)
++
++func TestRuntimeCleanupJoinsProcesses(t *testing.T) {
++	isolated := t.TempDir()
++	t.Setenv("TMPDIR", isolated)
++	t.Setenv("TMP", isolated)
++	t.Setenv("TEMP", isolated)
++	m, e := NewManager("runtime-owned-cleanup")
++	if e != nil {
++		t.Fatal(e)
++	}
++	command := "sleep 30"
++	if runtime.GOOS == "windows" {
++		command = "Start-Sleep -Seconds 30"
++	}
++	task, e := m.Spawn(SpawnSpec{Command: command})
++	if e != nil {
++		t.Fatal(e)
++	}
++	m.Cleanup()
++	select {
++	case <-task.done:
++	default:
++		t.Fatal("Cleanup returned before child/output writer joined")
++	}
++	if _, e = os.Stat(filepath.Dir(m.dir)); !os.IsNotExist(e) {
++		t.Fatalf("Cleanup left task output directory: %v", e)
++	}
++	if _, e = m.Spawn(SpawnSpec{Command: command}); e == nil {
++		t.Fatal("Spawn admitted after Cleanup")
++	}
++	m.Cleanup()
++}
+--- /dev/null
 +++ b/tool/runtime_execution.go
 @@ -0,0 +1,144 @@
 +package tool
@@ -694,7 +737,20 @@
  	notifyCh chan struct{} // pinged on new output
  	done     chan struct{} // closed when the process exits
  }
-@@ -298,11 +298,9 @@
+@@ -288,6 +288,12 @@
+ 
+ // openSession starts an interactive program in a fresh PTY and begins its read loop.
+ func (m *Manager) openSession(command, workDir string, env []string, rows, cols int, mode string, prompt *regexp.Regexp) (*ptySession, error) {
++	m.lifecycle.RLock()
++	defer m.lifecycle.RUnlock()
++	if m.closing {
++		return nil, fmt.Errorf("background manager closed")
++	}
++
+ 	if !ptySupported() {
+ 		return nil, fmt.Errorf("交互式 shell(PTY) 在当前平台不支持")
+ 	}
+@@ -298,11 +304,9 @@
  	if cols <= 0 {
  		cols = sessDefCols
  	}
@@ -709,6 +765,45 @@
  	}
  	ptmx, err := startPTY(cmd, rows, cols)
  	if err != nil {
+@@ -322,7 +326,8 @@
+ 	m.sessions[id] = s
+ 	m.sessMu.Unlock()
+ 
+-	go m.readLoop(s)
++	m.workers.Add(1)
++	go func() { defer m.workers.Done(); m.readLoop(s) }()
+ 	return s, nil
+ }
+ 
+@@ -445,3 +450,13 @@
+ 	}
+ 	return out
+ }
++
++func (m *Manager) spawnSessionWaiter(fn func()) {
++	m.lifecycle.RLock()
++	defer m.lifecycle.RUnlock()
++	if m.closing {
++		return
++	}
++	m.workers.Add(1)
++	go func() { defer m.workers.Done(); fn() }()
++}
+--- a/tool/shell_tools.go
++++ b/tool/shell_tools.go
+@@ -151,10 +151,10 @@
+ 			out, cur, _ := s.readSince(0, 0, sessDefReadByte*4, false)
+ 			return jsonResult(map[string]any{"session_id": s.id, "state": "running", "done_by": by, "output": out, "cursor": cur, "running": s.running()})
+ 		case "dispatch":
+-			go m.dispatchWaiter(s, quiet, grace, ms(0, sessWaitCapMs))
++			m.spawnSessionWaiter(func() { m.dispatchWaiter(s, quiet, grace, ms(0, sessWaitCapMs)) })
+ 			return jsonResult(map[string]any{"session_id": s.id, "state": "running", "dispatched": true})
+ 		case "monitor":
+-			go m.monitorWaiter(s, watch)
++			m.spawnSessionWaiter(func() { m.monitorWaiter(s, watch) })
+ 			return jsonResult(map[string]any{"session_id": s.id, "state": "running", "monitoring": len(watch)})
+ 		default: // hands-free
+ 			return jsonResult(map[string]any{"session_id": s.id, "state": "running"})
 --- a/tool/task.go
 +++ b/tool/task.go
 @@ -70,9 +70,9 @@
@@ -749,7 +844,32 @@
  	Backgrounded bool
  }
  
-@@ -227,11 +227,11 @@
+@@ -146,6 +146,11 @@
+ 
+ // Manager owns the background tasks of one Session.
+ type Manager struct {
++	lifecycle   sync.RWMutex
++	closing     bool
++	cleanupOnce sync.Once
++	workers     sync.WaitGroup
++
+ 	mu      sync.Mutex
+ 	tasks   map[string]*Task
+ 	order   []string
+@@ -212,6 +217,12 @@
+ // to a file; a watch goroutine records the exit status and (if backgrounded) a
+ // completion notification.
+ func (m *Manager) Spawn(spec SpawnSpec) (*Task, error) {
++	m.lifecycle.RLock()
++	defer m.lifecycle.RUnlock()
++	if m.closing {
++		return nil, fmt.Errorf("background manager closed")
++	}
++
+ 	m.mu.Lock()
+ 	m.seq++
+ 	id := fmt.Sprintf("task_%d", m.seq)
+@@ -227,11 +238,11 @@
  	if kind == "" {
  		kind = KindBash
  	}
@@ -766,3 +886,50 @@
  	}
  	cmd.Stdout = f
  	cmd.Stderr = f
+@@ -259,16 +270,19 @@
+ 	m.order = append(m.order, id)
+ 	m.mu.Unlock()
+ 
+-	go m.watch(t, f)
++	m.workers.Add(1)
++	go func() { defer m.workers.Done(); m.watch(t, f) }()
+ 	return t, nil
+ }
+ 
+ func (m *Manager) watch(t *Task, f *os.File) {
+ 	stop := make(chan struct{})
+-	go m.watchSize(t, stop)
++	sizeDone := make(chan struct{})
++	go func() { defer close(sizeDone); m.watchSize(t, stop) }()
+ 
+ 	err := t.cmd.Wait()
+ 	close(stop)
++	<-sizeDone
+ 	_ = f.Close()
+ 
+ 	m.mu.Lock()
+@@ -516,12 +530,18 @@
+ 	if m == nil {
+ 		return
+ 	}
+-	m.KillAll()
+-	m.closeAllSessions()
+-	if m.rootCancel != nil {
+-		m.rootCancel()
+-	}
+-	_ = os.RemoveAll(filepath.Dir(m.dir)) // <base>/<sessionID>
++	m.cleanupOnce.Do(func() {
++		m.lifecycle.Lock()
++		m.closing = true
++		m.lifecycle.Unlock()
++		m.KillAll()
++		m.closeAllSessions()
++		if m.rootCancel != nil {
++			m.rootCancel()
++		}
++		m.workers.Wait()
++		_ = os.RemoveAll(filepath.Dir(m.dir))
++	})
+ }
+ 
+ // tailFile reads the last maxBytes of a file, prefixing a notice when earlier

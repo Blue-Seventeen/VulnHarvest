@@ -169,6 +169,11 @@ func New(ctx context.Context, m *Manager, skillDir, dataDir, keyDir string) *Ser
 	return s
 }
 func NewWithOptions(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDir string) (*Server, error) {
+	if m.mode == "portable" {
+		if err := ValidatePortableRoots(m.stateDir, dataDir, skillDir); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	key, err := loadOrCreateJWTKey(keyDir, dataDir)

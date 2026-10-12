@@ -5,7 +5,7 @@
 The root still requires `github.com/Autumn-27/norma v0.4.3`, with only a scoped
 source replacement to `./third_party/norma`. All 210 original archive files
 were copied and compared against the read-only cache, preserving raw bytes.
-205 are unchanged; five upstream files are patched, six files added, none
+204 are unchanged; six upstream files are patched, seven files added, none
 deleted. The original module declaration, go.mod/go.sum, docs, versions and
 available copyright remain unchanged. No transitive module is vendored.
 The published archive contains no LICENSE/COPYING/NOTICE: this absence is
@@ -39,6 +39,11 @@ and the exact patch. Git `-text` attributes preserve raw-byte provenance.
 - Tests: actual selected foreground/background/PTY or honest Windows error,
   Go grep/no npm sentinel, real stdio initialize/tools/list/tools/call, handshake
   cancellation and package-runner descendant heartbeat shutdown.
+- Task5b lifecycle adds admission/closing gates and joins process-output/size,
+  PTY reader, dispatch and monitor owners before deleting their session output.
+  Exact changes are in `tool/task.go`, `tool/shell_session.go` and
+  `tool/shell_tools.go`; `tool/runtime_cleanup_test.go` validates actual child
+  completion, output directory cleanup and rejected post-Cleanup launches.
 
 App-side `runtimeenv` owns Check, read-only metadata/safe bounded known version
 probes, per-generation native aliases, fallback and lifecycle. npm/npx .cmd are
@@ -50,19 +55,22 @@ Aliases expose selected tools only and explicitly fail unavailable names;
 runtime/bin is removed from child host PATH, old generations persist to Close.
 Windows aliases are copies (running image hardlinks cannot be deleted); Unix
 prefers hardlinks and relay uses exec. `cmd/artex` dispatches aliases before any
-flags/update/lock/storage work, but does not yet construct portable mode.
+flags/update/lock/storage work. Task5b constructs the owner in both portable and
+postgres startup, and authenticated runtime/check publishes actual selections.
 
 Server Python and explicit MCP launches use the published execution selection.
 MCP proxy/CA overlay is session-only and preserves saved args/env; PG's legacy
-path remains when no snapshot is published. Task5b must initialize/check once
-before tool use, rescan after config changes, suppress automatic MCP discovery,
-and stop/join all consumers before ToolManager.Close. No runtime HTTP API,
-startup recovery or full application lifecycle is claimed by this patch.
+path remains when no snapshot is published. Application integration initializes
+and checks before tool use, supports explicit rescan and suppresses automatic
+MCP discovery on portable startup. It joins consumers before ToolManager.Close.
+The SDK patch itself does not implement the application's HTTP API or recovery.
 
 Windows focused behavior gates passed, including real shell curl alias and
-Chinese/space argv; the original complete norma tool suite has three existing
+Chinese/space argv; the original complete norma tool suite had three existing
 Windows failures, reproduced against the pristine archive (Unix shell syntax
-in two tests and legacy Cleanup completion). Native Linux/race/PTY gate is
+in two tests and legacy Cleanup completion). The Task5b owner patch fixes
+Cleanup completion; the two Unix-shell-syntax tests remain Windows limitations.
+Native Linux/race/PTY gate is
 separate; full app business/LLM acceptance belongs to Tasks5b/7.
 
 ## go-mitmproxy v1.9.2 — portable-proxy-lifecycle-1

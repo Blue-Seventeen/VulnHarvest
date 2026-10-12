@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/sidequestion"
+	"github.com/Autumn-27/norma/llm"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runtimeFixture(t *testing.T, base string) (*Manager, *Server) {
@@ -22,6 +25,7 @@ func runtimeFixture(t *testing.T, base string) (*Manager, *Server) {
 		m.Close()
 		t.Fatal(e)
 	}
+	t.Cleanup(func() { _ = m.Close() })
 	return m, s
 }
 func copyClosedRuntime(t *testing.T, source, destination string) {
@@ -54,6 +58,39 @@ func TestRuntimeClosedFolderRelocation(t *testing.T) {
 		t.Fatal(e)
 	}
 	m.SetTaskPaused(task.ID, true)
+	// Real completed conversation-side row associated through the retest graph.
+	finding, e := s.evidenceStore().Record(t.Context(), db.RecordFindingInput{TaskID: numericTaskID(task.ID), ExplorationID: task.ExpID, Name: "side fixture", VulnClass: "TEST", Severity: "low", Worker: "test"}, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	retest, conv, _, e := m.pg.CreateFindingRetest(t.Context(), finding.FindingID, "side")
+	if e != nil {
+		t.Fatal(e)
+	}
+	m.pg.FailPendingRetestForConversation(conv.ID, "fixture stopped")
+	parent := sidequestion.Parent{ConversationID: conv.ID}
+	snap := sidequestion.Snapshot{Parent: parent, RunID: 1, Version: 1, CapturedAt: time.Now(), Model: sidequestion.Model{WindowTokens: 200000}, Request: llm.CompletionRequest{Messages: []llm.Message{llm.UserText("main checkpoint")}}}
+	if e = m.pg.SaveSideSnapshot(t.Context(), snap); e != nil {
+		t.Fatal(e)
+	}
+	side, _, e := m.pg.StartSideRequest(t.Context(), snap, "fixture-request", "side question")
+	if e != nil {
+		t.Fatal(e)
+	}
+	provider := &sideHTTPProvider{started: make(chan llm.CompletionRequest, 4), release: make(chan struct{})}
+	close(provider.release)
+	runCtx, cancel := context.WithCancel(s.ctx)
+	s.runSide(runCtx, cancel, *side, parent, provider, snap, "side question")
+	completed, e := m.pg.SideRequest(t.Context(), side.ID)
+	if e != nil || completed.Status != "completed" || completed.Answer == "" {
+		t.Fatalf("side %+v %v", completed, e)
+	}
+	sideName := "exp0-btw-" + side.ID + ".jsonl"
+	sideFile := filepath.Join(m.dir, "transcripts", sideName)
+	os.MkdirAll(filepath.Dir(sideFile), 0700)
+	sideRaw, _ := json.Marshal(completed)
+	os.WriteFile(sideFile, sideRaw, 0600)
+	_ = retest
 	file := filepath.Join(m.dir, "tasks", task.ID, "artifact.txt")
 	os.MkdirAll(filepath.Dir(file), 0700)
 	os.WriteFile(file, []byte("portable-artifact"), 0600)
@@ -73,6 +110,33 @@ func TestRuntimeClosedFolderRelocation(t *testing.T) {
 	if filepath.IsAbs(cold.ArchivePath) || !strings.HasPrefix(cold.ArchivePath, "archives/tasks/") {
 		t.Errorf("nonrelocatable package path: %q", cold.ArchivePath)
 	}
+	// Interrupt a real restore after file installation, before the DB commit.
+	// Cold-copy startup must roll this relative journal back, then ordinary
+	// restore below must still recover the completed side artifact.
+	extracted := filepath.Join(taskArchiveRoot(m.dir), ".restore", itoa(job.ID)+"-interrupted")
+	os.MkdirAll(extracted, 0700)
+	packagePath, e := resolvePortableArchivePath(m.dir, cold)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = extractTaskArchivePackage(packagePath, cold.SHA256, extracted); e != nil {
+		t.Fatal(e)
+	}
+	manifest, e := os.ReadFile(filepath.Join(extracted, "manifest.json"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	var snapshot db.TaskArchiveSnapshot
+	if e = json.Unmarshal(manifest, &snapshot); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = installTaskArchiveFilesMode(m.dir, extracted, task.ID, job.ID, true, &snapshot); e != nil {
+		t.Fatal(e)
+	}
+	journal, e := os.ReadFile(filepath.Join(extracted, "restore-journal.json"))
+	if e != nil || strings.Contains(string(journal), old) {
+		t.Fatalf("absolute restore journal %s %v", journal, e)
+	}
 	s.Shutdown(context.Background())
 	m.Close()
 	moved := t.TempDir()
@@ -81,6 +145,12 @@ func TestRuntimeClosedFolderRelocation(t *testing.T) {
 	m, s = runtimeFixture(t, moved)
 	defer m.Close()
 	defer s.Shutdown(context.Background())
+	if _, e = os.Stat(filepath.Join(m.dir, "tasks", task.ID, "artifact.txt")); !os.IsNotExist(e) {
+		t.Fatal("interrupted restore not rolled back after relocation")
+	}
+	if _, e = os.Stat(filepath.Join(taskArchiveRoot(m.dir), ".restore", itoa(job.ID)+"-interrupted")); !os.IsNotExist(e) {
+		t.Fatal("restore journal not cleaned after rollback")
+	}
 	if _, e = m.pg.QueueTaskArchiveRestore(job.ID); e != nil {
 		t.Fatal(e)
 	}
@@ -94,6 +164,13 @@ func TestRuntimeClosedFolderRelocation(t *testing.T) {
 	raw, e := os.ReadFile(filepath.Join(m.dir, "tasks", task.ID, "artifact.txt"))
 	if e != nil || string(raw) != "portable-artifact" {
 		t.Fatalf("artifact %q %v", raw, e)
+	}
+	restoredSide, e := m.pg.SideRequest(t.Context(), side.ID)
+	if e != nil || restoredSide == nil || restoredSide.Status != "completed" || restoredSide.Answer != completed.Answer {
+		t.Fatalf("restored side %+v %v", restoredSide, e)
+	}
+	if raw, e := os.ReadFile(filepath.Join(m.dir, "transcripts", sideName)); e != nil || string(raw) != string(sideRaw) {
+		t.Fatalf("side artifact %q %v", raw, e)
 	}
 	row, e := m.pg.GetTask(n)
 	if e != nil || row.Goal != "raw mentions "+old {
@@ -191,3 +268,5 @@ func TestRuntimeInterruptedJournalRelocation(t *testing.T) {
 	}
 	_ = db.ArchiveQueued
 }
+
+func numericTaskID(id string) int64 { n, _ := strconv.ParseInt(id, 10, 64); return n }

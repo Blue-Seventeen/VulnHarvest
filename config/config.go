@@ -147,6 +147,13 @@ func Load() Config {
 //
 // The directory is created if it does not exist.
 func SkillDir() string {
+	d := SkillPath()
+	_ = os.MkdirAll(d, 0o755)
+	return d
+}
+
+// SkillPath resolves without creating a browse root before portable validation.
+func SkillPath() string {
 	var d string
 	if v := strings.TrimSpace(os.Getenv("ARTEX_SKILL_DIR")); v != "" {
 		d = v
@@ -155,7 +162,6 @@ func SkillDir() string {
 	} else {
 		d = filepath.Join(BaseDir(), "skills")
 	}
-	_ = os.MkdirAll(d, 0o755)
 	return d
 }
 

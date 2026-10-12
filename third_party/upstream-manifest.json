@@ -598,7 +598,7 @@
       "licenseEvidence": "Upstream v0.4.3 archive contains no LICENSE, COPYING or NOTICE file. Available original source, docs, version and copyright are retained byte-for-byte except explicitly listed patches; no license has been fabricated.",
       "patchID": "vulnharvest-portable-tool-selection-1",
       "patchFile": "third_party/patches/norma-v0.4.3.patch",
-      "patchSHA256": "bebb73107fc4ad2bba1bf74e4ec8e1bf36986fc49cddc2a56192e3beb35e9913",
+      "patchSHA256": "7fc56ccb71385cd8f7dc8a0febd5b3d5e057f2dd51f0daa2d6165a1b4d251c73",
       "upstreamFiles": [
         {
           "path": ".gitignore",
@@ -1673,13 +1673,19 @@
         {
           "path": "tool/shell_session.go",
           "upstreamSHA256": "907732d8dba7905195b7ccaa3f80bd4ccb51c1742d228aad20a1719d80ee76bf",
-          "patchedSHA256": "f0642692ec0cabab73ce9d4e57c0edee58b873e276ab2a2ec559be837ec8b7dc",
+          "patchedSHA256": "db33461ab4a4a8b66e981794ee7b14eee73897080d0cb949c298e5335a0832ae",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/shell_tools.go",
+          "upstreamSHA256": "59e64516c3c51f395f204b73971d20f20cee645e480ef7339b2818bb9fe70f88",
+          "patchedSHA256": "64c824eb7f6993a05dfb400724032637f28d0b4b3ac9967113b8ecaffae12144",
           "patchID": "vulnharvest-portable-tool-selection-1"
         },
         {
           "path": "tool/task.go",
           "upstreamSHA256": "c707ad0e2b7a020384d9324d97ae97dd5050cb6ebc246c9110b19cc9e4c2a8d9",
-          "patchedSHA256": "83215d89f5fa81f6a09522141d5707a74a0c3e4b29ce193f3300ceac5da8458d",
+          "patchedSHA256": "3d791b75e0a63b869d3ecd932f3abaf581dace6213e616b9237ede6e792d9014",
           "patchID": "vulnharvest-portable-tool-selection-1"
         }
       ],
@@ -1700,6 +1706,12 @@
           "path": "mcp/stdio_process_windows.go",
           "size": 615,
           "sha256": "08278ec9821ac620dc4cb285f4ded45507f37d55a09b9d950ff8b3e8e632035b",
+          "patchID": "vulnharvest-portable-tool-selection-1"
+        },
+        {
+          "path": "tool/runtime_cleanup_test.go",
+          "size": 846,
+          "sha256": "60ffad908859a579c9cc83d38ab3159b3a084ac59bf078b815191adae379dc20",
           "patchID": "vulnharvest-portable-tool-selection-1"
         },
         {

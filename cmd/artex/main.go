@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -103,6 +102,13 @@ func run() int {
 	if mode == "portable" {
 		state = filepath.Join(base, "state")
 	}
+	skills := config.SkillPath()
+	if mode == "portable" {
+		if err = server.ValidatePortableRoots(state, data, skills); err != nil {
+			log.Printf("portable roots: %v", err)
+			return 1
+		}
+	}
 	if *addr == "" {
 		if mode == "portable" {
 			*addr = "127.0.0.1:8787"
@@ -129,29 +135,21 @@ func run() int {
 	defer stop()
 	ctx, shutdown := shutdownContext(sigCtx)
 	defer shutdown(agent.AbortShutdown)
-	var tools *runtimeenv.ToolManager
-	if mode == "portable" {
-		exe, e := os.Executable()
-		if e != nil {
-			log.Print(e)
-			return 1
-		}
-		tools, e = runtimeenv.New(runtimeenv.Options{BaseDir: base, StateDir: state, HostPATH: os.Getenv("PATH"), RelayExecutable: exe})
-		if e != nil {
-			log.Printf("portable tools: %v", e)
-			return 1
-		}
-		defer tools.Close()
-		snap, e := tools.Check(ctx, runtimeenv.Config{Paths: config.Load().Tools})
-		if e != nil {
-			log.Printf("portable check: %s", config.Redact(e.Error()))
-			return 1
-		}
-		for _, tool := range snap.Tools {
-			if tool.Status != "available" {
-				log.Printf("[runtime] %s: %s (影响 %v)", tool.Name, tool.Status, tool.AffectedFeatures)
-			}
-		}
+	exe, err := os.Executable()
+	if err != nil {
+		log.Print(err)
+		return 1
+	}
+	tools, err := runtimeenv.New(runtimeenv.Options{BaseDir: base, StateDir: state, HostPATH: os.Getenv("PATH"), RelayExecutable: exe})
+	if err != nil {
+		log.Printf("%s tools: %s", mode, config.Redact(err.Error()))
+		return 1
+	}
+	// Consumers' defers are registered later, so all stop/join before this owner.
+	defer tools.Close()
+	if _, err = tools.Check(ctx, runtimeenv.Config{Paths: config.Load().Tools}); err != nil {
+		log.Printf("%s check: %s", mode, config.Redact(err.Error()))
+		return 1
 	}
 	httpListener, err := runtimeenv.Listen(mode, *addr)
 	if err != nil {
@@ -168,7 +166,7 @@ func run() int {
 		}
 		defer proxyListener.Close()
 	}
-	mgr, err := server.NewManagerWithOptions(server.ManagerOptions{Mode: mode, DataDir: data, StateDir: state, ProxyAddr: *proxy, ProxyListener: proxyListener})
+	mgr, err := server.NewManagerWithOptions(server.ManagerOptions{Mode: mode, DataDir: data, StateDir: state, SkillDir: skills, ProxyAddr: *proxy, ProxyListener: proxyListener})
 	if err != nil {
 		log.Printf("%s startup: %s", mode, config.Redact(err.Error()))
 		return 1
@@ -177,15 +175,20 @@ func run() int {
 	if tools != nil {
 		cfg, e := mgr.RuntimeToolConfig()
 		if e != nil {
-			log.Printf("portable tools config: unavailable")
+			log.Printf("%s tools config: unavailable", mode)
 			return 1
 		}
-		if _, e = tools.Check(ctx, cfg); e != nil {
-			log.Printf("portable tool check: %s", config.Redact(e.Error()))
+		snapshot, e := tools.Check(ctx, cfg)
+		if e != nil {
+			log.Printf("%s tool check: %s", mode, config.Redact(e.Error()))
 			return 1
 		}
+		logToolProblems(snapshot)
 	}
-	skills := config.SkillDir()
+	if err = os.MkdirAll(skills, 0755); err != nil {
+		log.Printf("%s skills: %v", mode, err)
+		return 1
+	}
 	srv, err := server.NewWithOptions(ctx, mgr, skills, data, state)
 	if err != nil {
 		log.Printf("%s server: %s", mode, config.Redact(err.Error()))
@@ -199,12 +202,12 @@ func run() int {
 	address := httpListener.Addr().String()
 	srv.SetRuntime(tools, address, proxyAddress)
 	if mode == "portable" {
-		// Publish the retained listener addresses before the readiness probe so an
-		// external supervisor can observe the exact endpoints even while startup
-		// is still completing; the final write below is identical and atomic at the
-		// file level for this small metadata record.
-		raw, _ := json.Marshal(map[string]any{"mode": mode, "http_address": address, "proxy_address": proxyAddress})
-		_ = os.WriteFile(filepath.Join(state, "runtime.json"), raw, 0600)
+		// Publish complete addresses before probing, then mark ready only after
+		// both retained services respond. Successful reads see a complete record.
+		if err = writeRuntimeMetadata(filepath.Join(state, "runtime.json"), map[string]any{"mode": mode, "http_address": address, "proxy_address": proxyAddress, "ready": false}); err != nil {
+			log.Printf("portable runtime metadata: %v", err)
+			return 1
+		}
 	}
 	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	httpDone := make(chan error, 1)
@@ -219,8 +222,7 @@ func run() int {
 		return 1
 	}
 	if mode == "portable" {
-		raw, _ := json.Marshal(map[string]any{"mode": mode, "http_address": address, "proxy_address": proxyAddress})
-		if err = os.WriteFile(filepath.Join(state, "runtime.json"), raw, 0600); err != nil {
+		if err = writeRuntimeMetadata(filepath.Join(state, "runtime.json"), map[string]any{"mode": mode, "http_address": address, "proxy_address": proxyAddress, "ready": true}); err != nil {
 			shutdown(agent.AbortShutdown)
 			httpSrv.Close()
 			<-httpDone

@@ -40,6 +40,33 @@ func TestPortableActualBinary(t *testing.T) {
 	cwd := t.TempDir()
 	os.WriteFile(filepath.Join(cwd, "config.json"), []byte(`{"mode":"postgres","database":{"dsn":"INVALID-CWD-DSN"}}`), 0600)
 	env := append(os.Environ(), "ARTEX_CONFIG=", "ARTEX_PG_DSN=INVALID-PG-DSN-MUST-NOT-PARSE", "VULNHARVEST_MODE=postgres")
+	state := filepath.Join(base, "state")
+	os.MkdirAll(state, 0700)
+	alias := filepath.Join(base, "state-alias")
+	if runtime.GOOS == "windows" {
+		if out, e := exec.Command("cmd", "/c", "mklink", "/J", alias, state).CombinedOutput(); e != nil {
+			t.Fatalf("junction %v %s", e, out)
+		}
+	} else if e := os.Symlink(state, alias); e != nil {
+		t.Fatal(e)
+	}
+	for _, overlap := range []struct{ name, data, skills string }{
+		{"data-base", base, filepath.Join(base, "skills")},
+		{"data-state", state, filepath.Join(base, "skills")},
+		{"data-alias", alias, filepath.Join(base, "skills")},
+		{"skill-alias", filepath.Join(base, "data"), alias},
+	} {
+		rejected := exec.Command(binary, "-mode", "portable", "-no-browser", "-data", overlap.data, "-proxy", "")
+		rejected.Dir = cwd
+		rejected.Env = append(append([]string(nil), env...), "ARTEX_SKILL_DIR="+overlap.skills)
+		out, e := rejected.CombinedOutput()
+		if e == nil || !strings.Contains(string(out), "overlap") {
+			t.Fatalf("%s CLI overlap did not reject: %v %s", overlap.name, e, out)
+		}
+		if _, e = os.Stat(filepath.Join(state, "main.sqlite")); !os.IsNotExist(e) {
+			t.Fatalf("%s touched state DB before rejection", overlap.name)
+		}
+	}
 	start := func() (*exec.Cmd, *os.File) {
 		f, e := os.CreateTemp(t.TempDir(), "output-")
 		if e != nil {
@@ -70,7 +97,7 @@ func TestPortableActualBinary(t *testing.T) {
 			})
 		}
 		raw, _ := os.ReadFile(runtimePath)
-		if json.Unmarshal(raw, &info) == nil && info["http_address"] != nil {
+		if json.Unmarshal(raw, &info) == nil && info["http_address"] != nil && info["ready"] == true {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)

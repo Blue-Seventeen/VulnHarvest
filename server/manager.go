@@ -354,6 +354,7 @@ type ManagerOptions struct {
 	Mode          string
 	DataDir       string
 	StateDir      string
+	SkillDir      string
 	ProxyAddr     string
 	ProxyListener net.Listener
 }
@@ -365,6 +366,18 @@ func NewManagerWithOptions(options ManagerOptions) (*Manager, error) {
 	dir, proxyAddr := options.DataDir, options.ProxyAddr
 	if options.Mode != "portable" && options.Mode != "postgres" {
 		return nil, fmt.Errorf("invalid manager mode %q", options.Mode)
+	}
+	if options.Mode == "portable" {
+		if options.StateDir == "" || !filepath.IsAbs(options.StateDir) {
+			return nil, fmt.Errorf("portable requires absolute state directory")
+		}
+		skills := options.SkillDir
+		if skills == "" {
+			skills = config.SkillPath()
+		}
+		if err := ValidatePortableRoots(options.StateDir, dir, skills); err != nil {
+			return nil, err
+		}
 	}
 	if options.ProxyListener != nil {
 		proxyAddr = options.ProxyListener.Addr().String()
