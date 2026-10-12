@@ -68,9 +68,9 @@ Files: cmd/artex, config, server/runtime.go, server/server.go, manager.go, auth.
 
 Files: web settings runtime card, types/api/brand, selfupdate, .github/workflows/release.yml, portable launchers/build scripts, README.
 
-- [ ] 运行环境卡片和重新检测，展示模式、地址、工具来源和功能影响，不展示 Key。
-- [ ] 产品和包名 VulnHarvest v0.0.1；禁上游一键升级和上游镜像推送。
-- [ ] 五平台可解压目录、启动脚本、config example、技能、license，无 Go/Node/PG 运行依赖。
+- [x] 运行环境卡片和重新检测，展示模式、地址、工具来源和功能影响，不展示 Key。
+- [x] 产品和包名 VulnHarvest v0.0.1；禁上游一键升级和上游镜像推送。
+- [x] 五平台可解压目录、启动脚本、config example、技能、license，无 Go/Node/PG 运行依赖。分项构建和 Windows/Linux 启动证据已审查；最终五平台原生业务验收、Windows 临时存储修正及最终包重建仍属于 Task7。
 
 ### Task 7: 端到端与审查
 

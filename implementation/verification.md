@@ -121,7 +121,7 @@ Windows 最终定向命令保留实际日志：CLI 四个用例全部通过，11
 
 ## 最终验收
 
-固定首版 `3f052006` 的独立真实模型预验收未完成闭环：`deepseek-v4-flash` 完成真实 goals（不是 fallback）、Planner 读图和创建意图，Worker 的模型响应耗时 129.922s 超过测试用 75s budget，工具中断，受控目标 GET 为 0、没有 nonce/fact/prove_goal/done。最后一轮共 8 次调用、39375 input / 1082 output tokens；正常关闭并重开后无自动请求。该失败作为测试预算校准依据保留，不能声称真实 Agent 验收通过。脚本预算已参数化，正在固定 `aad0e5d` 的独立新实例进行一次更宽但有界的真实任务（300s 每轮、1200s 任务、24 次已完成调用上限），不改产品默认值。
+固定首版 `3f052006` 的独立真实模型预验收未完成闭环：`deepseek-v4-flash` 的 Worker 响应耗时 129.922s 超过测试用 75s budget，工具中断，受控目标 GET 为 0。该失败作为测试预算校准依据保留。随后固定修正源码 `aad0e5d` 在独立中文空格路径、新 SQLite 实例和 loopback receipt 目标上完成核心真实链：`deepseek-v4-flash` 实际 GET `/receipt` 1 次，nonce 写入 `record_fact`（fact 4），第二轮 Planner 读取 graph 节点，`prove_goal`（goal 2 / fact 4）成功，任务为 `done`；9 次 LLM 调用、97351 input / 3660 output tokens，重开同一 SQLite 后无自动重放，所有本次进程已停止。严格 verifier 仍为 `pass=false`：goals 阶段没有调用 `set_goals`，goal provenance 为 `system` fallback，而不是 `goals`；因此不能声称 goals 角色工具装配完整通过。报告与验证器在 `live-model-final-report.md`、`live-model-preview-verify.py`，密钥仅在 ignored 测试实例/fixture，未进入代码、包或 CI。
 
 任务/探索图原源码聚焦基线：在专用 `vh_task3` 初始空库执行 `^Test(Task|Exploration|Intent|Constraint)`，21 个 pass 事件、0 fail、0 skip，7.076s；不是完整 DB 回归。
 
@@ -131,4 +131,16 @@ Windows 最终定向命令保留实际日志：CLI 四个用例全部通过，11
 
 尚未完成。SQLite 全业务、Agent 闭环、文件持久化、运行时、UI、五平台构建与运行、PostgreSQL 回归逐项完成后填写准确证据。
 
-用户已提供独立测试 LLM 配置；`/v1/models` 正常，`deepseek-v4-flash` 的单次 echo 工具调用成功（458 tokens）。尚未执行本系统真实 Agent 闭环，不将接口测试当作业务验收。测试密钥仅存于 Git 忽略的本次测试目录，不会从旧实例读取 Key。
+用户提供的独立测试 LLM 配置只用于上述本次新实例，测试密钥仅存于 Git 忽略的测试目录；接口模型列表与 echo 检查是前置检查，不能替代上述实际 Agent 验收及其目标拆解限制。没有从旧实例读取 Key。
+
+## 界面与发行（分项已审查）
+
+生产源码 `d6abe837` 构建五种内嵌前端便携 ZIP，后续 `394aa34` 只调整 smoke 的环境检测请求等待上限，不改变包内容。品牌、环境卡片、手动恢复按钮、四项后端上游更新入口禁用、白名单打包和启动脚本已实施。主代理读取保存日志：Go 包/更新入口定向检查、9 项 Node 测试及 TypeScript 通过；五包均已构建，完整普通业务和四种其他平台原生运行尚未完成。
+
+Windows x64 实际 ZIP smoke 验证占用端口、内嵌资源、鉴权、空 PATH 检测、初始化、锁、冷复制和启动脚本错误传播。仅测试强退，不能视为便携 Windows 控制台优雅关闭已验。已保留 C: 空间不足及 5 秒检测等待失败证据：移动独立测试 scratch 到 G: 并延长 harness 等待后通过，不把这两个操作称作运行时缺陷修复。
+
+Windows 工具 relay 复制完整 40,564,736-byte 程序到每个别名，启动及检测产生 24 个副本 / 973,553,664 bytes；强退后副本保留，冷复制重启累计 40 个 / 1,622,589,440 bytes。正常 ToolManager.Close 窄探针只证明本会话清理成功，旧强退会话未自动回收。此问题已列入后续原生验收缺陷，最终包须验证 transient storage 不再无界增长。PostgreSQL CWD 配置优先级及便携相对技能目录问题也已列入业务回归修复；当前源码比较证据不冒充运行测试。
+
+主代理用固定 `394aa34` smoke harness 与上述 `d6abe837` Linux amd64 ZIP，在隔离 Linux 容器执行原生 smoke，退出 1：端口占用、资源、空 PATH 检测、鉴权、锁和冷搬迁重启步骤已执行，Unix 正常退出后别名数为 0；最后 launcher 在空 PATH 找不到外部 `dirname`，解析到无关 CWD 后无法启动实际 binary。此失败已交分项审查，不能把该次测试记为通过。日志 `controller-linux-task6-394aa34.log`，容器已结束并移除。
+
+修正 `50946715` 只改变两个 Unix launcher 和相应真实进程测试，用 POSIX 参数展开和 shell 内建解析目录。主代理已读取 6 项 absolute/relative/bare RED/GREEN 及固定源码重建 Linux amd64 ZIP 的原生 smoke 日志，均在修正后退出 0；实际二进制经兼容启动脚本传递真实错误 stderr/exit 也通过。原四个 Unix `dist/` 归档含旧脚本，已明确标记过期，后续五个最终包必须重建。分项审查和修复范围复审已通过，Unix launcher 重要问题已解决；三项测试维护建议已分别交后续处理。完整业务回归、其他平台原生验收和 Windows relay 问题仍未完成。
