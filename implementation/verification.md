@@ -111,7 +111,17 @@
 - 固定修复的 Linux runtimeenv 全包 race 38.502s 通过，无竞态，四条心跳实际执行，仅 Windows 包装器用例按平台跳过；后续 Windows 启动失败真实 16 次探测检查通过，未观察句柄泄漏。SDK/来源补丁未因这次应用探测修正改变。
 - 分项完整审查及修正范围复审通过，I1 已解决，新增 Critical/Important/Minor 为 0。五平台当前仅编译证据，不等于原生运行验收；正式启动和完整应用收尾仍属下一分项。
 
+## 应用运行时（分项已审查）
+
+运行时 Task5b 首版源码 `3f052006` 的固定 Linux amd64 `server ^TestRuntime -race` 为 13.275s、退出 0，无竞态；缺少 Python 与未注入专用 PostgreSQL 密码两项跳过。原审查发现五项重要问题（旁路 transcript 路径、SDK 补丁来源清单、旧格式 journal 双端校验、state/data 重叠、PostgreSQL 模式环境检测），由 `aad0e5d` 修复，修正范围复审已通过，五项及两项次要问题均解决、无新增问题。失败与修正证据均保留，不将原版检查扩大为修订后的通过。
+
+主代理固定 `aad0e5d` 的 Linux 原生修正检查：server 归属/恶意 journal/根重叠/实际旁路归档搬迁/恢复与关闭范围 `-race` 15.070s，CLI 便携真实启动及工具日志、原子 metadata 9.481s，均退出 0、无失败/跳过或竞态报告。CLI 测试 harness 带 `-race`，其构建的应用子进程没有该标志，故这是原生启动证据，不声称子进程已被竞态插桩。norma 与代理原 zip verifier 分别独立退出 0（norma 210 原文件、6 改动、7 新增；代理 104/6/2）。PostgreSQL 的鉴权重检测与实际选中工具目前使用 Windows 独立 `vh_runtime` 检查，尚未由这些 Linux 命令执行。
+
+Windows 最终定向命令保留实际日志：CLI 四个用例全部通过，118.821s，包含真实便携启动、独立 PostgreSQL 启动/鉴权重检测/选中工具执行、日志与原子 metadata；Server Runtime、SQLite 归档及文件包 14.897s，归档修正范围 6.654s。配置、锁/listener、SDK cleanup、compile-only 与 vet 通过；compile-only 不算完整业务测试。运行时分项已交付，前端发行和最终业务验收仍待完成。
+
 ## 最终验收
+
+固定首版 `3f052006` 的独立真实模型预验收未完成闭环：`deepseek-v4-flash` 完成真实 goals（不是 fallback）、Planner 读图和创建意图，Worker 的模型响应耗时 129.922s 超过测试用 75s budget，工具中断，受控目标 GET 为 0、没有 nonce/fact/prove_goal/done。最后一轮共 8 次调用、39375 input / 1082 output tokens；正常关闭并重开后无自动请求。该失败作为测试预算校准依据保留，不能声称真实 Agent 验收通过。脚本预算已参数化，正在固定 `aad0e5d` 的独立新实例进行一次更宽但有界的真实任务（300s 每轮、1200s 任务、24 次已完成调用上限），不改产品默认值。
 
 任务/探索图原源码聚焦基线：在专用 `vh_task3` 初始空库执行 `^Test(Task|Exploration|Intent|Constraint)`，21 个 pass 事件、0 fail、0 skip，7.076s；不是完整 DB 回归。
 

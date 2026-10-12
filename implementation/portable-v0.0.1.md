@@ -59,10 +59,10 @@ Files: db/assets.go, asset_dsl.go, companies.go, company_scope.go, finding*.go, 
 
 Files: cmd/artex, config, server/runtime.go, server/server.go, manager.go, auth.go, scheduler/notify/mcp startup; traffic; 项目内 go-mitmproxy 补丁。
 
-- [ ] executable 相对 state/data/skills，跨平台进程锁、优雅关闭、端口 listener 自动选择，启动失败不留锁。
-- [ ] portable 重启暂停未完成任务和对话；禁自动恢复/复测/通知/调度/下载 MCP。
-- [ ] 工具检测和选择 runtime/bin > 有效配置 > PATH；不执行业务命令、不下载，禁 NORMA rg 自动安装。
-- [ ] 鉴权 GET /api/runtime 和 POST /api/runtime/check；health 兼容字段与品牌；state 不可从 workspace 下载。
+- [x] executable 相对 state/data/skills，跨平台进程锁、优雅关闭、端口 listener 自动选择，启动失败不留锁。
+- [x] portable 重启暂停未完成任务和对话；禁自动恢复/复测/通知/调度/下载 MCP。
+- [x] 工具检测和选择 runtime/bin > 有效配置 > PATH；不执行业务命令、不下载，禁 NORMA rg 自动安装。
+- [x] 鉴权 GET /api/runtime 和 POST /api/runtime/check；health 兼容字段与品牌；state 不可从 workspace 下载。
 
 ### Task 6: 界面与发行
 
