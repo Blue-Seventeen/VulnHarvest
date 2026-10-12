@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if handled, code := RunRelay(); handled {
-		os.Exit(code)
-	}
 	exe, _ := os.Executable()
 	b, err := os.ReadFile(exe + ".sentinel")
 	if err == nil {
@@ -48,6 +46,24 @@ func TestMain(m *testing.M) {
 			}
 			fmt.Print("sentinel 1.2.3")
 			os.Exit(0)
+		}
+		if kind == "delayed-relay" {
+			fmt.Println("ready")
+			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+			c := exec.Command("node", "中文 arg", "space arg")
+			c.Stdout = os.Stdout
+			c.Stderr = os.Stderr
+			if e := c.Run(); e != nil {
+				fmt.Fprintln(os.Stderr, e)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+		if kind == "stdio" {
+			data, _ := io.ReadAll(os.Stdin)
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"args": args, "stdin": string(data)})
+			fmt.Fprint(os.Stderr, "exact-stderr")
+			os.Exit(23)
 		}
 		if len(args) > 0 && args[0] == "heartbeat" {
 			if len(args) > 2 {
@@ -86,6 +102,9 @@ func TestMain(m *testing.M) {
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"exe": exe, "args": args, "overlay": os.Getenv("NODE_EXTRA_CA_CERTS")})
 		os.Exit(0)
+	}
+	if handled, code := RunRelay(); handled {
+		os.Exit(code)
 	}
 	os.Exit(m.Run())
 }
@@ -276,7 +295,7 @@ func TestBoundedProbesFallBackAndUnavailableAliasBlocksRejectedPATH(t *testing.T
 	if snap.Tools["rg"].Status != "missing" || len(snap.Tools["rg"].Failures) == 0 {
 		t.Fatal("overflow capability not recorded")
 	}
-	alias := filepath.Join(strings.Split(tool.ExecutionSnapshot().ChildPATH, string(os.PathListSeparator))[0], "rg")
+	alias := filepath.Join(strings.Split(tool.ExecutionSnapshot().ChildPATH, string(os.PathListSeparator))[1], "rg")
 	if runtime.GOOS == "windows" {
 		alias += ".exe"
 	}

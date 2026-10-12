@@ -11,6 +11,8 @@ review before public distribution. This is a recorded limitation, not a claim of
 permission.
 
 Go module identities and existing ARTEX environment names remain compatible.
-Optional external tools are not included; runtime/bin is empty. Operators supply
+runtime/bin includes the matching VulnHarvest tool relay, built from the root
+AGPL source using only the Go standard library. No optional external tools are
+included. Operators supply
 those tools and their respective licenses independently. The package includes
 only the exact skill files listed in the source portable/skills-manifest.txt.

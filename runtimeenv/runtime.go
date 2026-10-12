@@ -4,6 +4,8 @@ package runtimeenv
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Autumn-27/artex/internal/toolrelay"
 	tool "github.com/Autumn-27/norma/tool"
 )
 
@@ -25,7 +28,9 @@ type Options struct {
 	// HostPATH is captured before any aliases are installed; empty means no host PATH.
 	HostPATH string
 	// RelayExecutable must implement RunRelay before flags, locks, DB or services.
-	RelayExecutable  string
+	RelayExecutable string
+	// RelayDigest is required by distributions and rechecked on every Check.
+	RelayDigest      string
 	ProbeTimeout     time.Duration
 	ProbeOutputLimit int
 }
@@ -62,12 +67,14 @@ type Snapshot struct {
 }
 
 type ToolManager struct {
-	mu         sync.Mutex
-	options    Options
-	root       string
-	generation uint64
-	closed     bool
-	closeErr   error
+	mu          sync.Mutex
+	options     Options
+	root        string
+	generation  uint64
+	closed      bool
+	closeErr    error
+	parentRoot  *os.Root
+	sessionName string
 }
 
 var owner struct {
@@ -86,6 +93,9 @@ func New(options Options) (*ToolManager, error) {
 	}
 	if !filepath.IsAbs(options.StateDir) || !filepath.IsAbs(options.RelayExecutable) {
 		return nil, fmt.Errorf("state and relay paths must be absolute")
+	}
+	if len(options.StateDir) > 32768 || strings.ContainsRune(options.StateDir, os.PathListSeparator) {
+		return nil, fmt.Errorf("state path exceeds relay PATH bounds")
 	}
 	if options.ProbeTimeout <= 0 {
 		options.ProbeTimeout = 2 * time.Second
@@ -109,11 +119,31 @@ func New(options Options) (*ToolManager, error) {
 	if err := os.MkdirAll(parent, 0700); err != nil {
 		return nil, err
 	}
-	root, err := os.MkdirTemp(parent, "session-")
+	parentRoot, err := toolrelay.CanonicalRoot(parent)
 	if err != nil {
 		return nil, err
 	}
-	m := &ToolManager{options: options, root: root}
+	nonce := make([]byte, 16)
+	if _, err = rand.Read(nonce); err != nil {
+		parentRoot.Close()
+		return nil, err
+	}
+	sessionName := "session-" + hex.EncodeToString(nonce)
+	if err = parentRoot.Mkdir(sessionName, 0700); err != nil {
+		parentRoot.Close()
+		return nil, err
+	}
+	metadata, err := parentRoot.OpenFile(filepath.Join(sessionName, "session.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err == nil {
+		_, err = metadata.Write([]byte(`{"version":1,"shared_cache":true}`))
+		err = errors.Join(err, metadata.Close())
+	}
+	if err != nil {
+		parentRoot.RemoveAll(sessionName)
+		parentRoot.Close()
+		return nil, err
+	}
+	m := &ToolManager{options: options, root: filepath.Join(parent, sessionName), parentRoot: parentRoot, sessionName: sessionName}
 	owner.manager = m
 	return m, nil
 }
@@ -138,7 +168,7 @@ func publishedSnapshot() Snapshot {
 
 // Check is serialized; complete alias preparation precedes one SDK publication.
 // Failure/cancellation preserves the previous usable generation. Running children
-// keep their generation, and all old alias directories survive until Close.
+// keep immutable selections; shared cache survives session Close.
 func (m *ToolManager) Check(ctx context.Context, config Config) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -197,22 +227,19 @@ func (m *ToolManager) Check(ctx context.Context, config Config) (Snapshot, error
 	if ctx.Err() != nil {
 		return publishedSnapshot(), ctx.Err()
 	}
-	aliasDir := filepath.Join(m.root, fmt.Sprintf("%d", generation))
-	if err := m.prepareAliases(aliasDir, rt); err != nil {
-		_ = removeAliases(aliasDir)
+	aliasPATH, err := m.prepareAliases(ctx, rt)
+	if err != nil {
 		return publishedSnapshot(), err
 	}
-	rt.ChildPATH = aliasDir
+	rt.ChildPATH = aliasPATH
 	if host := m.filteredPATH(); host != "" {
 		rt.ChildPATH += string(os.PathListSeparator) + host
 	}
 	rt.Metadata, _ = json.Marshal(snap)
 	if ctx.Err() != nil {
-		_ = removeAliases(aliasDir)
 		return publishedSnapshot(), ctx.Err()
 	}
 	if err := tool.SetExecutionRuntime(rt); err != nil {
-		_ = removeAliases(aliasDir)
 		return publishedSnapshot(), err
 	}
 	m.generation = generation
@@ -220,7 +247,7 @@ func (m *ToolManager) Check(ctx context.Context, config Config) (Snapshot, error
 }
 
 // Close is idempotent and clears only this manager's SDK ownership. Consumers
-// must already be joined; removing an old PATH while children run is unsupported.
+// must already be joined. Shared immutable cache is intentionally retained.
 func (m *ToolManager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -235,7 +262,13 @@ func (m *ToolManager) Close() error {
 		err = tool.SetExecutionRuntime(nil)
 		owner.manager = nil
 	}
-	m.closeErr = errors.Join(err, removeAliases(m.root))
+	removeErr := m.parentRoot.RemoveAll(m.sessionName)
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.GOOS == "windows" && removeErr != nil && (errors.Is(removeErr, syscall.Errno(5)) || errors.Is(removeErr, syscall.Errno(32))) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		removeErr = m.parentRoot.RemoveAll(m.sessionName)
+	}
+	m.closeErr = errors.Join(err, removeErr, m.parentRoot.Close())
 	return m.closeErr
 }
 

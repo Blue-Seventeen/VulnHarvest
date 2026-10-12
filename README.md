@@ -20,7 +20,9 @@ VulnHarvest 是基于 LLM 的自主渗透测试控制台。界面、API 和 SQLi
 
 ## 可选工具
 
-运行环境卡片提供重新检测，并显示各工具状态、来源、版本、路径、功能影响与失败候选的回退原因。检测优先级是 `runtime/bin` > 有效配置路径 > 进程启动时 PATH。不自动安装系统工具、npm 包或浏览器。
+运行环境卡片提供重新检测，并显示各工具状态、来源、版本、路径、功能影响与失败候选的回退原因。检测优先级是 `runtime/bin` > 有效配置路径 > 进程启动时 PATH。不自动安装系统工具、npm 包或浏览器。发行 relay 是仅使用 Go 标准库的内置辅助程序，不是可选业务工具；丢失、损坏或平台不匹配会明确拒绝启动，不复制主程序代替。
+
+`state/runtime-path/cache` 保存按 helper 内容寻址的八份独立小程序副本，`choices` 保存按内容寻址的不可变选择。相同工具配置的重新检测与强退重启复用它们；公开检测 generation 仍递增。正常关闭删除本会话 metadata，但有意保留共享 cache，使持有旧 PATH 的消费者仍能执行旧选择。普通复制不要求 NTFS 硬链接；未声称实际 FAT/exFAT 测试。新 helper 版本或真正变化的工具路径/参数会增加历史 cache，搬迁后的绝对路径变化也可能新增小选择文件；没有证明所有历史配置严格有界，也不按父 PID、mtime 或 Job 名称自动回收。关闭并等待所有消费者退出后才可由操作者删除整个 runtime-path cache；运行中不要删除。
 
 按需求自行提供对应平台/架构的 Python、Node/npm/npx、ripgrep、nmap、curl、shell、Chromium/Playwright 或 MCP 可执行文件；它们不随默认包发行。缺失只影响依赖的脚本、搜索、网络探测、浏览器或 MCP 能力，界面和不依赖这些工具的操作仍可用。Windows 不支持当前 SDK 的 PTY，普通命令与可用工具的非 PTY 执行可以使用。移动目录后重新检测，失效的旧绝对路径会回退到其它有效候选。
 
@@ -52,7 +54,7 @@ go run ./cmd/portablebuild --release
 go run ./cmd/portablebuild --target windows/amd64
 ```
 
-构建器每次重建最新生产 UI，强制 `NEXT_PUBLIC_MOCK=0`、同源 SSE，内嵌到二进制。五个 zip 和 SHA256SUMS 在 dist。文件白名单为目标可执行文件、portable 启动脚本、config.example、README、LICENSE、web/proxy 许可、第三方 notices、`portable/skills-manifest.txt` 列出的技能文件，以及空 runtime/bin。不会复制本工作区 state/data、配置 Key、.superpowers 或开发依赖。
+构建器每次重建最新生产 UI，强制 `NEXT_PUBLIC_MOCK=0`、同源 SSE，内嵌到二进制。五个 zip 和 SHA256SUMS 在 dist。文件白名单为目标可执行文件、portable 启动脚本、config.example、README、LICENSE、web/proxy 许可、第三方 notices、`portable/skills-manifest.txt` 列出的技能文件，以及匹配目标平台的小型 `runtime/bin/vulnharvest-tool-relay[.exe]`。不会复制本工作区 state/data、配置 Key、.superpowers 或开发依赖。
 
 跨平台编译只证明生成产物，不等于各平台已运行。GitHub Actions 在 Windows x64、Linux x64/arm64、macOS Intel/Apple Silicon 原生 runner 上打印真实架构，执行包内嵌 UI、启动/存储/锁/中文空格搬迁检查；Task 7 普通 SQLite business harness 接入后执行全套普通业务测试。未运行的环境不得声称通过。工作流只上传验证产物，不创建 tag/Release，也不推送 Docker 镜像。
 

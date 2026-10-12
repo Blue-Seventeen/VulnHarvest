@@ -6,6 +6,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -130,6 +131,12 @@ func run() error {
 	if rt.Mode != "portable" {
 		return fmt.Errorf("wrong mode %s", rt.Mode)
 	}
+	for _, name := range []string{"node", "python", "npm", "npx", "rg", "nmap", "curl", "shell", "chromium", "playwright"} {
+		status, ok := rt.Environment.Tools[name]
+		if !ok || status.Status != "missing" {
+			return fmt.Errorf("empty PATH tool %s present=%v status=%s", name, ok, status.Status)
+		}
+	}
 	for feature, on := range rt.Background {
 		if on {
 			return fmt.Errorf("background %s auto-started", feature)
@@ -137,6 +144,19 @@ func run() error {
 	}
 	fmt.Printf("PASS authenticated runtime rescan with empty PATH, tool states=%s\n", rawToolStates(rt.Environment.Tools))
 	printRelayFootprint(root, "after startup + authenticated rescan")
+	initialCache, err := cacheInventory(root)
+	if err != nil {
+		return err
+	}
+	for i := 1; i < 20; i++ {
+		if _, err = call(address, "POST", "/api/runtime/check", auth.Token, nil, 200); err != nil {
+			return err
+		}
+		if err = assertCacheUnchanged(root, initialCache, true); err != nil {
+			return fmt.Errorf("rescan %d: %w", i+1, err)
+		}
+	}
+	fmt.Println("PASS 20 authenticated unchanged rescans; cache contents, bytes and file identities unchanged")
 	for _, route := range []struct{ method, path string }{{"GET", "check?force=1"}, {"POST", "apply"}, {"POST", "rollback"}, {"GET", "stream"}} {
 		if _, err = call(address, route.method, "/api/update/"+route.path, auth.Token, nil, 403); err != nil {
 			return err
@@ -158,6 +178,37 @@ func run() error {
 	}
 	child.stop()
 	printRelayFootprint(root, "after process stop")
+	for restart := 1; restart <= 3; restart++ {
+		os.Remove(filepath.Join(root, "state", "runtime.json"))
+		child, err = start(binary, cwd, args)
+		if err != nil {
+			return err
+		}
+		address, _, err = child.ready(root)
+		if err != nil {
+			child.stop()
+			return err
+		}
+		raw, err = call(address, "POST", "/api/auth/login", "", map[string]string{"username": "ARTEX", "password": "PortableSmoke-Only-Password"}, 200)
+		if err != nil {
+			child.stop()
+			return err
+		}
+		if err = json.Unmarshal(raw, &auth); err != nil {
+			child.stop()
+			return err
+		}
+		if _, err = call(address, "POST", "/api/runtime/check", auth.Token, nil, 200); err != nil {
+			child.stop()
+			return err
+		}
+		if err = assertCacheUnchanged(root, initialCache, true); err != nil {
+			child.stop()
+			return fmt.Errorf("restart %d: %w", restart, err)
+		}
+		child.stop()
+	}
+	fmt.Println("PASS 3 same-directory stop/restart cycles; unchanged shared cache (Windows stops forced)")
 	if err = copyDirectory(root, second); err != nil {
 		return err
 	}
@@ -173,6 +224,9 @@ func run() error {
 		return err
 	}
 	printRelayFootprint(second, "after moved restart")
+	if err = assertCacheUnchanged(second, initialCache, false); err != nil {
+		return fmt.Errorf("cold copy cache: %w", err)
+	}
 	raw, err = call(address, "POST", "/api/auth/login", "", map[string]string{"username": "ARTEX", "password": "PortableSmoke-Only-Password"}, 200)
 	if err != nil {
 		return err
@@ -214,13 +268,97 @@ func printRelayFootprint(root, label string) {
 	var count int
 	var bytes int64
 	_ = filepath.Walk(filepath.Join(root, "state", "runtime-path"), func(path string, info os.FileInfo, err error) error {
-		if err == nil && info.Mode().IsRegular() && !strings.HasPrefix(info.Name(), ".") {
+		if err == nil && info.Mode().IsRegular() {
 			count++
 			bytes += info.Size()
 		}
 		return nil
 	})
-	fmt.Printf("RELAY FOOTPRINT %s aliases=%d logical_bytes=%d (Unix hardlinks may share blocks)\n", label, count, bytes)
+	fmt.Printf("RELAY FOOTPRINT %s files=%d copied_payload_bytes=%d (cache uses ordinary independent copies; includes manifests/session metadata)\n", label, count, bytes)
+}
+
+type cacheFile struct {
+	size     int64
+	hash     [32]byte
+	identity os.FileInfo
+}
+
+func cacheInventory(root string) (map[string]cacheFile, error) {
+	parent := filepath.Join(root, "state", "runtime-path")
+	out := map[string]cacheFile{}
+	var aliases []os.FileInfo
+	helper := filepath.Join(root, "runtime", "bin", "vulnharvest-tool-relay")
+	if runtime.GOOS == "windows" {
+		helper += ".exe"
+	}
+	helperBytes, e := os.ReadFile(helper)
+	if e != nil {
+		return nil, e
+	}
+	helperHash := sha256.Sum256(helperBytes)
+	for _, kind := range []string{"cache", "choices"} {
+		err := filepath.Walk(filepath.Join(parent, kind), func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("nonregular cache artifact")
+			}
+			b, e := os.ReadFile(path)
+			if e != nil {
+				return e
+			}
+			rel, e := filepath.Rel(parent, path)
+			if e != nil {
+				return e
+			}
+			h := sha256.Sum256(b)
+			if kind == "cache" {
+				if info.Size() != int64(len(helperBytes)) || h != helperHash {
+					return fmt.Errorf("alias is not the small matching helper: %s", rel)
+				}
+				for _, previous := range aliases {
+					if os.SameFile(previous, info) {
+						return fmt.Errorf("copy verification unexpectedly used hardlink")
+					}
+				}
+				aliases = append(aliases, info)
+			}
+			out[rel] = cacheFile{info.Size(), h, info}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(aliases) != 8 {
+		return nil, fmt.Errorf("helper copies=%d want 8", len(aliases))
+	}
+	var total int64
+	for _, f := range out {
+		total += f.size
+	}
+	fmt.Printf("CACHE inventory files=%d independent_helper_files=%d helper_bytes=%d copied_payload_bytes=%d\n", len(out), len(aliases), len(helperBytes), total)
+	return out, nil
+}
+func assertCacheUnchanged(root string, want map[string]cacheFile, identity bool) error {
+	got, e := cacheInventory(root)
+	if e != nil {
+		return e
+	}
+	if len(got) != len(want) {
+		return fmt.Errorf("cache file count grew %d -> %d", len(want), len(got))
+	}
+	for path, f := range want {
+		g, ok := got[path]
+		if !ok || g.size != f.size || g.hash != f.hash || (identity && !os.SameFile(f.identity, g.identity)) {
+			return fmt.Errorf("cache changed: %s", path)
+		}
+	}
+	return nil
 }
 func rawToolStates(tools map[string]struct {
 	Status string `json:"status"`
@@ -322,8 +460,7 @@ func call(address, method, path, token string, body any, want int) ([]byte, erro
 	}
 	timeout := 5 * time.Second
 	if path == "/api/runtime/check" {
-		// Windows prepares eight full executable copies for each generation;
-		// a busy disk can legitimately exceed an ordinary HTTP smoke budget.
+		// Fresh bounded tool detection can consume more than the ordinary budget.
 		timeout = 60 * time.Second
 	}
 	client := &http.Client{Timeout: timeout}

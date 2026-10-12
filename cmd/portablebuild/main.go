@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"github.com/Autumn-27/artex/internal/toolrelay"
 	"io"
 	"io/fs"
 	"os"
@@ -75,7 +76,22 @@ func run() error {
 		}
 		fmt.Println("Build VulnHarvest", version, t)
 		env := environment(map[string]string{"GOOS": parts[0], "GOARCH": parts[1], "CGO_ENABLED": "0"})
-		if err := command(source, env, "go", "build", "-tags", "embedui", "-trimpath", "-ldflags", "-s -w -buildid= -X main.version="+version, "-o", binary, "./cmd/artex"); err != nil {
+		helper := filepath.Join(buildRoot, "vulnharvest-tool-relay")
+		if parts[0] == "windows" {
+			helper += ".exe"
+		}
+		if err := command(source, env, "go", "build", "-trimpath", "-ldflags", "-s -w -buildid=", "-o", helper, "./cmd/toolrelay"); err != nil {
+			return err
+		}
+		helperBytes, err := os.ReadFile(helper)
+		if err != nil {
+			return err
+		}
+		digest := toolrelay.Hash(helperBytes)
+		if err := toolrelay.VerifyAsset(helper, digest, parts[0], parts[1]); err != nil {
+			return err
+		}
+		if err := command(source, env, "go", "build", "-tags", "embedui", "-trimpath", "-ldflags", "-s -w -buildid= -X main.version="+version+" -X main.relayDigest="+digest, "-o", binary, "./cmd/artex"); err != nil {
 			return err
 		}
 		archive, err := packageTarget(source, *output, binary, parts[0], parts[1])
@@ -215,11 +231,24 @@ func packageTarget(source, output, binary, goos, goarch string) (archivePath str
 		binName = "artex.exe"
 		launcher = "start.bat"
 	}
+	helperName := "vulnharvest-tool-relay"
+	if goos == "windows" {
+		helperName += ".exe"
+	}
+	helperPath := filepath.Join(filepath.Dir(binary), helperName)
+	helperBytes, e := os.ReadFile(helperPath)
+	if e != nil {
+		return "", fmt.Errorf("required relay asset: %w", e)
+	}
+	if e = toolrelay.VerifyAsset(helperPath, toolrelay.Hash(helperBytes), goos, goarch); e != nil {
+		return "", e
+	}
 	files := []struct {
 		src, dst string
 		mode     os.FileMode
 	}{
 		{binary, binName, 0755}, {filepath.Join(source, "portable", launcher), launcher, 0755},
+		{helperPath, "runtime/bin/" + helperName, 0755},
 		{filepath.Join(source, "config.example.json"), "config.example.json", 0644},
 		{filepath.Join(source, "README.md"), "README.md", 0644}, {filepath.Join(source, "LICENSE"), "LICENSE", 0644},
 		{filepath.Join(source, "web", "LICENSE"), "licenses/web-MIT.txt", 0644},

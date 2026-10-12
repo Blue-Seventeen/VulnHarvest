@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,13 @@ func TestPackageWhitelistPreservesSkillsAndExcludesRuntimeState(t *testing.T) {
 	}
 	binary := filepath.Join(root, "artex.exe")
 	os.WriteFile(binary, []byte("binary"), 0700)
+	helper := filepath.Join(root, "vulnharvest-tool-relay.exe")
+	build := exec.Command("go", "build", "-o", helper, "./cmd/toolrelay")
+	build.Dir = filepath.Join("..", "..")
+	build.Env = environment(map[string]string{"GOOS": "windows", "GOARCH": "amd64", "CGO_ENABLED": "0"})
+	if b, e := build.CombinedOutput(); e != nil {
+		t.Fatalf("helper build: %s %v", b, e)
+	}
 	archive, err := packageTarget(root, out, binary, "windows", "amd64")
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +43,7 @@ func TestPackageWhitelistPreservesSkillsAndExcludesRuntimeState(t *testing.T) {
 		}
 	}
 	prefix := "VulnHarvest-v0.0.1-windows-amd64/"
-	for _, name := range []string{"artex.exe", "start.bat", "config.example.json", "LICENSE", "licenses/web-MIT.txt", "licenses/go-mitmproxy-MIT.txt", "THIRD-PARTY-NOTICES.md", "skills/demo/references/ref.md", "skills/demo/scripts/run.py", "runtime/bin/"} {
+	for _, name := range []string{"artex.exe", "start.bat", "config.example.json", "LICENSE", "licenses/web-MIT.txt", "licenses/go-mitmproxy-MIT.txt", "THIRD-PARTY-NOTICES.md", "skills/demo/references/ref.md", "skills/demo/scripts/run.py", "runtime/bin/", "runtime/bin/vulnharvest-tool-relay.exe"} {
 		if !names[prefix+name] {
 			t.Errorf("missing %s", name)
 		}

@@ -2,8 +2,8 @@ package runtimeenv
 
 import (
 	"context"
+	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,8 +19,11 @@ func TestCloseWaitsForTransientAliasFileHandle(t *testing.T) {
 	if _, err := m.Check(context.Background(), Config{}); err != nil {
 		t.Fatal(err)
 	}
-	dir := strings.Split(tool.ExecutionSnapshot().ChildPATH, string(filepath.ListSeparator))[0]
-	p, _ := windows.UTF16PtrFromString(filepath.Join(dir, "curl.exe"))
+	dir := m.root
+	if err := os.WriteFile(filepath.Join(dir, "session.json"), []byte("session"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := windows.UTF16PtrFromString(filepath.Join(dir, "session.json"))
 	h, err := windows.CreateFile(p, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
 	if err != nil {
 		t.Fatal(err)

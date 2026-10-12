@@ -20,6 +20,7 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/config"
+	"github.com/Autumn-27/artex/internal/toolrelay"
 	"github.com/Autumn-27/artex/runtimeenv"
 	"github.com/Autumn-27/artex/server"
 )
@@ -27,6 +28,10 @@ import (
 // version is the build version, injected at release time via
 // -ldflags "-X main.version=<tag>". Defaults to the product release version.
 var version = "v0.0.1"
+
+// Injected by portablebuild. Empty explicitly denotes a development build;
+// distribution builds always require the matching external helper asset.
+var relayDigest string
 
 const banner = "\n  VulnHarvest "
 
@@ -130,7 +135,18 @@ func run() int {
 		log.Print(err)
 		return 1
 	}
-	tools, err := runtimeenv.New(runtimeenv.Options{BaseDir: base, StateDir: state, HostPATH: os.Getenv("PATH"), RelayExecutable: exe})
+	if relayDigest != "" {
+		name := "vulnharvest-tool-relay"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		exe = filepath.Join(filepath.Dir(exe), "runtime", "bin", name)
+		if err = toolrelay.VerifyAsset(exe, relayDigest, runtime.GOOS, runtime.GOARCH); err != nil {
+			log.Printf("portable relay: %v", err)
+			return 1
+		}
+	}
+	tools, err := runtimeenv.New(runtimeenv.Options{BaseDir: base, StateDir: state, HostPATH: os.Getenv("PATH"), RelayExecutable: exe, RelayDigest: relayDigest})
 	if err != nil {
 		log.Printf("%s tools: %s", mode, config.Redact(err.Error()))
 		return 1
