@@ -320,7 +320,13 @@ func call(address, method, path, token string, body any, want int) ([]byte, erro
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	timeout := 5 * time.Second
+	if path == "/api/runtime/check" {
+		// Windows prepares eight full executable copies for each generation;
+		// a busy disk can legitimately exceed an ordinary HTTP smoke budget.
+		timeout = 60 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
