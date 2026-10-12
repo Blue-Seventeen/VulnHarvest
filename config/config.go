@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -26,9 +27,22 @@ type Database struct {
 
 // Config is the on-disk config file shape.
 type Config struct {
-	Mode     string   `json:"mode"`
-	Database Database `json:"database"`
-	SkillDir string   `json:"skill_dir"`
+	Mode     string            `json:"mode"`
+	Database Database          `json:"database"`
+	SkillDir string            `json:"skill_dir"`
+	Tools    map[string]string `json:"tools,omitempty"`
+}
+
+// SetRuntimeMode pins startup's selected mode before resolving runtime paths.
+// Call once, before creating services; PostgreSQL settings remain lazy.
+var runtimeMode string
+
+func SetRuntimeMode(mode string) { runtimeMode = strings.ToLower(strings.TrimSpace(mode)) }
+func portableMode() bool {
+	if runtimeMode != "" {
+		return runtimeMode == "portable"
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("VULNHARVEST_MODE")), "portable")
 }
 
 // ResolveMode resolves the startup mode without inspecting the PostgreSQL DSN.
@@ -67,7 +81,7 @@ func BaseDir() string {
 		return "."
 	}
 	dir := filepath.Dir(exe)
-	if isGoRunDir(dir) {
+	if !portableMode() && isGoRunDir(dir) {
 		return "." // throwaway `go run` binary → use CWD
 	}
 	return dir
@@ -79,13 +93,8 @@ func BaseDir() string {
 // old temp-only check failed intermittently). In both cases the binary is
 // throwaway, so config/data must resolve against the CWD.
 func isGoRunDir(dir string) bool {
-	if tmp := os.TempDir(); tmp != "" {
-		if rel, err := filepath.Rel(tmp, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return true
-		}
-	}
 	for _, seg := range strings.Split(filepath.ToSlash(dir), "/") {
-		if seg == "go-build" {
+		if seg == "go-build" || strings.HasPrefix(seg, "go-build") && len(seg) > len("go-build") {
 			return true
 		}
 	}
@@ -103,6 +112,9 @@ func isGoRunDir(dir string) bool {
 func Path() string {
 	if v := strings.TrimSpace(os.Getenv("ARTEX_CONFIG")); v != "" {
 		return v
+	}
+	if portableMode() || BaseDir() != "." {
+		return filepath.Join(BaseDir(), "config.json")
 	}
 	var candidates []string
 	if cwd, err := os.Getwd(); err == nil {
@@ -201,13 +213,32 @@ func (d Database) buildDSN() string {
 // String is a redacted view of the resolved DSN (password masked) for logging.
 func Redact(dsn string) string {
 	u, err := url.Parse(dsn)
-	if err != nil {
-		return dsn
+	if err != nil || u.Scheme == "" || !strings.Contains(dsn, "://") {
+		// Invalid URLs cannot safely be reconstructed. Fail closed; keyword DSNs
+		// are useful metadata only after removing quoted/unquoted credentials.
+		if strings.Contains(dsn, "://") {
+			return "[redacted invalid connection URL]"
+		}
+		return credentialPattern.ReplaceAllString(dsn, "${1}=****")
 	}
 	if u.User != nil {
 		if _, hasPw := u.User.Password(); hasPw {
 			u.User = url.UserPassword(u.User.Username(), "****")
 		}
 	}
+	q := u.Query()
+	for k := range q {
+		if sensitiveKey(k) {
+			q.Set(k, "****")
+		}
+	}
+	u.RawQuery = q.Encode()
 	return fmt.Sprintf("%s", u.String())
+}
+
+var credentialPattern = regexp.MustCompile(`(?i)(password|passwd|pwd|token|api_key|apikey|secret)\s*=\s*('(?:\\.|[^'])*'|"(?:\\.|[^"])*"|\S+)`)
+
+func sensitiveKey(k string) bool {
+	k = strings.ToLower(k)
+	return strings.Contains(k, "password") || strings.Contains(k, "passwd") || strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "key") || k == "pwd"
 }

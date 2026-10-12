@@ -25,6 +25,7 @@ import (
 	"github.com/Autumn-27/artex/llmpool"
 	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/report"
+	"github.com/Autumn-27/artex/runtimeenv"
 	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
@@ -39,6 +40,19 @@ var BuildVersion = "dev"
 // Server exposes the ARTEX backend over a JSON HTTP API for the shadcn/ui
 // frontend.
 type Server struct {
+	cancel       context.CancelCauseFunc
+	ownerMu      sync.Mutex
+	ownerWG      sync.WaitGroup
+	activeBodies map[io.ReadCloser]bool
+	closing      bool
+	shutdownOnce sync.Once
+	restoreHooks func()
+	runtimeMu    sync.Mutex
+	runtimeTools *runtimeenv.ToolManager
+	httpAddress  string
+	proxyAddress string
+	background   map[string]bool
+
 	m      *Manager
 	engine *Engine
 	ctx    context.Context
@@ -120,9 +134,12 @@ type Server struct {
 
 	// Cold task archives run through one persistent FIFO worker. The buffered wake
 	// channel coalesces enqueue bursts; the database remains the source of truth.
-	archiveWake chan struct{}
-	archiveWG   sync.WaitGroup
-	side        *sideQuestionState
+	archiveWake          chan struct{}
+	archiveWG            sync.WaitGroup
+	archiveManualMu      sync.Mutex
+	archiveManual        chan int64
+	archiveManualStarted bool
+	side                 *sideQuestionState
 }
 
 // provEntry is a cached provider + its config for one LLM profile id.
@@ -144,17 +161,30 @@ type triggeredRun struct {
 	mergeable bool   // true for finding/goal event triggers (merge by taskID)
 }
 
-func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDir string) *Server {
+func New(ctx context.Context, m *Manager, skillDir, dataDir, keyDir string) *Server {
+	s, err := NewWithOptions(ctx, m, skillDir, dataDir, keyDir)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+func NewWithOptions(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDir string) (*Server, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+
 	key, err := loadOrCreateJWTKey(keyDir, dataDir)
 	if err != nil {
-		log.Fatalf("[auth] JWT key: %v", err)
+		cancel(err)
+		return nil, fmt.Errorf("JWT key: %w", err)
 	}
-	s := &Server{m: m, engine: NewEngine(m), ctx: ctx, skillDir: skillDir, jwtKey: key, chatBusy: map[string]bool{},
+	s := &Server{cancel: cancel, m: m, engine: NewEngine(m), ctx: ctx, skillDir: skillDir, jwtKey: key, chatBusy: map[string]bool{},
 		chatCancel: map[string]context.CancelCauseFunc{}, triggerQ: map[string][]triggeredRun{},
 		triggerActive: map[string]int{}, triggerCfg: map[string]triggerBehavior{},
 		profChatAgents: map[int64]*agent.ChatAgent{},
-		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
+		provByProfile:  map[int64]*provEntry{}, llmHealth: nil,
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
+	m.owner = s
+	s.llmHealth = newLLMHealthRegistry(m.pg, s.goOwned)
+	s.captureHooks()
 	s.initSideQuestions()
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。
@@ -229,15 +259,23 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
 		}
-		go s.evidenceStore().RunGC(s.ctx)
-		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
-		go newScheduler(s).Run(s.ctx) // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
+		s.goOwned(func() { s.evidenceStore().RunGC(s.ctx) })
+		if m.mode != "portable" {
+			s.seedPythonInterpreter()
+		} // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
+		if m.mode != "portable" {
+			s.startBackground("scheduler")
+		} // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
-		go newNotifier(s).Run(s.ctx)
+		if m.mode != "portable" {
+			s.startBackground("notifier")
+		}
 		// Fill the tool cache for any enabled MCP that has none yet (notably the
 		// seeded browser MCP on first run). Async so it never blocks startup.
-		go s.discoverEmptyMCPsOnStartup()
+		if m.mode != "portable" {
+			s.startBackground("mcp")
+		}
 		logSink.SetDB(ctx, m.pg) // restore last 100 log rows and enable async persistence
 	}
 	// precedence: persisted DB config > env.
@@ -256,11 +294,23 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	} else {
 		log.Printf("[engine] no LLM provider configured — engine idle until set via /api/llm or env")
 	}
-	s.restoreTaskRuntimes()
-	go s.reconcileConcurrency()
-	s.startTaskArchiveWorker()
+	if m.mode == "portable" {
+		if err := s.pausePortableHistory(); err != nil {
+			_ = s.Shutdown(context.Background())
+			return nil, err
+		}
+		if err := s.recoverArchiveFiles(); err != nil {
+			_ = s.Shutdown(context.Background())
+			return nil, err
+		}
+	} else {
+		s.restoreTaskRuntimes()
+		s.goOwned(s.reconcileConcurrency)
+		s.startBackground("archives")
+	}
+
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
-	return s
+	return s, nil
 }
 
 // Restored deadline and worker loops must inherit the same context as new tasks,
@@ -662,6 +712,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/change-password", s.authChangePassword)
 
 	mux.HandleFunc("GET /api/health", s.health)
+	mux.HandleFunc("GET /api/runtime", s.getRuntime)
+	mux.HandleFunc("POST /api/runtime/check", s.checkRuntime)
+	mux.HandleFunc("POST /api/runtime/resume", s.resumeRuntime)
 	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/history", s.getLogsHistory)
@@ -943,13 +996,40 @@ func (s *Server) Handler() http.Handler {
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
 	root.Handle("/", s.webuiHandler())
-	return root
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.ownerMu.Lock()
+		if s.closing {
+			s.ownerMu.Unlock()
+			writeErr(w, 503, "服务正在停止")
+			return
+		}
+		s.ownerWG.Add(1)
+		if s.activeBodies == nil {
+			s.activeBodies = map[io.ReadCloser]bool{}
+		}
+		body := r.Body
+		if body != nil {
+			s.activeBodies[body] = true
+		}
+		s.ownerMu.Unlock()
+		requestCtx, cancel := context.WithCancel(r.Context())
+		stop := context.AfterFunc(s.ctx, cancel)
+		defer func() {
+			stop()
+			cancel()
+			s.ownerMu.Lock()
+			delete(s.activeBodies, body)
+			s.ownerMu.Unlock()
+			s.ownerWG.Done()
+		}()
+		root.ServeHTTP(w, r.WithContext(requestCtx))
+	})
 }
 
 // --- handlers ---
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"ok": true, "service": "artex", "version": BuildVersion})
+	writeJSON(w, 200, map[string]any{"ok": true, "service": "artex", "version": BuildVersion, "product": "VulnHarvest", "mode": s.m.mode, "storage_mode": s.m.mode})
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
@@ -1587,7 +1667,7 @@ func (s *Server) updateTaskLLMProfiles(w http.ResponseWriter, r *http.Request) {
 	// live slot and postpones an unavailable task's pause/queue transition until
 	// the call returns; a nudge lets an idle running task resume promptly.
 	t.Notify()
-	go s.reconcileConcurrency()
+	s.goOwned(s.reconcileConcurrency)
 	llmState := t.llmStateSnapshot()
 	result := map[string]any{
 		"id": t.ID, "llm_profile_ids": llmState.ProfileIDs,
@@ -3495,7 +3575,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 立即协调一次:关闭时放行全部排队,调高上限时补位启动,不必等下一个 tick。
-		go s.reconcileConcurrency()
+		s.goOwned(s.reconcileConcurrency)
 	}
 	if req.PythonInterp != nil {
 		if err := s.m.pg.SetSetting(settingPythonInterp, strings.TrimSpace(*req.PythonInterp)); err != nil {
@@ -3757,7 +3837,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		// a page reload / proxy timeout cancelled it mid-run ("context canceled"). The
 		// steps + final answer stream back live via SSE (worker="mainagent"), so the
 		// handler returns immediately and the browser never needs to hold the request.
-		go func() {
+		s.goOwned(func() {
 			defer func() {
 				s.finishTaskChat(t.ID, cancel)
 			}()
@@ -3780,7 +3860,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			if err != nil && ctx.Err() == nil {
 				s.engine.emitActivity(t, db.Activity{Worker: "mainagent", Kind: "text", IsError: true, Summary: "（主 Agent 出错：" + err.Error() + "）", MainSeg: segPtr})
 			}
-		}()
+		})
 		writeJSON(w, 202, map[string]any{"status": "accepted", "mode": "llm"})
 		return
 	}

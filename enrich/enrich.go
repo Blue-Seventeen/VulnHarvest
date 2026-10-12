@@ -48,6 +48,7 @@ type Engine struct {
 	cool   sync.Map // dedup/cooldown: "kind:id" -> time.Time (last run)
 	once   sync.Once
 	closed chan struct{}
+	wg     sync.WaitGroup
 }
 
 const (
@@ -82,7 +83,8 @@ func New(as *db.AssetStore, proxy func() string, workers int) *Engine {
 		closed: make(chan struct{}),
 	}
 	for i := 0; i < workers; i++ {
-		go e.worker()
+		e.wg.Add(1)
+		go func() { defer e.wg.Done(); e.worker() }()
 	}
 	return e
 }
@@ -126,6 +128,8 @@ func (e *Engine) enqueue(j job) {
 		return
 	}
 	select {
+	case <-e.closed:
+		return
 	case e.jobs <- j:
 	default: // queue full → drop (best-effort enrichment)
 		log.Printf("[enrich] 队列已满，丢弃任务 kind=%d id=%d", j.kind, j.id)
@@ -140,6 +144,8 @@ func (e *Engine) Close() {
 		return
 	}
 	e.once.Do(func() { close(e.closed) })
+	e.wg.Wait()
+	e.client.CloseIdleConnections()
 }
 
 func (e *Engine) worker() {
@@ -148,6 +154,11 @@ func (e *Engine) worker() {
 		case <-e.closed:
 			return
 		case j := <-e.jobs:
+			select {
+			case <-e.closed:
+				return
+			default:
+			}
 			if e.onCooldown(j) {
 				continue
 			}

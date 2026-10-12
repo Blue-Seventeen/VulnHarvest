@@ -286,15 +286,16 @@ func (s *Server) registerSideRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) handleSideQuestions(w http.ResponseWriter, r *http.Request, p sidequestion.Parent) {
-	if p.ConversationID > 0 && r.Method != "GET" {
-		s.archiveConversationMu.Lock()
-		defer s.archiveConversationMu.Unlock()
-		if !s.archiveConversationWritable(w, p.ConversationID) {
-			return
-		}
-	}
 	key := p.Key()
 	if r.Method == "DELETE" {
+		if p.ConversationID > 0 && r.Method != "GET" {
+			s.archiveConversationMu.Lock()
+			defer s.archiveConversationMu.Unlock()
+			if !s.archiveConversationWritable(w, p.ConversationID) {
+				return
+			}
+		}
+
 		s.side.commands.Lock()
 		defer s.side.commands.Unlock()
 		s.side.mu.Lock()
@@ -358,6 +359,13 @@ func (s *Server) handleSideQuestions(w http.ResponseWriter, r *http.Request, p s
 	if in.Question == "" || len([]rune(in.Question)) > 4000 || !validWorkerMessageRequestID(in.ClientID) {
 		writeErr(w, 400, "问题须为 1–4000 字符，并提供有效请求 ID")
 		return
+	}
+	if p.ConversationID > 0 && r.Method != "GET" {
+		s.archiveConversationMu.Lock()
+		defer s.archiveConversationMu.Unlock()
+		if !s.archiveConversationWritable(w, p.ConversationID) {
+			return
+		}
 	}
 	s.side.commands.Lock()
 	defer s.side.commands.Unlock()

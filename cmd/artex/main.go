@@ -5,11 +5,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -52,101 +55,263 @@ func main() {
 }
 
 func run() int {
-	// Tool aliases dispatch before flags, update bootstrap, locks or storage.
 	if handled, code := runtimeenv.RunRelay(); handled {
 		return code
 	}
-	var (
-		addr    = flag.String("addr", ":8787", "HTTP listen address")
-		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
-		proxy   = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
-	)
+	modeFlag := flag.String("mode", "", "storage mode: portable or postgres")
+	addr := flag.String("addr", "", "HTTP listen address")
+	dataFlag := flag.String("data", "", "workspace data directory")
+	proxy := flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty disables)")
+	noBrowser := flag.Bool("no-browser", false, "print URL without opening the system browser")
 	flag.Parse()
-
-	// hand the build version to the server package so GET /api/health can report it
-	// to the frontend top bar.
+	// Pin explicit mode before config lookup, so portable never reads unrelated CWD.
+	candidate := *modeFlag
+	if candidate == "" {
+		candidate = os.Getenv("VULNHARVEST_MODE")
+	}
+	config.SetRuntimeMode(candidate)
+	mode, err := config.ResolveMode(*modeFlag)
+	if err != nil {
+		log.Printf("runtime mode: %v", err)
+		return 1
+	}
+	config.SetRuntimeMode(mode)
+	base := config.BaseDir()
+	if mode == "portable" {
+		exe, e := os.Executable()
+		if e != nil {
+			log.Printf("portable executable: %v", e)
+			return 1
+		}
+		base = filepath.Dir(exe)
+	}
+	base, err = filepath.Abs(base)
+	if err != nil {
+		log.Printf("%s base: %v", mode, err)
+		return 1
+	}
+	data := *dataFlag
+	if data == "" {
+		data = filepath.Join(base, "data")
+	}
+	data, err = filepath.Abs(data)
+	if err != nil {
+		log.Print(err)
+		return 1
+	}
+	state := base
+	if mode == "portable" {
+		state = filepath.Join(base, "state")
+	}
+	if *addr == "" {
+		if mode == "portable" {
+			*addr = "127.0.0.1:8787"
+		} else {
+			*addr = ":8787"
+		}
+	}
 	server.BuildVersion = version
-
-	printBanner(*addr)
-
-	// capture backend logs into the in-memory sink (still to stderr) so the /logs
-	// page can show a live log stream. Do this first, to catch startup logs too.
 	server.StartLogCapture()
-
-	// Self-update bootstrap: swap in a staged binary, or count a post-swap boot
-	// attempt and roll back if the new build keeps dying. Must run before we open
-	// the stores or bind a port — this may end with "exit and let the start script
-	// relaunch me", and there is no point paying for either first.
-	action, upState := selfupdate.Bootstrap()
-	server.SetBootUpdateState(upState)
-	if action == selfupdate.Restart {
-		return selfupdate.ExitRestart
+	// Distribution updates are managed manually. Never bootstrap/swizzle upstream binaries.
+	if err = os.MkdirAll(state, 0700); err != nil {
+		log.Printf("%s state: %v", mode, err)
+		return 1
 	}
-
-	// surface which config file the binary reads (absolute, so `go run`'s relative
-	// "config.json" — resolved against the CWD — is unambiguous).
-	cfgPath := config.Path()
-	if abs, e := filepath.Abs(cfgPath); e == nil {
-		cfgPath = abs
+	if mode == "portable" {
+		lock, e := runtimeenv.LockInstance(filepath.Join(state, "instance.lock"))
+		if e != nil {
+			log.Printf("portable: %v", e)
+			return 1
+		}
+		defer lock.Close()
 	}
-	if _, e := os.Stat(cfgPath); e == nil {
-		log.Printf("[config] 配置文件: %s", cfgPath)
-	} else {
-		log.Printf("[config] 配置文件: %s (不存在 — 将仅尝试环境变量 ARTEX_PG_DSN)", cfgPath)
-	}
-
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, shutdown := shutdownContext(sigCtx)
 	defer shutdown(agent.AbortShutdown)
-
-	mgr, err := server.NewManager(*dataDir, *proxy)
+	var tools *runtimeenv.ToolManager
+	if mode == "portable" {
+		exe, e := os.Executable()
+		if e != nil {
+			log.Print(e)
+			return 1
+		}
+		tools, e = runtimeenv.New(runtimeenv.Options{BaseDir: base, StateDir: state, HostPATH: os.Getenv("PATH"), RelayExecutable: exe})
+		if e != nil {
+			log.Printf("portable tools: %v", e)
+			return 1
+		}
+		defer tools.Close()
+		snap, e := tools.Check(ctx, runtimeenv.Config{Paths: config.Load().Tools})
+		if e != nil {
+			log.Printf("portable check: %s", config.Redact(e.Error()))
+			return 1
+		}
+		for _, tool := range snap.Tools {
+			if tool.Status != "available" {
+				log.Printf("[runtime] %s: %s (影响 %v)", tool.Name, tool.Status, tool.AffectedFeatures)
+			}
+		}
+	}
+	httpListener, err := runtimeenv.Listen(mode, *addr)
 	if err != nil {
-		log.Fatalf("open stores: %v", err)
+		log.Printf("%s HTTP listener: %v", mode, err)
+		return 1
+	}
+	defer httpListener.Close()
+	var proxyListener net.Listener
+	if *proxy != "" {
+		proxyListener, err = runtimeenv.Listen(mode, *proxy)
+		if err != nil {
+			log.Printf("%s proxy listener: %v", mode, err)
+			return 1
+		}
+		defer proxyListener.Close()
+	}
+	mgr, err := server.NewManagerWithOptions(server.ManagerOptions{Mode: mode, DataDir: data, StateDir: state, ProxyAddr: *proxy, ProxyListener: proxyListener})
+	if err != nil {
+		log.Printf("%s startup: %s", mode, config.Redact(err.Error()))
+		return 1
 	}
 	defer mgr.Close()
-
-	// Surviving this long means a freshly swapped-in build actually works, so drop
-	// the upgrade marker and stop counting attempts. Until it fires, every boot
-	// increments the count and a build that keeps dying gets rolled back.
-	settle := time.AfterFunc(selfupdate.SettleDelay, selfupdate.Settle)
-	defer settle.Stop()
-
-	skillDir := config.SkillDir()
-	if abs, err := filepath.Abs(skillDir); err == nil {
-		skillDir = abs
-	}
-	log.Printf("[config] skill 目录: %s", skillDir)
-	srv := server.New(ctx, mgr, skillDir, *dataDir, config.BaseDir())
-	httpSrv := &http.Server{
-		Addr:              *addr,
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	go func() {
-		log.Printf("ARTEX %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("serve: %v", err)
+	if tools != nil {
+		cfg, e := mgr.RuntimeToolConfig()
+		if e != nil {
+			log.Printf("portable tools config: unavailable")
+			return 1
 		}
-	}()
-
-	// Two ways out: a signal (normal stop → exit 0, the start script stops looping)
-	// or a staged update / rollback (→ exit 75, the script relaunches us and the
-	// bootstrap above installs the new build).
+		if _, e = tools.Check(ctx, cfg); e != nil {
+			log.Printf("portable tool check: %s", config.Redact(e.Error()))
+			return 1
+		}
+	}
+	skills := config.SkillDir()
+	srv, err := server.NewWithOptions(ctx, mgr, skills, data, state)
+	if err != nil {
+		log.Printf("%s server: %s", mode, config.Redact(err.Error()))
+		return 1
+	}
+	defer srv.Shutdown(context.Background())
+	proxyAddress := ""
+	if proxyListener != nil {
+		proxyAddress = proxyListener.Addr().String()
+	}
+	address := httpListener.Addr().String()
+	srv.SetRuntime(tools, address, proxyAddress)
+	if mode == "portable" {
+		// Publish the retained listener addresses before the readiness probe so an
+		// external supervisor can observe the exact endpoints even while startup
+		// is still completing; the final write below is identical and atomic at the
+		// file level for this small metadata record.
+		raw, _ := json.Marshal(map[string]any{"mode": mode, "http_address": address, "proxy_address": proxyAddress})
+		_ = os.WriteFile(filepath.Join(state, "runtime.json"), raw, 0600)
+	}
+	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpDone := make(chan error, 1)
+	go func() { httpDone <- httpSrv.Serve(httpListener) }()
+	// Prove both retained services accept requests before publishing ready state.
+	url := "http://" + browserAddress(address)
+	if err = waitReady(ctx, url, proxyAddress); err != nil {
+		shutdown(agent.AbortShutdown)
+		httpSrv.Close()
+		<-httpDone
+		log.Printf("%s ready: %v", mode, err)
+		return 1
+	}
+	if mode == "portable" {
+		raw, _ := json.Marshal(map[string]any{"mode": mode, "http_address": address, "proxy_address": proxyAddress})
+		if err = os.WriteFile(filepath.Join(state, "runtime.json"), raw, 0600); err != nil {
+			shutdown(agent.AbortShutdown)
+			httpSrv.Close()
+			<-httpDone
+			log.Print(err)
+			return 1
+		}
+	}
+	printBanner(address)
+	fmt.Printf("%s ready: %s\n", mode, url)
+	if mode == "portable" && !*noBrowser {
+		if err = openBrowser(url); err != nil {
+			log.Printf("[browser] 打开失败，请访问 %s: %v", url, err)
+		}
+	}
 	code := 0
 	select {
 	case <-ctx.Done():
+	case err := <-httpDone:
+		if err != nil && err != http.ErrServerClosed {
+			log.Printf("serve: %v", err)
+			code = 1
+		}
+		httpDone = nil
 	case <-server.RestartRequested():
 		code = selfupdate.ExitRestart
-		shutdown(agent.AbortShutdown)
 	}
-
+	shutdown(agent.AbortShutdown)
 	log.Println("shutting down...")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = httpSrv.Shutdown(shutdownCtx)
+	if err = httpSrv.Shutdown(closeCtx); err != nil {
+		_ = httpSrv.Close()
+	}
+	if httpDone != nil {
+		<-httpDone
+	}
+	_ = srv.Shutdown(context.Background())
 	return code
+}
+
+func browserAddress(address string) string {
+	host, port, e := net.SplitHostPort(address)
+	if e != nil {
+		return address
+	}
+	if host == "" || host == "::" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
+func waitReady(ctx context.Context, url, proxy string) error {
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		response, err := client.Get(url + "/api/health")
+		if err == nil {
+			response.Body.Close()
+			if response.StatusCode == 200 {
+				if proxy == "" {
+					return nil
+				}
+				conn, e := net.DialTimeout("tcp", proxy, time.Second)
+				if e == nil {
+					conn.Close()
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("service readiness timeout")
+		case <-tick.C:
+		}
+	}
+}
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Run()
 }
 
 // shutdownContext deliberately does not derive from signalCtx. If it did, the

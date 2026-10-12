@@ -93,13 +93,18 @@ func stageTaskArchiveFiles(dataDir string, archiveID int64, taskID string, explo
 	return stageTaskArchiveFilesWithSideRequests(dataDir, archiveID, taskID, explorationID, conversationIDs, nil)
 }
 
-func stageTaskArchiveFilesWithSideRequests(dataDir string, archiveID int64, taskID string, explorationID int64, conversationIDs []int64, sideRequestIDs []string) (*taskArchiveFileStage, error) {
+func stageTaskArchiveFilesWithSideRequests(dataDir string, archiveID int64, taskID string, explorationID int64, conversationIDs []int64, sideRequestIDs []string, portable ...bool) (*taskArchiveFileStage, error) {
 	root := filepath.Join(taskArchiveRoot(dataDir), ".staging", strconv.FormatInt(archiveID, 10))
 	stage := &taskArchiveFileStage{root: root, payload: filepath.Join(root, "payload")}
 	journalPath := filepath.Join(root, "journal.json")
 	if raw, err := os.ReadFile(journalPath); err == nil {
 		if err := json.Unmarshal(raw, &stage.journal); err != nil {
 			return nil, fmt.Errorf("read task archive staging journal: %w", err)
+		}
+		if len(portable) > 0 && portable[0] {
+			if err := resolvePortableStageJournal(dataDir, &stage.journal); err != nil {
+				return nil, err
+			}
 		}
 		// The journal is written before the first rename, so its presence does not mean
 		// the payload is complete: a previous round may have failed mid-loop with a
@@ -179,7 +184,18 @@ func stageTaskArchiveFilesWithSideRequests(dataDir string, archiveID int64, task
 	// Persist the complete plan before the first rename. Recovery can therefore
 	// roll back any prefix of the moves after an abrupt process termination.
 	stage.journal.Moves = targets
-	if err := writeArchiveJournal(journalPath, stage.journal); err != nil {
+	persisted := stage.journal
+	if len(portable) > 0 && portable[0] {
+		persisted.Moves = append([]archiveFileMove(nil), stage.journal.Moves...)
+		for i := range persisted.Moves {
+			rel, err := portableOwnedRelative(dataDir, persisted.Moves[i].Source)
+			if err != nil {
+				return nil, err
+			}
+			persisted.Moves[i].Source = rel
+		}
+	}
+	if err := writeArchiveJournal(journalPath, persisted); err != nil {
 		return nil, errors.Join(err, stage.rollback())
 	}
 	if err := stage.applyMoves(); err != nil {
@@ -264,6 +280,9 @@ func (s *taskArchiveFileStage) commit() error {
 }
 
 func installTaskArchiveFiles(dataDir, extractedDir, taskID string, archiveID int64, snapshots ...*pgdb.TaskArchiveSnapshot) (*taskArchiveRestoreFiles, error) {
+	return installTaskArchiveFilesMode(dataDir, extractedDir, taskID, archiveID, false, snapshots...)
+}
+func installTaskArchiveFilesMode(dataDir, extractedDir, taskID string, archiveID int64, portable bool, snapshots ...*pgdb.TaskArchiveSnapshot) (*taskArchiveRestoreFiles, error) {
 	stage := &taskArchiveRestoreFiles{extracted: extractedDir}
 	numericTaskID, err := strconv.ParseInt(taskID, 10, 64)
 	if err != nil || numericTaskID <= 0 {
@@ -329,6 +348,20 @@ func installTaskArchiveFiles(dataDir, extractedDir, taskID string, archiveID int
 	}
 	stage.moves = sources
 	journal := archiveRestoreJournal{ArchiveID: archiveID, TaskID: numericTaskID, Moves: sources}
+	if portable {
+		journal.Moves = append([]restoredArchivePath(nil), sources...)
+		for i := range journal.Moves {
+			relative, err := portableOwnedRelative(dataDir, sources[i].Destination)
+			if err != nil {
+				return nil, err
+			}
+			source, err := filepath.Rel(extractedDir, sources[i].Source)
+			if err != nil || filepath.ToSlash(source) != "files/"+relative {
+				return nil, errors.New("invalid portable restore source")
+			}
+			journal.Moves[i] = restoredArchivePath{Source: filepath.ToSlash(source), Destination: relative}
+		}
+	}
 	if err := writeArchiveJournal(filepath.Join(extractedDir, "restore-journal.json"), journal); err != nil {
 		return nil, err
 	}
@@ -419,6 +452,12 @@ func recoverTaskArchiveRestoreStages(dataDir string, pg *pgdb.DB) error {
 			errs = append(errs, err)
 			continue
 		}
+		if pg.IsSQLite() {
+			if err := resolvePortableRestoreJournal(dataDir, root, &journal); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
 		restored, err := pg.IsTaskArchiveRestored(journal.ArchiveID)
 		if errors.Is(err, pgdb.ErrTaskArchiveNotFound) && journal.TaskID > 0 {
 			task, taskErr := pg.GetTask(journal.TaskID)
@@ -491,6 +530,12 @@ func recoverTaskArchiveStages(dataDir string, pg *pgdb.DB) error {
 			errs = append(errs, err)
 			continue
 		}
+		if pg.IsSQLite() {
+			if err := resolvePortableStageJournal(dataDir, &journal); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
 		archive, getErr := pg.GetTaskArchive(journal.ArchiveID)
 		if getErr != nil {
 			errs = append(errs, getErr)
@@ -507,7 +552,16 @@ func recoverTaskArchiveStages(dataDir string, pg *pgdb.DB) error {
 			errs = append(errs, err)
 		}
 		if archive != nil && archive.ArchivePath != "" {
-			_ = os.Remove(archive.ArchivePath)
+			path := archive.ArchivePath
+			if pg.IsSQLite() {
+				var err error
+				path, err = resolvePortableArchivePath(dataDir, archive)
+				if err != nil {
+					errs = append(errs, err)
+					continue
+				}
+			}
+			_ = os.Remove(path)
 		}
 	}
 	return errors.Join(errs...)

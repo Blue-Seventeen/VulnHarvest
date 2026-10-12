@@ -148,6 +148,11 @@ func (s *Server) startTaskArchiveWorker() {
 		ticker := time.NewTicker(taskArchivePollInterval)
 		defer ticker.Stop()
 		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
+			}
 			if err := s.runOneTaskArchiveJob(); err != nil {
 				log.Printf("[task-archive] worker: %v", err)
 			}
@@ -177,6 +182,9 @@ func (s *Server) runOneTaskArchiveJob() error {
 	if err != nil || job == nil {
 		return err
 	}
+	return s.runTaskArchiveJob(job)
+}
+func (s *Server) runTaskArchiveJob(job *pgdb.TaskArchive) error {
 	var runErr error
 	switch job.State {
 	case pgdb.Archiving:
@@ -239,7 +247,7 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 	if err != nil {
 		return err
 	}
-	fileStage, err := stageTaskArchiveFilesWithSideRequests(s.m.dir, job.ID, taskID, task.ExplorationID, conversationIDs, sideRequestIDs)
+	fileStage, err := stageTaskArchiveFilesWithSideRequests(s.m.dir, job.ID, taskID, task.ExplorationID, conversationIDs, sideRequestIDs, s.m.mode == "portable")
 	if err != nil {
 		return err
 	}
@@ -310,7 +318,7 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 		}()
 	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "compact_database", 78)
-	if err := s.m.pg.CompleteTaskArchive(job.ID, snapshot, archivePath, checksum, originalSize, compressedSize); err != nil {
+	if err := s.m.pg.CompleteTaskArchive(job.ID, snapshot, s.persistedArchivePath(archivePath), checksum, originalSize, compressedSize); err != nil {
 		return err
 	}
 	committed = true
@@ -336,6 +344,16 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 }
 
 func (s *Server) restoreTaskArchive(job *pgdb.TaskArchive) (runErr error) {
+	if s.m.mode == "portable" {
+		copy := *job
+		path, err := resolvePortableArchivePath(s.m.dir, job)
+		if err != nil {
+			return err
+		}
+		copy.ArchivePath = path
+		job = &copy
+	}
+
 	if err := validateArchivePath(s.m.dir, job.ArchivePath); err != nil {
 		return err
 	}
@@ -419,7 +437,7 @@ func (s *Server) restoreTaskArchivePayload(job *pgdb.TaskArchive, snapshot *pgdb
 		}
 	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "restore_files", 55)
-	files, err := installTaskArchiveFiles(s.m.dir, extracted, strconv.FormatInt(job.TaskID, 10), job.ID, snapshot)
+	files, err := installTaskArchiveFilesMode(s.m.dir, extracted, strconv.FormatInt(job.TaskID, 10), job.ID, s.m.mode == "portable", snapshot)
 	if err != nil {
 		return err
 	}
@@ -501,6 +519,16 @@ func (s *Server) loadRestoredTask(taskID int64) {
 }
 
 func (s *Server) deleteTaskArchive(job *pgdb.TaskArchive) error {
+	if s.m.mode == "portable" {
+		copy := *job
+		path, err := resolvePortableArchivePath(s.m.dir, job)
+		if err != nil {
+			return err
+		}
+		copy.ArchivePath = path
+		job = &copy
+	}
+
 	if err := validateArchivePath(s.m.dir, job.ArchivePath); err != nil {
 		return err
 	}
@@ -584,6 +612,7 @@ func (s *Server) queueTaskArchive(w http.ResponseWriter, r *http.Request) {
 		writeArchiveError(w, err)
 		return
 	}
+	s.admitManualArchive(item.ID)
 	s.notifyTaskArchiveWorker()
 	writeJSON(w, http.StatusAccepted, item)
 }
@@ -599,6 +628,7 @@ func (s *Server) queueTaskArchiveRestore(w http.ResponseWriter, r *http.Request)
 		writeArchiveError(w, err)
 		return
 	}
+	s.admitManualArchive(item.ID)
 	s.notifyTaskArchiveWorker()
 	writeJSON(w, http.StatusAccepted, item)
 }
@@ -614,6 +644,7 @@ func (s *Server) queueTaskArchiveDelete(w http.ResponseWriter, r *http.Request) 
 		writeArchiveError(w, err)
 		return
 	}
+	s.admitManualArchive(item.ID)
 	s.notifyTaskArchiveWorker()
 	writeJSON(w, http.StatusAccepted, item)
 }
@@ -651,6 +682,7 @@ func (s *Server) queueTaskArchivesBatch(w http.ResponseWriter, r *http.Request) 
 			item.Error = err.Error()
 		} else {
 			item.Archive = archive.ID
+			s.admitManualArchive(archive.ID)
 		}
 		items = append(items, item)
 	}
@@ -683,6 +715,7 @@ func (s *Server) queueTaskArchiveActionBatch(w http.ResponseWriter, r *http.Requ
 			item.Error = err.Error()
 		} else if archive != nil {
 			item.Archive = archive.ID
+			s.admitManualArchive(archive.ID)
 		}
 		items = append(items, item)
 	}
@@ -833,4 +866,36 @@ func writeArchiveError(w http.ResponseWriter, err error) {
 		status = http.StatusInternalServerError
 	}
 	writeErr(w, status, err.Error())
+}
+
+func (s *Server) admitManualArchive(id int64) {
+	if s.m.mode != "portable" {
+		return
+	}
+	s.archiveManualMu.Lock()
+	defer s.archiveManualMu.Unlock()
+	if !s.archiveManualStarted {
+		s.archiveManual = make(chan int64, 128)
+		s.archiveManualStarted = true
+		s.goOwned(func() {
+			for {
+				select {
+				case <-s.ctx.Done():
+					return
+				case id := <-s.archiveManual:
+					job, err := s.m.pg.ClaimTaskArchiveJobID(s.ctx, id)
+					if err == nil && job != nil {
+						err = s.runTaskArchiveJob(job)
+					}
+					if err != nil {
+						log.Printf("[task-archive] manual job %d: %v", id, err)
+					}
+				}
+			}
+		})
+	}
+	select {
+	case s.archiveManual <- id:
+	case <-s.ctx.Done():
+	}
 }

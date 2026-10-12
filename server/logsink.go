@@ -39,8 +39,9 @@ type logSinkT struct {
 	subs map[chan LogLine]struct{}
 	out  io.Writer // passthrough (stderr)
 
-	dbOnce sync.Once
-	dbCh   chan dbWriteReq // buffered async channel; nil until SetDB is called
+	dbOwner *db.DB
+	dbDone  chan struct{}
+	dbCh    chan dbWriteReq // buffered async channel; nil until SetDB is called
 }
 
 var logSink = &logSinkT{cap: 3000, subs: map[chan LogLine]struct{}{}, out: os.Stderr}
@@ -49,7 +50,7 @@ var logSink = &logSinkT{cap: 3000, subs: map[chan LogLine]struct{}{}, out: os.St
 // (still writing to stderr). Call once at startup, as early as possible.
 func StartLogCapture() { log.SetOutput(logSink) }
 
-// SetDB wires a postgres DB into the sink once (idempotent). It:
+// SetDB binds one database owner (idempotent until CloseDB drains it). It:
 //  1. Restores the last 100 log rows from DB into the ring so the /logs page
 //     shows history immediately after restart.
 //  2. Starts an async goroutine that persists every subsequent log line to DB.
@@ -57,10 +58,17 @@ func (s *logSinkT) SetDB(ctx context.Context, pg *db.DB) {
 	if pg == nil {
 		return
 	}
-	s.dbOnce.Do(func() {
+	s.mu.Lock()
+	if s.dbCh != nil {
+		s.mu.Unlock()
+		return
+	}
+	{
 		ch := make(chan dbWriteReq, 2000)
-		s.mu.Lock()
 		s.dbCh = ch
+		s.dbOwner = pg
+		done := make(chan struct{})
+		s.dbDone = done
 		s.mu.Unlock()
 
 		// Restore last 100 rows from DB → prepend to ring as history context.
@@ -89,12 +97,9 @@ func (s *logSinkT) SetDB(ctx context.Context, pg *db.DB) {
 		// Async writer: picks from channel and inserts into server_logs.
 		// Uses os.Stderr directly to report errors and avoids recursive log calls.
 		go func() {
-			for {
-				select {
-				case req, ok := <-ch:
-					if !ok {
-						return
-					}
+			defer close(done)
+			for req := range ch {
+				{
 					id, err := pg.InsertLog(req.ll.Level, req.ll.Tag, req.ll.Text)
 					if err != nil {
 						_, _ = os.Stderr.Write([]byte("[logsink] db write: " + err.Error() + "\n"))
@@ -109,12 +114,10 @@ func (s *logSinkT) SetDB(ctx context.Context, pg *db.DB) {
 						}
 					}
 					s.mu.Unlock()
-				case <-ctx.Done():
-					return
 				}
 			}
 		}()
-	})
+	}
 }
 
 // Write implements io.Writer for the log package: one call per log.Printf line.
@@ -136,26 +139,19 @@ func (s *logSinkT) add(l LogLine) {
 		s.ring = s.ring[len(s.ring)-s.cap:]
 	}
 	ch := s.dbCh
-	subs := make([]chan LogLine, 0, len(s.subs))
-	for sub := range s.subs {
-		subs = append(subs, sub)
-	}
-	s.mu.Unlock()
-
-	// Async DB write (non-blocking; drops if channel is full under extreme load).
 	if ch != nil {
 		select {
 		case ch <- dbWriteReq{seq: l.Seq, ll: l}:
 		default:
 		}
 	}
-
-	for _, sub := range subs {
+	for sub := range s.subs {
 		select {
 		case sub <- l:
 		default:
 		}
 	}
+	s.mu.Unlock()
 }
 
 // recent returns ring lines with Seq > since (capped to limit), and the latest seq.
@@ -223,4 +219,21 @@ func levelOf(msg string) string {
 		}
 	}
 	return "info"
+}
+
+// CloseDB detaches this owner's admission, drains the queue and joins its writer.
+// Calling with a different DB cannot stop another Server's current binding.
+func (s *logSinkT) CloseDB(pg *db.DB) {
+	s.mu.Lock()
+	if s.dbOwner != pg || s.dbCh == nil {
+		s.mu.Unlock()
+		return
+	}
+	ch, done := s.dbCh, s.dbDone
+	s.dbCh = nil
+	s.dbOwner = nil
+	s.dbDone = nil
+	close(ch)
+	s.mu.Unlock()
+	<-done
 }

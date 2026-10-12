@@ -122,7 +122,7 @@ func (s *Server) chatUpload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		dest := uniqueUploadPath(dir, name)
-		if err := saveUpload(hdr, dest); err != nil {
+		if err := s.saveWorkspaceUpload(hdr, dest); err != nil {
 			writeErr(w, 500, "保存失败: "+err.Error())
 			return
 		}

@@ -378,6 +378,17 @@ func (d *DB) RecoverTaskArchiveJobs() error {
 // ClaimTaskArchiveJob claims one persistent FIFO item for the single archive
 // worker. It returns nil when the queue is empty.
 func (d *DB) ClaimTaskArchiveJob(ctx context.Context) (*TaskArchive, error) {
+	return d.claimTaskArchiveJob(ctx, 0)
+}
+
+// ClaimTaskArchiveJobID admits an explicitly selected session job, never an older FIFO item.
+func (d *DB) ClaimTaskArchiveJobID(ctx context.Context, id int64) (*TaskArchive, error) {
+	if id <= 0 {
+		return nil, ErrTaskArchiveState
+	}
+	return d.claimTaskArchiveJob(ctx, id)
+}
+func (d *DB) claimTaskArchiveJob(ctx context.Context, onlyID int64) (*TaskArchive, error) {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -385,9 +396,15 @@ func (d *DB) ClaimTaskArchiveJob(ctx context.Context) (*TaskArchive, error) {
 	defer tx.Rollback() //nolint:errcheck
 	var id int64
 	var queuedState string
+	filter := ""
+	var args []any
+	if onlyID > 0 {
+		filter = " AND id=$1"
+		args = []any{onlyID}
+	}
 	err = tx.QueryRowContext(ctx, `SELECT id,state FROM task_archives
-WHERE state IN ('archive_queued','restore_queued','delete_queued')
-ORDER BY requested_at,id`+d.archiveLockSuffix(` FOR UPDATE SKIP LOCKED`)+` LIMIT 1`).Scan(&id, &queuedState)
+WHERE state IN ('archive_queued','restore_queued','delete_queued')`+filter+`
+ORDER BY requested_at,id`+d.archiveLockSuffix(` FOR UPDATE SKIP LOCKED`)+` LIMIT 1`, args...).Scan(&id, &queuedState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

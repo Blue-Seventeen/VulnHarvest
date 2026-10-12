@@ -102,6 +102,7 @@ func retryableWorkerModelError(reason harness.TerminalReason, err error) bool {
 // (re)installed at runtime (LLM configured from the UI); the loops always run
 // but idle until an LLM is set.
 type Engine struct {
+	closing  atomic.Bool // admission is serialized by deleteMu
 	m        *Manager
 	debounce time.Duration
 
@@ -323,7 +324,7 @@ func (e *Engine) Resume(t *Task) {
 	}
 	e.deleteMu.RLock()
 	defer e.deleteMu.RUnlock()
-	if e.IsDeleting(t.ID) {
+	if e.closing.Load() || e.IsDeleting(t.ID) {
 		return
 	}
 	e.paused.Delete(t.ID)
@@ -759,7 +760,7 @@ func (e *Engine) ReadyFor(t *Task) bool {
 func (e *Engine) Run(ctx context.Context, t *Task) {
 	workers := e.m.Workers()
 	e.deleteMu.RLock()
-	if e.IsDeleting(t.ID) {
+	if e.closing.Load() || e.IsDeleting(t.ID) {
 		e.deleteMu.RUnlock()
 		return
 	}
@@ -835,7 +836,7 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		if e.IsPaused(t.ID) {
 			return // user-paused: don't plan
 		}
-		if e.IsDeleting(t.ID) {
+		if e.closing.Load() || e.IsDeleting(t.ID) {
 			return
 		}
 		// terminal task (goals all met → done, or failed): the run is over. A
@@ -944,7 +945,7 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 			}
 			continue // user-paused: don't claim/execute intents
 		}
-		if e.IsDeleting(t.ID) {
+		if e.closing.Load() || e.IsDeleting(t.ID) {
 			return
 		}
 		if e.isSettling(t.ID) {

@@ -146,6 +146,11 @@ func withEnv(extra []string) []string {
 
 // Manager owns the background tasks of one Session.
 type Manager struct {
+	lifecycle   sync.RWMutex
+	closing     bool
+	cleanupOnce sync.Once
+	workers     sync.WaitGroup
+
 	mu      sync.Mutex
 	tasks   map[string]*Task
 	order   []string
@@ -212,6 +217,12 @@ func cleanStaleSessions(base, current string) {
 // to a file; a watch goroutine records the exit status and (if backgrounded) a
 // completion notification.
 func (m *Manager) Spawn(spec SpawnSpec) (*Task, error) {
+	m.lifecycle.RLock()
+	defer m.lifecycle.RUnlock()
+	if m.closing {
+		return nil, fmt.Errorf("background manager closed")
+	}
+
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("task_%d", m.seq)
@@ -259,16 +270,19 @@ func (m *Manager) Spawn(spec SpawnSpec) (*Task, error) {
 	m.order = append(m.order, id)
 	m.mu.Unlock()
 
-	go m.watch(t, f)
+	m.workers.Add(1)
+	go func() { defer m.workers.Done(); m.watch(t, f) }()
 	return t, nil
 }
 
 func (m *Manager) watch(t *Task, f *os.File) {
 	stop := make(chan struct{})
-	go m.watchSize(t, stop)
+	sizeDone := make(chan struct{})
+	go func() { defer close(sizeDone); m.watchSize(t, stop) }()
 
 	err := t.cmd.Wait()
 	close(stop)
+	<-sizeDone
 	_ = f.Close()
 
 	m.mu.Lock()
@@ -516,12 +530,18 @@ func (m *Manager) Cleanup() {
 	if m == nil {
 		return
 	}
-	m.KillAll()
-	m.closeAllSessions()
-	if m.rootCancel != nil {
-		m.rootCancel()
-	}
-	_ = os.RemoveAll(filepath.Dir(m.dir)) // <base>/<sessionID>
+	m.cleanupOnce.Do(func() {
+		m.lifecycle.Lock()
+		m.closing = true
+		m.lifecycle.Unlock()
+		m.KillAll()
+		m.closeAllSessions()
+		if m.rootCancel != nil {
+			m.rootCancel()
+		}
+		m.workers.Wait()
+		_ = os.RemoveAll(filepath.Dir(m.dir))
+	})
 }
 
 // tailFile reads the last maxBytes of a file, prefixing a notice when earlier

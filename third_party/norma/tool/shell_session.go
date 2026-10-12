@@ -288,6 +288,12 @@ func (m *Manager) session(id string) (*ptySession, bool) {
 
 // openSession starts an interactive program in a fresh PTY and begins its read loop.
 func (m *Manager) openSession(command, workDir string, env []string, rows, cols int, mode string, prompt *regexp.Regexp) (*ptySession, error) {
+	m.lifecycle.RLock()
+	defer m.lifecycle.RUnlock()
+	if m.closing {
+		return nil, fmt.Errorf("background manager closed")
+	}
+
 	if !ptySupported() {
 		return nil, fmt.Errorf("交互式 shell(PTY) 在当前平台不支持")
 	}
@@ -320,7 +326,8 @@ func (m *Manager) openSession(command, workDir string, env []string, rows, cols 
 	m.sessions[id] = s
 	m.sessMu.Unlock()
 
-	go m.readLoop(s)
+	m.workers.Add(1)
+	go func() { defer m.workers.Done(); m.readLoop(s) }()
 	return s, nil
 }
 
@@ -442,4 +449,14 @@ func hexToBytes(items []string) []byte {
 		}
 	}
 	return out
+}
+
+func (m *Manager) spawnSessionWaiter(fn func()) {
+	m.lifecycle.RLock()
+	defer m.lifecycle.RUnlock()
+	if m.closing {
+		return
+	}
+	m.workers.Add(1)
+	go func() { defer m.workers.Done(); fn() }()
 }

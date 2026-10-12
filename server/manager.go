@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Autumn-27/artex/config"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -216,6 +219,12 @@ type DeleteTaskResult struct {
 // Manager owns the PostgreSQL data source (asset graph + every task's exploration
 // graph + config) and the in-memory set of task handles.
 type Manager struct {
+	mode        string
+	stateDir    string
+	trafficDone chan error
+	owner       *Server
+	closeOnce   sync.Once
+	closeErr    error
 	dir         string
 	pg          *pgdb.DB
 	assets      *pgdb.AssetStore
@@ -341,7 +350,26 @@ func (m *Manager) Enrich() *enrich.Engine { return m.enrich }
 
 // NewManager connects to PostgreSQL and, if proxyAddr is non-empty, starts the
 // traffic-recording proxy. PostgreSQL is required (it is the single data source).
+type ManagerOptions struct {
+	Mode          string
+	DataDir       string
+	StateDir      string
+	ProxyAddr     string
+	ProxyListener net.Listener
+}
+
 func NewManager(dir, proxyAddr string) (*Manager, error) {
+	return NewManagerWithOptions(ManagerOptions{Mode: "postgres", DataDir: dir, ProxyAddr: proxyAddr})
+}
+func NewManagerWithOptions(options ManagerOptions) (*Manager, error) {
+	dir, proxyAddr := options.DataDir, options.ProxyAddr
+	if options.Mode != "portable" && options.Mode != "postgres" {
+		return nil, fmt.Errorf("invalid manager mode %q", options.Mode)
+	}
+	if options.ProxyListener != nil {
+		proxyAddr = options.ProxyListener.Addr().String()
+	}
+
 	// Resolve the data dir to an ABSOLUTE path up front. Every data path derives
 	// from it — notably the MITM CA cert, whose path is injected into worker shells
 	// (SSL_CERT_FILE/CURL_CA_BUNDLE) and read by WebFetch. A relative path (the
@@ -354,14 +382,26 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	dsn, source, err := pgdb.DSN()
-	if err != nil {
-		return nil, err
+	var pg *pgdb.DB
+	var err error
+	if options.Mode == "portable" {
+		if options.StateDir == "" || !filepath.IsAbs(options.StateDir) {
+			return nil, fmt.Errorf("portable requires absolute state directory")
+		}
+		if err = os.MkdirAll(options.StateDir, 0700); err != nil {
+			return nil, err
+		}
+		pg, err = pgdb.OpenSQLite(filepath.Join(options.StateDir, "main.sqlite"))
+	} else {
+		dsn, source, e := pgdb.DSN()
+		if e != nil {
+			return nil, e
+		}
+		log.Printf("[pg] 数据库配置来源: %s", source)
+		pg, err = pgdb.Open(dsn)
 	}
-	log.Printf("[pg] 数据库配置来源: %s", source)
-	pg, err := pgdb.Open(dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s storage: %w", options.Mode, err)
 	}
 	if err := pg.RecoverFindingRetests(); err != nil {
 		pg.Close()
@@ -373,10 +413,18 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err := pg.EnsureLLMUsageTable(); err != nil {
 		log.Printf("[llmusage] create table: %v", err)
 	}
-	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
+	m := &Manager{mode: options.Mode, stateDir: options.StateDir, dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
 	if proxyAddr != "" {
-		tr, err := traffic.Open(filepath.Join(dir, "traffic"), proxyAddr)
+		trafficDir := filepath.Join(dir, "traffic")
+		if options.Mode == "portable" {
+			trafficDir = filepath.Join(options.StateDir, "traffic")
+		}
+		tr, err := traffic.Open(trafficDir, proxyAddr)
 		if err != nil {
+			if options.Mode == "portable" {
+				pg.Close()
+				return nil, fmt.Errorf("portable traffic: %w", err)
+			}
 			log.Printf("[traffic] disabled: %v", err)
 		} else {
 			err = tr.RecoverHostDeleteStages(func(_ int64, taskID int64) (bool, error) {
@@ -399,9 +447,17 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		}
 		if tr != nil {
 			m.traffic = tr
+			m.trafficDone = make(chan error, 1)
 			go func() {
 				log.Printf("[traffic] recording proxy on %s (set HTTP_PROXY=%s + trust _ca CA)", proxyAddr, tr.ProxyAddr())
-				if err := tr.Start(); err != nil {
+				var err error
+				if options.ProxyListener != nil {
+					err = tr.Serve(options.ProxyListener)
+				} else {
+					err = tr.Start()
+				}
+				m.trafficDone <- err
+				if err != nil {
 					log.Printf("[traffic] proxy stopped: %v", err)
 				}
 			}()
@@ -436,7 +492,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	}
 	if m.traffic != nil {
 		if err := m.traffic.SetUpstreamProxy(m.globalProxy); err != nil {
-			log.Printf("[proxy] 全局代理 %q 无效，已忽略: %v", m.globalProxy, err)
+			log.Printf("[proxy] 全局代理 %q 无效，已忽略: %v", config.Redact(m.globalProxy), config.Redact(err.Error()))
 		}
 	}
 	m.enrich = enrich.New(m.assets, m.ProxyAddr, 4)
@@ -638,6 +694,9 @@ const browserMCPName = "browser"
 // capture off → strip both. Idempotent, and a no-op if the user deleted/renamed the
 // MCP. Must be called WITHOUT m.mu held (ProxyAddr/ProxyCACert take the lock).
 func (m *Manager) syncBrowserMCPProxy() {
+	if m.mode == "portable" {
+		return
+	} // launch overlay is session-scoped; preserve saved definitions
 	servers, err := m.pg.ListMCP()
 	if err != nil {
 		log.Printf("[mcp] browser 代理同步: 读取 MCP 列表失败: %v", err)
@@ -801,12 +860,24 @@ func (m *Manager) SetGlobalProxy(raw string) error {
 }
 
 func (m *Manager) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.traffic != nil {
-		m.traffic.Close()
-	}
-	return m.pg.Close()
+	m.closeOnce.Do(func() {
+		if m.owner != nil {
+			_ = m.owner.Shutdown(context.Background())
+		}
+		if m.enrich != nil {
+			m.enrich.Close()
+		}
+		if m.traffic != nil {
+			m.closeErr = m.traffic.Close()
+			if m.trafficDone != nil {
+				<-m.trafficDone
+			}
+		}
+		if m.pg != nil {
+			m.closeErr = errors.Join(m.closeErr, m.pg.Close())
+		}
+	})
+	return m.closeErr
 }
 
 // isTerminalStatus reports whether a task status is terminal (done/failed/timeout).

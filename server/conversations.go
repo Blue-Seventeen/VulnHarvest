@@ -128,11 +128,6 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.archiveConversationMu.Lock()
-	defer s.archiveConversationMu.Unlock()
-	if !s.archiveConversationWritable(w, c.ID) {
-		return
-	}
 	var req struct {
 		LLMProfileID *int64 `json:"llm_profile_id"` // null clears the override
 	}
@@ -144,6 +139,11 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, "指定的 LLM 配置不存在或未设置 API Key")
 			return
 		}
+	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	if !s.archiveConversationWritable(w, c.ID) {
+		return
 	}
 	if err := pg.UpdateConversationProfile(c.ID, req.LLMProfileID); err != nil {
 		writeErr(w, 500, err.Error())
@@ -180,11 +180,6 @@ func (s *Server) pgRenameConversation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.archiveConversationMu.Lock()
-	defer s.archiveConversationMu.Unlock()
-	if !s.archiveConversationWritable(w, c.ID) {
-		return
-	}
 	var req struct {
 		Title  *string `json:"title"`
 		Pinned *bool   `json:"pinned"`
@@ -207,6 +202,11 @@ func (s *Server) pgRenameConversation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Title = &title
+	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	if !s.archiveConversationWritable(w, c.ID) {
+		return
 	}
 	updated, err := pg.UpdateConversation(c.ID, db.ConversationPatch{Title: req.Title, Pinned: req.Pinned})
 	if err != nil {
@@ -413,11 +413,6 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	s.archiveConversationMu.Lock()
-	defer s.archiveConversationMu.Unlock()
-	if !s.archiveConversationWritable(w, c.ID) {
-		return
-	}
 	var req struct {
 		Message     string           `json:"message"`
 		Attachments []chatAttachment `json:"attachments,omitempty"` // 方式1 上传的文件(路径相对会话工作目录)
@@ -429,6 +424,11 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	msg := strings.TrimSpace(req.Message)
 	if msg == "" && len(req.Attachments) == 0 {
 		writeErr(w, 400, "消息不能为空")
+		return
+	}
+	s.archiveConversationMu.Lock()
+	defer s.archiveConversationMu.Unlock()
+	if !s.archiveConversationWritable(w, c.ID) {
 		return
 	}
 	agentMessage, ok := s.prepareChatMentionMessage(w, msg)
@@ -497,7 +497,7 @@ func (s *Server) runConversation(c *db.Conversation, msg, busyKey string, userMe
 	if len(userMessage) == 1 {
 		ctx = intercept.WithReviewContext(ctx, "", intercept.ReviewBackground{Source: intercept.BackgroundUserMessage, Text: userMessage[0]})
 	}
-	go s.runConversationTurn(ctx, cancel, c, msg, busyKey)
+	s.goOwned(func() { s.runConversationTurn(ctx, cancel, c, msg, busyKey) })
 }
 
 // runConversationSync runs ONE agent turn on a conversation and BLOCKS until the
@@ -667,7 +667,7 @@ func (s *Server) pumpLocked(agentKey string) {
 	for s.triggerActive[agentKey] < limit && len(s.triggerQ[agentKey]) > 0 {
 		item := s.nextTriggerRun(agentKey, cfg)
 		s.triggerActive[agentKey]++
-		go s.runAndPump(agentKey, item)
+		s.goOwned(func() { s.runAndPump(agentKey, item) })
 	}
 }
 

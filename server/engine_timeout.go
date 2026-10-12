@@ -50,7 +50,7 @@ func (e *Engine) inflightCounter(taskID string) *int64 {
 func (e *Engine) beginTaskOperation(taskID string) bool {
 	e.deleteMu.RLock()
 	defer e.deleteMu.RUnlock()
-	if e.IsDeleting(taskID) {
+	if e.closing.Load() || e.IsDeleting(taskID) {
 		return false
 	}
 	atomic.AddInt64(e.inflightCounter(taskID), 1)
@@ -133,7 +133,7 @@ func (e *Engine) startDeadlineCoordinator(ctx context.Context, t *Task) {
 		return
 	}
 	e.deleteMu.RLock()
-	if e.IsDeleting(t.ID) {
+	if e.closing.Load() || e.IsDeleting(t.ID) {
 		e.deleteMu.RUnlock()
 		return
 	}
@@ -230,7 +230,7 @@ func (e *Engine) settleTask(ctx context.Context, t *Task) {
 // task-timeout planner words (final goal judgment; no new intents). Waits for the
 // LLM to be ready (bounded by ctx) so a completable task isn't mis-judged timeout.
 func (e *Engine) runFinalPlannerRound(ctx context.Context, t *Task) (met bool) {
-	if e.IsDeleting(t.ID) {
+	if e.closing.Load() || e.IsDeleting(t.ID) {
 		return false
 	}
 	planner, _ := e.snapshotFor(t)
@@ -241,7 +241,7 @@ func (e *Engine) runFinalPlannerRound(ctx context.Context, t *Task) (met bool) {
 		if isTerminalStatus(e.m.TaskStatus(t.ID)) {
 			return false
 		}
-		if e.IsDeleting(t.ID) {
+		if e.closing.Load() || e.IsDeleting(t.ID) {
 			return false
 		}
 		planner, _ = e.snapshotFor(t)

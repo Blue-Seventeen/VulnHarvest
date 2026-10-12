@@ -151,10 +151,10 @@ func NewShellOpen() CoreTool {
 			out, cur, _ := s.readSince(0, 0, sessDefReadByte*4, false)
 			return jsonResult(map[string]any{"session_id": s.id, "state": "running", "done_by": by, "output": out, "cursor": cur, "running": s.running()})
 		case "dispatch":
-			go m.dispatchWaiter(s, quiet, grace, ms(0, sessWaitCapMs))
+			m.spawnSessionWaiter(func() { m.dispatchWaiter(s, quiet, grace, ms(0, sessWaitCapMs)) })
 			return jsonResult(map[string]any{"session_id": s.id, "state": "running", "dispatched": true})
 		case "monitor":
-			go m.monitorWaiter(s, watch)
+			m.spawnSessionWaiter(func() { m.monitorWaiter(s, watch) })
 			return jsonResult(map[string]any{"session_id": s.id, "state": "running", "monitoring": len(watch)})
 		default: // hands-free
 			return jsonResult(map[string]any{"session_id": s.id, "state": "running"})
