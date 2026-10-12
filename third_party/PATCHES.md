@@ -89,7 +89,7 @@ SumDB check.
 
 `upstream-manifest.json` records every one of the 104 upstream files using raw
 byte size/SHA-256, the compressed zip SHA-256, Go h1 content checksum, and all
-changed/added/deleted files. Eleven upstream files are changed; two lifecycle
+changed/added/deleted files. Eleven upstream files are changed; three lifecycle
 files are added; 93 files remain byte-for-byte unchanged; no files are deleted.
 The narrowly scoped `-text` Git attributes preserve those bytes across Windows
 and other checkouts. `patches/go-mitmproxy-v1.9.2.patch` is the standalone
@@ -106,6 +106,12 @@ Changes:
 - `proxy/entry.go`: preserve wrapListener and ConnContext; track clients and
   connect upstream socket lifetimes without reading mutable ConnContext during
   Close. Closing sockets never invokes addons under the registry mutex.
+  Non-TLS upstream closure requests client closure at entry HTTP StateIdle,
+  after response flush. State changes, idle checks and the client close claim
+  share the client mutex; callbacks run outside it. The request is sticky for
+  any owned upstream, including when another keep-alive response is active.
+  StateNew and hijacked CONNECT/WS connections are not treated as HTTP idle;
+  their existing owners and force-stop Close remain responsible for closure.
 - `proxy/attacker.go`: close-wake listener without closing send channel; owned
   request contexts; h2 service+watcher joining; TLS worker cancellation/join;
   register outgoing callback owners, including first/lazy TLS capture. H2 uses
@@ -127,13 +133,20 @@ Changes:
 - `proxy/listener_lifecycle_test.go` (added): local reserved-listener HTTP,
   HTTPS, h2, WSS, transparent CONNECT payload, stalled TLS, callback/copy joins,
   listener failure/ownership and concurrent Close regression tests.
+- `proxy/http_close_test.go` (added): real upstream-disconnect barrier and exact
+  2,457,600-byte blocked response; idle disconnect, second keep-alive response
+  with multiple owned upstreams, concurrent idle/close transitions, reentrant
+  wrapper callbacks and forced Shutdown that interrupts sockets before joining
+  a blocked capture. All proxy CA fixtures use owned temporary directories.
 - `proxy/proxy_test.go`, `proxy/sse_hook_test.go`, `proxy/sse_realtime_test.go`,
   `proxy/sse_test.go` and `proxy/websocket_test.go`: isolate all 15 proxy CA
   constructors and the two direct CA constructors in `t.TempDir()`. The
   untrusted-certificate assertion checks `x509.UnknownAuthorityError` rather
   than a platform-specific message. TLS, SSE and WebSocket behavior assertions
-  remain intact. Two HTTP immediate-close baseline failures remain a separate
-  response-completion correction; full proxy success is not claimed here.
+  remain intact. The response-completion correction retains the original HTTP
+  immediate-close and callback-order assertions. A rejected unconditional
+  client.Close prototype truncated a blocked legitimate response to zero bytes;
+  it is not the production implementation.
 
 Shutdown is deliberately stop-and-join, including live tunnels. It shares
 Close's force-stop boundary; an expired context is returned only after all

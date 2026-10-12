@@ -53,12 +53,14 @@ type wrapClientConn struct {
 	proxy   *Proxy
 	connCtx *ConnContext
 
-	closeMu   sync.Mutex
-	closed    bool
-	closeErr  error
-	closeChan chan struct{}
-	upstream  []net.Conn  // protected by closeMu; never read mutable ConnContext on Close
-	tls       atomic.Bool // close callbacks do not race the CONNECT negotiation flag
+	closeMu          sync.Mutex
+	closed           bool
+	closeErr         error
+	closeChan        chan struct{}
+	upstream         []net.Conn  // protected by closeMu; never read mutable ConnContext on Close
+	tls              atomic.Bool // close callbacks do not race the CONNECT negotiation flag
+	httpState        http.ConnState
+	httpClosePending bool
 }
 
 func newWrapClientConn(c net.Conn, proxy *Proxy) *wrapClientConn {
@@ -67,6 +69,7 @@ func newWrapClientConn(c net.Conn, proxy *Proxy) *wrapClientConn {
 		r:         bufio.NewReader(c),
 		proxy:     proxy,
 		closeChan: make(chan struct{}),
+		httpState: http.StateNew,
 	}
 }
 
@@ -92,19 +95,21 @@ func (c *wrapClientConn) attachUpstream(conn net.Conn) bool {
 	return true
 }
 
-func (c *wrapClientConn) Close() error {
-	c.closeMu.Lock()
+func (c *wrapClientConn) claimCloseLocked() ([]net.Conn, bool) {
 	if c.closed {
-		c.closeMu.Unlock()
-		return c.closeErr
+		return nil, false
 	}
 	log.Debugln("in wrapClientConn close", c.connCtx.ClientConn.Conn.RemoteAddr())
 
 	c.closed = true
+	c.httpClosePending = false
 	c.closeErr = c.Conn.Close()
 	upstream := c.upstream
 	c.upstream = nil
-	c.closeMu.Unlock()
+	return upstream, true
+}
+
+func (c *wrapClientConn) finishClose(upstream []net.Conn) {
 	defer c.proxy.untrack(c)
 	close(c.closeChan)
 
@@ -116,7 +121,50 @@ func (c *wrapClientConn) Close() error {
 		conn.Close()
 	}
 
-	return c.closeErr
+}
+
+func (c *wrapClientConn) Close() error {
+	c.closeMu.Lock()
+	upstream, claimed := c.claimCloseLocked()
+	err := c.closeErr
+	c.closeMu.Unlock()
+	if claimed {
+		c.finishClose(upstream)
+	}
+	return err
+}
+
+func (c *wrapClientConn) setHTTPState(state http.ConnState) {
+	c.closeMu.Lock()
+	c.httpState = state
+	var upstream []net.Conn
+	claimed := false
+	if state == http.StateIdle && c.httpClosePending {
+		upstream, claimed = c.claimCloseLocked()
+	}
+	c.closeMu.Unlock()
+	if claimed {
+		c.finishClose(upstream)
+	}
+}
+
+func (c *wrapClientConn) closeWhenHTTPIdle() {
+	c.closeMu.Lock()
+	if c.closed {
+		c.closeMu.Unlock()
+		return
+	}
+	// Any owned upstream may request closure; a new owner cannot clear it.
+	c.httpClosePending = true
+	var upstream []net.Conn
+	claimed := false
+	if c.httpState == http.StateIdle {
+		upstream, claimed = c.claimCloseLocked()
+	}
+	c.closeMu.Unlock()
+	if claimed {
+		c.finishClose(upstream)
+	}
 }
 
 // wrap tcpConn for remote server
@@ -152,9 +200,7 @@ func (c *wrapServerConn) Close() error {
 
 	client := c.connCtx.ClientConn.Conn.(*wrapClientConn)
 	if !client.tls.Load() {
-		if tcp, ok := client.Conn.(*net.TCPConn); ok {
-			tcp.CloseRead()
-		}
+		client.closeWhenHTTPIdle()
 	} else {
 		// if keep-alive connection close
 		if !c.connCtx.closeAfterResponse.Load() {
@@ -174,8 +220,11 @@ func newEntry(proxy *Proxy) *entry {
 	e := &entry{proxy: proxy}
 	e.server = &http.Server{
 		BaseContext: func(net.Listener) context.Context { return proxy.life.ctx },
-		Addr:        proxy.Opts.Addr,
-		Handler:     e,
+		ConnState: func(conn net.Conn, state http.ConnState) {
+			conn.(*wrapClientConn).setHTTPState(state)
+		},
+		Addr:    proxy.Opts.Addr,
+		Handler: e,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			return context.WithValue(ctx, connContextKey, c.(*wrapClientConn).connCtx)
 		},
