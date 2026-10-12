@@ -21,34 +21,24 @@ import (
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/config"
 	"github.com/Autumn-27/artex/runtimeenv"
-	"github.com/Autumn-27/artex/selfupdate"
 	"github.com/Autumn-27/artex/server"
 )
 
 // version is the build version, injected at release time via
-// -ldflags "-X main.version=<tag>". Defaults to "dev" for local builds.
-var version = "dev"
+// -ldflags "-X main.version=<tag>". Defaults to the product release version.
+var version = "v0.0.1"
 
-const banner = `
-    _    ____ _____ _______  __
-   / \  |  _ \_   _| ____\ \/ /
-  / _ \ | |_) || | |  _|  \  /
- / ___ \|  _ < | | | |___ /  \
-/_/   \_\_| \_\|_| |_____/_/\_\
-`
+const banner = "\n  VulnHarvest "
 
 // printBanner writes the startup banner + version/runtime info to stdout.
 func printBanner(addr string) {
-	fmt.Print(banner)
+	fmt.Println(banner + version)
 	fmt.Println("  AI 自主渗透测试系统")
 	fmt.Printf("  版本 %s  ·  %s/%s  ·  %s  ·  监听 %s\n\n",
 		version, runtime.GOOS, runtime.GOARCH, runtime.Version(), addr)
 }
 
-// main only maps run's result onto the process exit code. The exit code is part
-// of the update protocol — the supervising start script reads it to decide
-// whether to relaunch us (see selfupdate.ExitRestart) — so the body has to live
-// in a function that can *return* rather than os.Exit past its own defers.
+// main maps the return code after deferred runtime cleanup.
 func main() {
 	os.Exit(run())
 }
@@ -246,8 +236,6 @@ func run() int {
 			code = 1
 		}
 		httpDone = nil
-	case <-server.RestartRequested():
-		code = selfupdate.ExitRestart
 	}
 	shutdown(agent.AbortShutdown)
 	log.Println("shutting down...")

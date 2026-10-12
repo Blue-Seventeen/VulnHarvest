@@ -15,7 +15,8 @@ services:
     restart: unless-stopped
 
   artex:
-    image: autumn27/artex:${ARTEX_TAG:-latest}
+    image: vulnharvest:0.0.1
+    pull_policy: never
     depends_on:
       postgres:
         condition: service_healthy

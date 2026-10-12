@@ -1592,6 +1592,32 @@ export interface UpdateCheck {
   reason?: string;
 }
 
+export interface RuntimeToolStatus {
+  name: string;
+  source: string;
+  version?: string;
+  path?: string;
+  executable?: string;
+  architecture?: string;
+  status: "ready" | "missing" | "unverified" | "incompatible" | string;
+  affected_features: string[];
+  candidate_failures?: { source: string; path: string; reason: string }[];
+}
+export interface RuntimeSnapshot {
+  generation: number;
+  tools: Record<string, RuntimeToolStatus>;
+  pty_supported: boolean;
+  pty_status: string;
+}
+export interface RuntimeInfo {
+  mode: "portable" | "postgres" | string;
+  http_address: string;
+  proxy_address: string;
+  environment: RuntimeSnapshot;
+  background: Record<string, boolean>;
+  pending_delivery_effect: string;
+}
+
 /** /api/update/stream 推送的一条更新进度。 */
 export interface UpdateProgress {
   phase: "idle" | "downloading" | "verifying" | "extracting" | "staged" | "failed";
