@@ -85,7 +85,7 @@ func Selection(exe, path, name string) (Entry, error) {
 	if choice.Helper != helperHash {
 		return Entry{}, fmt.Errorf("helper selection mismatch")
 	}
-	helper, err := readRegular(root, filepath.Join("cache", helperHash, AliasName(name)), 64<<20)
+	helper, err := readRegular(root, filepath.Join("cache", helperHash, AliasName(name)), 64<<20, true)
 	if err != nil {
 		return Entry{}, err
 	}

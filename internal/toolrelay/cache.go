@@ -64,7 +64,7 @@ func samePath(a, b string) bool {
 	}
 	return filepath.Clean(a) == filepath.Clean(b)
 }
-func readRegular(root *os.Root, name string, limit int64) ([]byte, error) {
+func readRegular(root *os.Root, name string, limit int64, executable ...bool) ([]byte, error) {
 	info, err := root.Lstat(name)
 	if err != nil {
 		return nil, err
@@ -80,6 +80,11 @@ func readRegular(root *os.Root, name string, limit int64) ([]byte, error) {
 	opened, err := f.Stat()
 	if err != nil || !os.SameFile(info, opened) {
 		return nil, fmt.Errorf("relay file identity changed")
+	}
+	// Verify the opened alias, not just the packaged source. Manifests remain
+	// intentionally 0600; Windows build hosts expose no Unix execute bits.
+	if len(executable) > 0 && executable[0] && runtime.GOOS != "windows" && opened.Mode()&0111 == 0 {
+		return nil, fmt.Errorf("relay helper is not executable")
 	}
 	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if len(b) > int(limit) {
@@ -207,7 +212,7 @@ func verify(root *os.Root, dir string, files map[string][]byte) error {
 		return fmt.Errorf("unexpected cache files")
 	}
 	for name, want := range files {
-		got, err := readRegular(sub, name, int64(len(want)))
+		got, err := readRegular(sub, name, int64(len(want)), name != Manifest)
 		if err != nil {
 			return err
 		}
