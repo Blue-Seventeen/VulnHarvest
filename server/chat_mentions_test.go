@@ -129,21 +129,14 @@ func TestChatMentionWorkerReceivesServerDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fid int64
-	t.Cleanup(func() {
-		cancel()
-		drain, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		if err := s.waitTaskQuiescent(drain, task.ID); err != nil {
-			t.Error(err)
-		}
+	cleanupManualTaskEngineRows(t, s, cancel, func() error {
 		if fid != 0 {
 			if _, err := m.pg.DeleteFinding(fid); err != nil {
 				t.Error(err)
 			}
 		}
-		if _, err := m.DeleteTask(task.ID, DeleteTaskOptions{}); err != nil {
-			t.Error(err)
-		}
+		_, err := m.DeleteTask(task.ID, DeleteTaskOptions{})
+		return err
 	})
 	iid, err := task.Store.AddNode(db.KindIntent, map[string]any{"summary": "Read referenced records only"}, 1, "paused", "human", nil)
 	if err != nil {

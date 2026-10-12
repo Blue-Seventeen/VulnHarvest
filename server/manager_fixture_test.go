@@ -72,3 +72,16 @@ func cleanupTestManagerRows(t *testing.T, m *Manager, cleanup func() error) {
 		}
 	})
 }
+
+func cleanupManualTaskEngineRows(t *testing.T, s *Server, cancel context.CancelFunc, cleanup func() error) {
+	t.Helper()
+	t.Cleanup(func() {
+		cancel()
+		// This manual Server has no Manager owner. Join detached inflight runs
+		// through the real Engine before rows or the Manager store can close.
+		s.engine.Shutdown()
+		if err := cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+}
