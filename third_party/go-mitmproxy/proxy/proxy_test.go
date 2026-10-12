@@ -430,25 +430,45 @@ func TestProxy(t *testing.T) {
 func TestProxyWhenServerNotKeepAlive(t *testing.T) {
 	server := &http.Server{}
 	server.SetKeepAlivesEnabled(false)
+	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	handleError(t, err)
 	helper := &testProxyHelper{
 		server:    server,
-		proxyAddr: ":29081",
+		proxyAddr: ":" + strconv.Itoa(proxyListener.Addr().(*net.TCPAddr).Port),
 	}
+	// Test cleanup below owns and joins this retained listener.
 	helper.init(t)
 	httpEndpoint := helper.httpEndpoint
 	httpsEndpoint := helper.httpsEndpoint
-	testOrderAddonInstance := helper.testOrderAddonInstance
 	testProxy := helper.testProxy
 	getProxyClient := helper.getProxyClient
-	defer helper.ln.Close()
-	go helper.server.Serve(helper.ln)
-	defer helper.tlsPlainLn.Close()
-	go helper.server.Serve(helper.tlsLn)
-	go testProxy.Start()
-	time.Sleep(time.Millisecond * 10) // wait for test proxy startup
+	order := &connectionOrderAddon{events: make(map[string][]string), requests: make(map[string]string), changed: make(chan struct{}, 1)}
+	testProxy.AddAddon(order)
+	serveDone := make(chan error, 3)
+	go func() { serveDone <- helper.server.Serve(helper.ln) }()
+	go func() { serveDone <- helper.server.Serve(helper.tlsLn) }()
+	go func() { serveDone <- testProxy.Serve(proxyListener) }()
+	t.Cleanup(func() {
+		handleError(t, testProxy.Close())
+		handleError(t, helper.server.Close())
+		_ = helper.ln.Close()
+		_ = helper.tlsPlainLn.Close()
+		for i := 0; i < 3; i++ {
+			select {
+			case err := <-serveDone:
+				if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+					t.Errorf("owned Serve: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Error("owned Serve did not join")
+			}
+		}
+	})
 
 	t.Run("should not have eof error when server side DisableKeepAlives", func(t *testing.T) {
 		proxyClient := getProxyClient()
+		proxyClient.Timeout = 5 * time.Second
+		t.Cleanup(proxyClient.CloseIdleConnections)
 		t.Run("http", func(t *testing.T) {
 			for i := 0; i < 10; i++ {
 				testSendRequest(t, httpEndpoint, proxyClient, "ok")
@@ -462,28 +482,90 @@ func TestProxyWhenServerNotKeepAlive(t *testing.T) {
 	})
 
 	t.Run("should trigger disconnect functions when server DisableKeepAlives", func(t *testing.T) {
-		proxyClient := getProxyClient()
-
 		t.Run("http", func(t *testing.T) {
-			time.Sleep(time.Millisecond * 10)
-			testOrderAddonInstance.reset()
-			testSendRequest(t, httpEndpoint, proxyClient, "ok")
-			time.Sleep(time.Millisecond * 10)
-			testOrderAddonInstance.contains(t, "ClientDisconnected")
-			testOrderAddonInstance.contains(t, "ServerDisconnected")
-			testOrderAddonInstance.before(t, "ServerDisconnected", "ClientDisconnected")
+			client := getProxyClient()
+			client.Timeout = 5 * time.Second
+			t.Cleanup(client.CloseIdleConnections)
+			testSendRequest(t, httpEndpoint+"order-http", client, "ok")
+			order.waitBefore(t, "/order-http", "ServerDisconnected", "ClientDisconnected")
 		})
 
 		t.Run("https", func(t *testing.T) {
-			time.Sleep(time.Millisecond * 10)
-			testOrderAddonInstance.reset()
-			testSendRequest(t, httpsEndpoint, proxyClient, "ok")
-			time.Sleep(time.Millisecond * 10)
-			testOrderAddonInstance.contains(t, "ClientDisconnected")
-			testOrderAddonInstance.contains(t, "ServerDisconnected")
-			testOrderAddonInstance.before(t, "ServerDisconnected", "ClientDisconnected")
+			client := getProxyClient()
+			client.Timeout = 5 * time.Second
+			t.Cleanup(client.CloseIdleConnections)
+			testSendRequest(t, httpsEndpoint+"order-https", client, "ok")
+			order.waitBefore(t, "/order-https", "ServerDisconnected", "ClientDisconnected")
 		})
 	})
+}
+
+type connectionOrderAddon struct {
+	BaseAddon
+	mu       sync.Mutex
+	events   map[string][]string
+	requests map[string]string
+	changed  chan struct{}
+}
+
+func (a *connectionOrderAddon) append(id, event string) {
+	a.mu.Lock()
+	a.events[id] = append(a.events[id], event)
+	a.mu.Unlock()
+	select {
+	case a.changed <- struct{}{}:
+	default:
+	}
+}
+
+func (a *connectionOrderAddon) ClientConnected(c *ClientConn) {
+	a.append(c.Id.String(), "ClientConnected")
+}
+func (a *connectionOrderAddon) ClientDisconnected(c *ClientConn) {
+	a.append(c.Id.String(), "ClientDisconnected")
+}
+func (a *connectionOrderAddon) ServerConnected(c *ConnContext) {
+	a.append(c.ClientConn.Id.String(), "ServerConnected")
+}
+func (a *connectionOrderAddon) ServerDisconnected(c *ConnContext) {
+	a.append(c.ClientConn.Id.String(), "ServerDisconnected")
+}
+func (a *connectionOrderAddon) Request(f *Flow) {
+	a.mu.Lock()
+	a.requests[f.Request.URL.Path] = f.ConnContext.ClientConn.Id.String()
+	a.mu.Unlock()
+}
+
+func (a *connectionOrderAddon) waitBefore(t *testing.T, path, first, second string) {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for {
+		a.mu.Lock()
+		id := a.requests[path]
+		events := append([]string(nil), a.events[id]...)
+		a.mu.Unlock()
+		firstAt, secondAt := -1, -1
+		for i, event := range events {
+			if event == first {
+				firstAt = i
+			}
+			if event == second {
+				secondAt = i
+			}
+		}
+		if firstAt >= 0 && secondAt >= 0 {
+			if firstAt >= secondAt {
+				t.Fatalf("connection=%s path=%s actual arrival=%v: expected %s before %s", id, path, events, first, second)
+			}
+			return
+		}
+		select {
+		case <-a.changed:
+		case <-deadline.C:
+			t.Fatalf("connection=%s path=%s incomplete arrival=%v", id, path, events)
+		}
+	}
 }
 
 func TestProxyWhenServerKeepAliveButCloseImmediately(t *testing.T) {

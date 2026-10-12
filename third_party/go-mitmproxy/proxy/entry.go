@@ -113,6 +113,12 @@ func (c *wrapClientConn) finishClose(upstream []net.Conn) {
 	defer c.proxy.untrack(c)
 	close(c.closeChan)
 
+	// For a response-owned close, the server side callback is the authoritative
+	// event. Wait outside closeMu so reentrant addon callbacks and force shutdown
+	// remain safe; client-originated closes retain their historical ordering.
+	if c.connCtx.closeAfterResponse.Load() {
+		<-c.connCtx.serverCloseDone
+	}
 	for _, addon := range c.proxy.Addons {
 		addon.ClientDisconnected(c.connCtx.ClientConn)
 	}
@@ -194,6 +200,7 @@ func (c *wrapServerConn) Close() error {
 	for _, addon := range c.proxy.Addons {
 		addon.ServerDisconnected(c.connCtx)
 	}
+	c.connCtx.signalServerCloseDone()
 	if c.proxy.isClosing() {
 		return c.closeErr
 	}

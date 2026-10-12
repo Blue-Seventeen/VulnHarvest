@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"sync"
 
 	uuid "github.com/satori/go.uuid"
 	"go.uber.org/atomic"
@@ -82,16 +83,23 @@ type ConnContext struct {
 	FlowCount  atomic.Uint32 `json:"-"`         // Number of HTTP requests made on the same connection
 
 	proxy              *Proxy
-	closeAfterResponse atomic.Bool                 // after http response, http server will close the connection
+	closeAfterResponse atomic.Bool   // after http response, http server will close the connection
+	serverCloseDone    chan struct{} // server-driven response close completed its callback
+	serverCloseOnce    sync.Once
 	dialFn             func(context.Context) error // when begin request, if there no ServerConn, use this func to dial
 }
 
 func newConnContext(c net.Conn, proxy *Proxy) *ConnContext {
 	clientConn := newClientConn(c)
 	return &ConnContext{
-		ClientConn: clientConn,
-		proxy:      proxy,
+		ClientConn:      clientConn,
+		proxy:           proxy,
+		serverCloseDone: make(chan struct{}),
 	}
+}
+
+func (connCtx *ConnContext) signalServerCloseDone() {
+	connCtx.serverCloseOnce.Do(func() { close(connCtx.serverCloseDone) })
 }
 
 func (connCtx *ConnContext) Id() uuid.UUID {
