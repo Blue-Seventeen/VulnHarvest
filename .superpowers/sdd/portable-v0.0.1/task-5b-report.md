@@ -29,6 +29,8 @@
 
 ## Fix1 — I1–I5 与 M1/M2 集中修复
 
+Fix1 固定源码提交：`aad0e5d16405837c02bbe4f2c422d349164e13c3`。此后报告提交只补本行；生产源码、测试和 provenance 与固定提交一致，controller 应以此 SHA 执行 native/race 与 re-review。
+
 本节替代上方首轮 provenance 沿用/待验证的结论。Fix1 基线为 `8af8a93b3825133d36d62de56da40107bf4b4ced`，全部实验只用本工作树 TempDir、loopback、专用 PG 容器的 `vh_runtime`；未读取旧安装或真实 LLM secret。密码只经 `VULNHARVEST_PORTABLE_TEST_PG_PASSWORD` 注入，不写入报告或提交。上方首轮 norma 测试命令写成 `go test ./third_party/norma/tool` 不准确：nested module 的真实运行必须切换到 `third_party/norma` 后执行，下方给出准确命令。
 
 ### 最终实现与交接
