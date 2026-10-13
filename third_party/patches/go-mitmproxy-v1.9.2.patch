@@ -2240,7 +2240,21 @@
  		Addr:        helper.proxyAddr, // some random port
  		SslInsecure: true,
  	})
-@@ -275,7 +278,8 @@
+@@ -271,11 +274,21 @@
+ 
+ 	t.Run("test https server", func(t *testing.T) {
+ 		t.Run("should generate not trusted error", func(t *testing.T) {
+-			_, err := http.Get(httpsEndpoint)
++			client := &http.Client{
++				Transport: &http.Transport{
++					TLSClientConfig: &tls.Config{
++						// Keep trust rejection independent of the platform's system verifier.
++						RootCAs: x509.NewCertPool(),
++					},
++				},
++			}
++			defer client.CloseIdleConnections()
++			_, err := client.Get(httpsEndpoint)
  			if err == nil {
  				t.Fatal("should have error")
  			}
@@ -2250,7 +2264,20 @@
  				t.Fatal("should get not trusted error, but got", err.Error())
  			}
  		})
-@@ -426,25 +430,45 @@
+@@ -284,10 +297,12 @@
+ 			client := &http.Client{
+ 				Transport: &http.Transport{
+ 					TLSClientConfig: &tls.Config{
++						RootCAs:            x509.NewCertPool(),
+ 						InsecureSkipVerify: true,
+ 					},
+ 				},
+ 			}
++			defer client.CloseIdleConnections()
+ 			testSendRequest(t, httpsEndpoint, client, "ok")
+ 		})
+ 	})
+@@ -426,25 +441,45 @@
  func TestProxyWhenServerNotKeepAlive(t *testing.T) {
  	server := &http.Server{}
  	server.SetKeepAlivesEnabled(false)
@@ -2305,7 +2332,7 @@
  		t.Run("http", func(t *testing.T) {
  			for i := 0; i < 10; i++ {
  				testSendRequest(t, httpEndpoint, proxyClient, "ok")
-@@ -458,28 +482,90 @@
+@@ -458,28 +493,90 @@
  	})
  
  	t.Run("should trigger disconnect functions when server DisableKeepAlives", func(t *testing.T) {

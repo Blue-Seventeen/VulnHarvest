@@ -274,7 +274,16 @@ func TestProxy(t *testing.T) {
 
 	t.Run("test https server", func(t *testing.T) {
 		t.Run("should generate not trusted error", func(t *testing.T) {
-			_, err := http.Get(httpsEndpoint)
+			client := &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{
+						// Keep trust rejection independent of the platform's system verifier.
+						RootCAs: x509.NewCertPool(),
+					},
+				},
+			}
+			defer client.CloseIdleConnections()
+			_, err := client.Get(httpsEndpoint)
 			if err == nil {
 				t.Fatal("should have error")
 			}
@@ -288,10 +297,12 @@ func TestProxy(t *testing.T) {
 			client := &http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{
+						RootCAs:            x509.NewCertPool(),
 						InsecureSkipVerify: true,
 					},
 				},
 			}
+			defer client.CloseIdleConnections()
 			testSendRequest(t, httpsEndpoint, client, "ok")
 		})
 	})

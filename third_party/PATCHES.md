@@ -156,8 +156,10 @@ Changes:
 - `proxy/proxy_test.go`, `proxy/sse_hook_test.go`, `proxy/sse_realtime_test.go`,
   `proxy/sse_test.go` and `proxy/websocket_test.go`: isolate all 15 proxy CA
   constructors and the two direct CA constructors in `t.TempDir()`. The
-  untrusted-certificate assertion checks `x509.UnknownAuthorityError` rather
-  than a platform-specific message. TLS, SSE and WebSocket behavior assertions
+  untrusted-certificate fixture uses an explicit empty root pool and checks
+  `x509.UnknownAuthorityError` independently of the platform's system verifier;
+  the paired `InsecureSkipVerify` success uses the same empty trust pool.
+  TLS, SSE and WebSocket behavior assertions
   remain intact. The response-completion correction retains the original HTTP
   immediate-close and callback-order assertions. A rejected unconditional
   client.Close prototype truncated a blocked legitimate response to zero bytes;
