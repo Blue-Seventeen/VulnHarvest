@@ -98,8 +98,19 @@ func TestPortableReopenedToolsScriptsAndFilesystemSkills(t *testing.T) {
 		t.Fatal(res.Flatten())
 	}
 	input := capabilityJSON(t, res.Flatten())
-	if input["code"] != scriptCode || input["params"].(map[string]any)["value"] != "脚本默认值" || input["scalar_env"] != "脚本默认值" || input["session_env"] != "session-env-receipt" || input["encoding"] != "utf-8" || !strings.EqualFold(filepath.Clean(input["cwd"].(string)), filepath.Clean(scriptDir)) {
+	// Getwd may return the physical spelling of an aliased working directory.
+	// Compare the existing directory itself, preserving the exact CWD contract.
+	cwdInfo, cwdErr := os.Stat(input["cwd"].(string))
+	wantCWDInfo, wantCWDErr := os.Stat(scriptDir)
+	if cwdErr != nil || wantCWDErr != nil {
+		t.Fatalf("script CWD stat: got %v want %v", cwdErr, wantCWDErr)
+	}
+	if input["code"] != scriptCode || input["params"].(map[string]any)["value"] != "脚本默认值" || input["scalar_env"] != "脚本默认值" || input["session_env"] != "session-env-receipt" || input["encoding"] != "utf-8" || !os.SameFile(cwdInfo, wantCWDInfo) {
 		t.Fatalf("production script executor lost code/default/stdin/env/CWD: %v", input)
+	}
+	wrongCWDInfo, err := os.Stat(h.data)
+	if err != nil || os.SameFile(cwdInfo, wrongCWDInfo) {
+		t.Fatalf("script CWD accepted a different existing directory: %v", err)
 	}
 	if _, err := os.Stat(input["script"].(string)); !os.IsNotExist(err) {
 		t.Fatalf("production script executor did not clean its temporary .py: %v", err)

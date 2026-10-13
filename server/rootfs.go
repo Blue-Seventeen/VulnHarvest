@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // rootFS confines the actual syscall, including symlink/junction resolution.
@@ -17,7 +16,7 @@ func (f rootFS) root(path string) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	base, err = realRootPath(base)
+	physicalBase, err := realRootPath(base)
 	if err != nil {
 		return nil, "", err
 	}
@@ -25,34 +24,27 @@ func (f rootFS) root(path string) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	rel, err := filepath.Rel(base, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	// Compare like spellings: handlers retain the configured ancestor alias,
+	// while other internal callers may already use its physical path. Do not
+	// admit arbitrary outside aliases merely because they point into this root.
+	if !pathsContain(base, abs) && !pathsContain(physicalBase, abs) {
 		return nil, "", fmt.Errorf("path escapes managed root")
 	}
 	// os.Root rejects absolute link targets even when inside the root. Resolve a
 	// valid existing ancestor, then open its canonical relative path with Root:
 	// changing the original link afterwards cannot redirect this syscall.
-	probe := abs
-	var suffix []string
-	for {
-		resolved, e := realRootPath(probe)
-		if e == nil {
-			for i := len(suffix) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, suffix[i])
-			}
-			rel, e = filepath.Rel(base, resolved)
-			if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return nil, "", fmt.Errorf("link escapes managed root")
-			}
-			break
-		}
-		if !os.IsNotExist(e) || probe == base {
-			return nil, "", e
-		}
-		suffix = append(suffix, filepath.Base(probe))
-		probe = filepath.Dir(probe)
+	resolved, err := canonicalFuturePath(abs)
+	if err != nil {
+		return nil, "", err
 	}
-	root, err := os.OpenRoot(base)
+	if !pathsContain(physicalBase, resolved) {
+		return nil, "", fmt.Errorf("link escapes managed root")
+	}
+	rel, err := filepath.Rel(physicalBase, resolved)
+	if err != nil {
+		return nil, "", err
+	}
+	root, err := os.OpenRoot(physicalBase)
 	return root, rel, err
 }
 func (f rootFS) Open(path string) (*os.File, error) {

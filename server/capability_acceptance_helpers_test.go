@@ -105,6 +105,11 @@ type capabilityHarness struct {
 
 func newCapabilityHarness(t *testing.T) *capabilityHarness {
 	t.Helper()
+	return newCapabilityHarnessAt(t, t.TempDir())
+}
+
+func newCapabilityHarnessAt(t *testing.T, base string) *capabilityHarness {
+	t.Helper()
 	// No ambient provider key or process-wide tool selection may route an
 	// acceptance test outside its own temporary directories and HTTP fixtures.
 	for _, key := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ARTEX_LLM_BASE_URL", "ARTEX_LLM_API_KEY"} {
@@ -117,7 +122,7 @@ func newCapabilityHarness(t *testing.T) *capabilityHarness {
 	if err := actool.SetExecutionRuntime(nil); err != nil {
 		t.Fatal(err)
 	}
-	h := &capabilityHarness{t: t, base: t.TempDir()}
+	h := &capabilityHarness{t: t, base: base}
 	h.data, h.state, h.skills = filepath.Join(h.base, "data"), filepath.Join(h.base, "state"), filepath.Join(h.base, "skills")
 	if err := os.MkdirAll(h.skills, 0700); err != nil {
 		t.Fatal(err)
