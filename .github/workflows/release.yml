@@ -65,12 +65,56 @@ jobs:
             if [ "${#diagnostic}" -gt 12000 ]; then
               diagnostic="${diagnostic: -12000}"
             fi
-            diagnostic="${diagnostic//'%'/'%25'}"
-            diagnostic="${diagnostic//$'\r'/'%0D'}"
-            diagnostic="${diagnostic//$'\n'/'%0A'}"
+            diagnostic="${diagnostic//%/%25}"
+            diagnostic="${diagnostic//$'\r'/%0D}"
+            diagnostic="${diagnostic//$'\n'/%0A}"
             printf '::error title=Native portable smoke::%s\n' "$diagnostic" || true
           fi
           exit "$smoke_code"
+      - name: Prepare bounded test failure annotations
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ci-business-annotations.js" <<'JS'
+          const fs = require('node:fs');
+          const [log, title] = process.argv.slice(2);
+          const lines = fs.readFileSync(log, 'utf8').replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n');
+          const failure = /(?:^|\s)--- FAIL:|^FAIL(?:\s|$)|^panic:|^fatal error:|^# |(?:^|\s)\S+\.go:\d+(?::\d+)?:/;
+          const names = new Set(), context = new Set();
+          for (let i = 0; i < lines.length; i++) {
+            const test = lines[i].match(/(?:^|\s)--- FAIL:\s+(\S+)/);
+            const pkg = lines[i].match(/^FAIL\s+(\S+)/);
+            if (test) names.add(`test ${test[1]}`);
+            if (pkg) names.add(`package ${pkg[1]}`);
+            if (/^(?:panic:|fatal error:|# )/.test(lines[i])) names.add(lines[i].slice(0, 300));
+            if (failure.test(lines[i])) {
+              for (let j = Math.max(0, i - 6); j <= Math.min(lines.length - 1, i + 3); j++) context.add(j);
+            }
+          }
+          function chunks(text, bytes = 2000) {
+            // Escape other controls before bounding; keep Unicode code points intact.
+            text = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, c => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+            const parts = []; let part = '', size = 0;
+            for (const c of text) {
+              const n = Buffer.byteLength(c);
+              if (size + n > bytes) { parts.push(part); part = ''; size = 0; }
+              part += c; size += n;
+            }
+            if (part) parts.push(part);
+            return parts;
+          }
+          function emit(section, parts) {
+            parts.forEach((part, i) => {
+              const escaped = part.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+              console.log(`::error title=${title} ${section} chunk ${i + 1}/${parts.length}::${escaped}`);
+            });
+          }
+          const summary = [...names].join('\n') || 'No named Go test/package failure found';
+          const summaryParts = chunks(summary);
+          emit('summary', [summaryParts.length > 1 ? chunks(summary, 1960)[0] + '\n[summary truncated]' : summaryParts[0]]);
+          emit('context', chunks([...context].sort((a, b) => a - b).slice(0, 60).map(i => [...lines[i]].slice(0, 1000).join('')).join('\n')).slice(0, 4));
+          emit('tail', chunks(lines.slice(-60).join('\n')).slice(-2));
+          JS
       - name: Task7 SQLite ordinary business suite
         shell: bash
         env:
@@ -90,25 +134,7 @@ jobs:
             cat "$suite_log" || true
             printf '\nSQLite ordinary full suite: **FAIL (exit %s)**\n\n`ARTEX_TEST_BACKEND=sqlite go test -p 1 -count=1 -timeout=20m ./...`\n' "$code" >> "$GITHUB_STEP_SUMMARY"
             set +x
-            # Preserve early failure blocks (6 preceding/3 following lines), then the final section.
-            failures=$(awk '
-              function emit(i) { if (i > last && count < 60) { print substr(lines[i%7], 1, 1000); last=i; count++ } }
-              { lines[NR%7]=$0 }
-              /(^|[[:space:]])--- FAIL:|^FAIL([[:space:]]|$)|^panic:|^fatal error:|^# |:[0-9]+(:[0-9]+)?:/ {
-                for (i=NR-6; i<=NR; i++) if (i>0) emit(i)
-                through=NR+3
-              }
-              NR<=through { emit(NR) }
-            ' "$suite_log") || failures="Unable to read SQLite failure blocks"
-            failures="${failures:0:8000}"
-            diagnostic=$(tail -n 60 "$suite_log") || diagnostic="Unable to read SQLite log tail"
-            if [ "${#diagnostic}" -gt 4000 ]; then diagnostic="${diagnostic: -4000}"; fi
-            for section in "$failures" "$diagnostic"; do
-              section="${section//'%'/'%25'}"
-              section="${section//$'\r'/'%0D'}"
-              section="${section//$'\n'/'%0A'}"
-              printf '::error title=SQLite ordinary full suite::%s\n' "$section" || true
-            done
+            node "$RUNNER_TEMP/ci-business-annotations.js" "$suite_log" 'SQLite ordinary full suite' || true
             exit "$code"
           fi
       - name: Task7 scoped nested SDK tests
@@ -124,25 +150,7 @@ jobs:
             cat "$suite_log" || true
             printf '\nNested SDK gate: **FAIL (exit %s)** (patched norma tool/mcp scope; full proxy package).\n' "$code" >> "$GITHUB_STEP_SUMMARY"
             set +x
-            # Preserve early failure blocks (6 preceding/3 following lines), then the final section.
-            failures=$(awk '
-              function emit(i) { if (i > last && count < 60) { print substr(lines[i%7], 1, 1000); last=i; count++ } }
-              { lines[NR%7]=$0 }
-              /(^|[[:space:]])--- FAIL:|^FAIL([[:space:]]|$)|^panic:|^fatal error:|^# |:[0-9]+(:[0-9]+)?:/ {
-                for (i=NR-6; i<=NR; i++) if (i>0) emit(i)
-                through=NR+3
-              }
-              NR<=through { emit(NR) }
-            ' "$suite_log") || failures="Unable to read nested failure blocks"
-            failures="${failures:0:8000}"
-            diagnostic=$(tail -n 60 "$suite_log") || diagnostic="Unable to read nested log tail"
-            if [ "${#diagnostic}" -gt 4000 ]; then diagnostic="${diagnostic: -4000}"; fi
-            for section in "$failures" "$diagnostic"; do
-              section="${section//'%'/'%25'}"
-              section="${section//$'\r'/'%0D'}"
-              section="${section//$'\n'/'%0A'}"
-              printf '::error title=Nested SDK gate::%s\n' "$section" || true
-            done
+            node "$RUNNER_TEMP/ci-business-annotations.js" "$suite_log" 'Nested SDK gate' || true
             exit "$code"
           fi
       - uses: actions/upload-artifact@v4
