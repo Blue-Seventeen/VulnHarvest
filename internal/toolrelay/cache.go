@@ -45,18 +45,57 @@ func AliasName(name string) string {
 	return name
 }
 
-// CanonicalRoot rejects redirected roots and descendants. os.Root confines all
-// actual file operations even if a directory is replaced after this check.
+// CanonicalRoot allows ancestor aliases, but never a redirected relay root leaf.
+// Its name is the canonical anchor used by both PATH publication and dispatch.
+// os.Root confines actual file operations to the opened directory.
 func CanonicalRoot(path string) (*os.Root, error) {
-	path = filepath.Clean(path)
-	real, err := filepath.EvalSymlinks(path)
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	if !samePath(real, path) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	real, err := canonicalPath(path)
+	if err != nil {
+		return nil, err
+	}
+	// Windows junctions are ModeIrregular, not necessarily ModeSymlink, and
+	// EvalSymlinks may leave them unchanged. Require an ordinary directory.
+	if info.Mode().Type() != os.ModeDir {
 		return nil, fmt.Errorf("relay root redirected: requested=%s evaluated=%s", rootDiagnosticPath(path), rootDiagnosticPath(real))
 	}
-	return os.OpenRoot(path)
+	if len(real) > 32768 || strings.ContainsRune(real, os.PathListSeparator) {
+		return nil, fmt.Errorf("relay root exceeds PATH bounds")
+	}
+	root, err := os.OpenRoot(real)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	current, statErr := os.Lstat(real)
+	if err != nil || statErr != nil || current.Mode().Type() != os.ModeDir || !os.SameFile(info, opened) || !os.SameFile(current, opened) {
+		root.Close()
+		return nil, fmt.Errorf("relay root identity changed")
+	}
+	return root, nil
+}
+
+// checkRoot keeps a long-lived manager anchored to its original directory even
+// if the canonical pathname is replaced by another ordinary directory.
+func checkRoot(root *os.Root) error {
+	current, err := CanonicalRoot(root.Name())
+	if err != nil {
+		return err
+	}
+	defer current.Close()
+	before, err := root.Stat(".")
+	after, statErr := current.Stat(".")
+	if err != nil || statErr != nil || !samePath(root.Name(), current.Name()) || !os.SameFile(before, after) {
+		return fmt.Errorf("relay root identity changed")
+	}
+	return nil
 }
 func rootDiagnosticPath(path string) string {
 	// Bound before quoting; %q escapes controls and any partial UTF-8 suffix.
@@ -129,6 +168,23 @@ func Prepare(ctx context.Context, state, source string, entries map[string]Entry
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
+	root, err := CanonicalRoot(filepath.Join(state, "runtime-path"))
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	return PrepareAt(ctx, root, source, entries, expectedDigest...)
+}
+
+// PrepareAt publishes using a previously captured canonical root, without
+// reopening or adopting a replacement directory for its confined operations.
+func PrepareAt(ctx context.Context, root *os.Root, source string, entries map[string]Entry, expectedDigest ...string) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if err := checkRoot(root); err != nil {
+		return "", err
+	}
 	f, err := os.Open(source)
 	if err != nil {
 		return "", fmt.Errorf("relay executable unavailable: %w", err)
@@ -164,12 +220,7 @@ func Prepare(ctx context.Context, state, source string, entries map[string]Entry
 	if len(manifest) > MaxManifest {
 		return "", fmt.Errorf("relay manifest exceeds bounds")
 	}
-	parent := filepath.Join(state, "runtime-path")
-	root, err := CanonicalRoot(parent)
-	if err != nil {
-		return "", err
-	}
-	defer root.Close()
+	parent := root.Name()
 	for _, d := range []string{"cache", "choices"} {
 		if err = root.Mkdir(d, 0700); err != nil && !os.IsExist(err) {
 			return "", err
@@ -190,6 +241,9 @@ func Prepare(ctx context.Context, state, source string, entries map[string]Entry
 	choiceDir := filepath.Join("choices", Hash(manifest))
 	if err = publish(ctx, root, choiceDir, map[string][]byte{Manifest: manifest}, 0600); err != nil {
 		return "", fmt.Errorf("relay choice cache: %w", err)
+	}
+	if err = checkRoot(root); err != nil {
+		return "", err
 	}
 	return filepath.Join(parent, choiceDir) + string(os.PathListSeparator) + filepath.Join(parent, helperDir), nil
 }

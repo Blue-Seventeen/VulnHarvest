@@ -123,6 +123,8 @@ func New(options Options) (*ToolManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	parent = parentRoot.Name()
+	options.StateDir = filepath.Dir(parent)
 	nonce := make([]byte, 16)
 	if _, err = rand.Read(nonce); err != nil {
 		parentRoot.Close()

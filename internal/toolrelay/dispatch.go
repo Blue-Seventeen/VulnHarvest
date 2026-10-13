@@ -52,6 +52,8 @@ func Selection(exe, path, name string) (Entry, error) {
 		return Entry{}, err
 	}
 	defer root.Close()
+	parent = root.Name()
+	helperDir = filepath.Join(parent, "cache", helperHash)
 	// Shells may prepend their own directory. Only one contiguous choice/helper
 	// pair in this helper's root identifies the captured selection.
 	parts := filepath.SplitList(path)

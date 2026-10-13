@@ -16,7 +16,7 @@ func (m *ToolManager) prepareAliases(ctx context.Context, rt *tool.ExecutionRunt
 		spec := rt.Commands[name]
 		entries[alias] = toolrelay.Entry{Executable: spec.Executable, PrefixArgs: spec.PrefixArgs}
 	}
-	return toolrelay.Prepare(ctx, m.options.StateDir, m.options.RelayExecutable, entries, m.options.RelayDigest)
+	return toolrelay.PrepareAt(ctx, m.parentRoot, m.options.RelayExecutable, entries, m.options.RelayDigest)
 }
 
 // RunRelay is retained for explicit development/test executable fixtures.
