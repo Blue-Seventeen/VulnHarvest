@@ -1230,7 +1230,7 @@ func taskExecutionPaused(cause error) bool {
 	}
 	switch abort.Code {
 	case "paused_by_user", "paused_by_orchestrator", "paused_on_reload", "paused_race_guard",
-		"queued_for_admission", "llm_unavailable_queued", "task_deleted":
+		"queued_for_admission", "llm_unavailable_queued", "task_deleted", "shutdown":
 		return true
 	default:
 		return false

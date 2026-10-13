@@ -1,0 +1,107 @@
+=== RUN   TestPortableRunningTaskColdReopenRequiresExplicitResume
+2026/10/13 13:15:54 [auth] 新 JWT key 已写入 C:\Users\cy\AppData\Local\Temp\TestPortableRunningTaskColdReopenRequiresExplicitResume938221363\001\state\jwt.key
+2026/10/13 13:15:54 [tools] 已刷新 orchestration/platform 工具 schema 到代码默认(一次性)
+2026/10/13 13:15:54 [reporter] 已预置「报告撰写」agent + finding 触发器
+2026/10/13 13:15:54 [engine] no LLM provider configured — engine idle until set via /api/llm or env
+2026/10/13 13:15:54 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:15:54 [engine] LLM reapplied from active profile: openai / controlled-agent
+2026/10/13 13:15:54 [task] 新建任务 #1 «Cold resume acceptance» 目标: Read the local receipt and prove the goal using an observed fact.
+2026/10/13 13:15:54 [seed] task 1: 未能从 "Cold resume acceptance Read the local receipt and prove the goal using an observed fact." 解析出目标 host/IP，不创建站点（请手动配置 scope）
+2026/10/13 13:15:55 [deadline] task 1 首次运行,截止于 2026-10-13 13:16:55
+2026/10/13 13:15:55 [planner] task 1 规划中…(edge 触发)
+2026/10/13 13:15:55 [planner] task 1 规划完成
+2026/10/13 13:15:55 [worker work#1] task 1 领取意图 #3
+2026/10/13 13:15:55 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:15:55 [engine] LLM configured from DB: openai / controlled-agent
+2026/10/13 13:15:55 [manager] reloaded 1 task(s) from PG
+2026/10/13 13:15:57 [task] #1 已继续
+2026/10/13 13:15:57 [worker work#1] task 1 领取意图 #3
+2026/10/13 13:15:57 [deadline] task 1 首次运行,截止于 2026-10-13 13:16:55
+2026/10/13 13:15:57 [worker work#1] task 1 意图 #3 结束: done (写回 事实1 资产0 漏洞0)
+2026/10/13 13:15:57 [planner] task 1 规划中…(edge 触发)
+2026/10/13 13:15:57 [planner] task 1 判定目标达成: 所有 1 个目标均已 met（最后由 goal 2 触发）
+2026/10/13 13:15:58 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:15:58 [engine] LLM configured from DB: openai / controlled-agent
+2026/10/13 13:15:58 [manager] reloaded 1 task(s) from PG
+--- PASS: TestPortableRunningTaskColdReopenRequiresExplicitResume (4.03s)
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/shutdown
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/pause
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/delete_rollback
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/goal_met
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/deadline_settlement_drain
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/planner_kill
+--- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/shutdown (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/pause (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/delete_rollback (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/goal_met (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/deadline_settlement_drain (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/planner_kill (0.00s)
+=== RUN   TestPortableRunningConversationAndRetestDoNotReplayOnReopen
+2026/10/13 13:15:58 [auth] 新 JWT key 已写入 C:\Users\cy\AppData\Local\Temp\TestPortableRunningConversationAndRetestDoNotReplayOnReopen4009438953\001\state\jwt.key
+2026/10/13 13:15:58 [tools] 已刷新 orchestration/platform 工具 schema 到代码默认(一次性)
+2026/10/13 13:15:58 [reporter] 已预置「报告撰写」agent + finding 触发器
+2026/10/13 13:15:58 [engine] no LLM provider configured — engine idle until set via /api/llm or env
+2026/10/13 13:15:58 [engine] built provider for LLM profile 1 (openai / conversation-restart)
+2026/10/13 13:15:58 [engine] LLM reapplied from active profile: openai / conversation-restart
+2026/10/13 13:15:58 [engine] built provider for LLM profile 1 (openai / conversation-restart)
+2026/10/13 13:15:58 [engine] LLM configured from DB: openai / conversation-restart
+2026/10/13 13:15:58 [manager] reloaded 1 task(s) from PG
+--- PASS: TestPortableRunningConversationAndRetestDoNotReplayOnReopen (1.48s)
+=== RUN   TestPauseCancelsWithNamedCause
+--- PASS: TestPauseCancelsWithNamedCause (0.00s)
+=== RUN   TestKillWorkCancelsOnlyThatWorkWithNamedCause
+--- PASS: TestKillWorkCancelsOnlyThatWorkWithNamedCause (0.00s)
+=== RUN   TestControlWorkCarriesUserActionCause
+=== RUN   TestControlWorkCarriesUserActionCause/pause
+=== RUN   TestControlWorkCarriesUserActionCause/cancel
+--- PASS: TestControlWorkCarriesUserActionCause (0.00s)
+    --- PASS: TestControlWorkCarriesUserActionCause/pause (0.00s)
+    --- PASS: TestControlWorkCarriesUserActionCause/cancel (0.00s)
+=== RUN   TestControlWorkReturnsSettlementError
+--- PASS: TestControlWorkReturnsSettlementError (0.00s)
+=== RUN   TestControlWorkWaitHonorsContextAndReleasesReservation
+--- PASS: TestControlWorkWaitHonorsContextAndReleasesReservation (0.02s)
+=== RUN   TestControlWorkRejectsConcurrentController
+--- PASS: TestControlWorkRejectsConcurrentController (0.00s)
+=== RUN   TestSettleDrainAndGoalMetCausesAreDistinct
+--- PASS: TestSettleDrainAndGoalMetCausesAreDistinct (0.00s)
+=== RUN   TestExecContextWhilePausedCarriesRaceGuardCause
+--- PASS: TestExecContextWhilePausedCarriesRaceGuardCause (0.00s)
+=== RUN   TestResumeYieldsFreshContext
+--- PASS: TestResumeYieldsFreshContext (0.00s)
+=== RUN   TestTaskPauseCauseSurvivesImmediateResume
+--- PASS: TestTaskPauseCauseSurvivesImmediateResume (0.00s)
+=== RUN   TestDeleteCancellationReturnsRunningIntentToFrontier
+--- PASS: TestDeleteCancellationReturnsRunningIntentToFrontier (0.00s)
+=== RUN   TestBootstrapAdmissionClearsQueuedPauseBarrier
+--- PASS: TestBootstrapAdmissionClearsQueuedPauseBarrier (0.00s)
+=== RUN   TestRuntimePortableHistoryPaused
+2026/10/13 13:15:59 [auth] 新 JWT key 已写入 C:\Users\cy\AppData\Local\Temp\TestRuntimePortableHistoryPaused355256113\001\state\jwt.key
+2026/10/13 13:15:59 [tools] 已刷新 orchestration/platform 工具 schema 到代码默认(一次性)
+2026/10/13 13:15:59 [reporter] 已预置「报告撰写」agent + finding 触发器
+2026/10/13 13:15:59 [engine] no LLM provider configured — engine idle until set via /api/llm or env
+2026/10/13 13:15:59 [manager] reloaded 1 task(s) from PG
+--- PASS: TestRuntimePortableHistoryPaused (0.29s)
+=== RUN   TestQueuedTaskCanPauseAndResumeAtFIFOTail
+2026/10/13 13:15:59 [task] #2 已继续
+2026/10/13 13:15:59 [task] #2 已暂停
+2026/10/13 13:16:00 [task] #2 已继续
+--- PASS: TestQueuedTaskCanPauseAndResumeAtFIFOTail (0.15s)
+=== RUN   TestPauseTaskToolPersistsAndDequeuesTask
+2026/10/13 13:16:00 [task] #1 已暂停
+--- PASS: TestPauseTaskToolPersistsAndDequeuesTask (0.16s)
+=== RUN   TestPauseTaskToolUsesOrchestratorCancellationCause
+2026/10/13 13:16:00 [task] #1 已暂停
+--- PASS: TestPauseTaskToolUsesOrchestratorCancellationCause (0.15s)
+=== RUN   TestAbortDeletePreservesExistingPause
+--- PASS: TestAbortDeletePreservesExistingPause (0.00s)
+=== RUN   TestAbortTaskDeleteUsesPersistedPauseAndQueueState
+--- PASS: TestAbortTaskDeleteUsesPersistedPauseAndQueueState (0.12s)
+=== RUN   TestControlWorkRejectsRemovedInterveneAction
+--- PASS: TestControlWorkRejectsRemovedInterveneAction (0.00s)
+=== RUN   TestControlWorkConflictsWhenNoWorkRegistered
+--- PASS: TestControlWorkConflictsWhenNoWorkRegistered (0.00s)
+PASS
+ok  	github.com/Autumn-27/artex/server	8.190s

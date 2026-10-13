@@ -1,0 +1,38 @@
+=== RUN   TestPortableRunningTaskColdReopenRequiresExplicitResume
+2026/10/13 13:09:07 [auth] 新 JWT key 已写入 C:\Users\cy\AppData\Local\Temp\TestPortableRunningTaskColdReopenRequiresExplicitResume3308500301\001\state\jwt.key
+2026/10/13 13:09:07 [tools] 已刷新 orchestration/platform 工具 schema 到代码默认(一次性)
+2026/10/13 13:09:08 [reporter] 已预置「报告撰写」agent + finding 触发器
+2026/10/13 13:09:08 [engine] no LLM provider configured — engine idle until set via /api/llm or env
+2026/10/13 13:09:08 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:09:08 [engine] LLM reapplied from active profile: openai / controlled-agent
+2026/10/13 13:09:08 [task] 新建任务 #1 «Cold resume acceptance» 目标: Read the local receipt and prove the goal using an observed fact.
+2026/10/13 13:09:08 [seed] task 1: 未能从 "Cold resume acceptance Read the local receipt and prove the goal using an observed fact." 解析出目标 host/IP，不创建站点（请手动配置 scope）
+2026/10/13 13:09:08 [deadline] task 1 首次运行,截止于 2026-10-13 13:10:08
+2026/10/13 13:09:08 [planner] task 1 规划中…(edge 触发)
+2026/10/13 13:09:08 [planner] task 1 规划完成
+2026/10/13 13:09:09 [worker work#1] task 1 领取意图 #3
+2026/10/13 13:09:09 [worker work#1] intent 3: context canceled
+2026/10/13 13:09:09 [worker work#1] task 1 意图 #3 结束: blocked (写回 事实0 资产0 漏洞0)
+2026/10/13 13:09:09 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:09:09 [engine] LLM configured from DB: openai / controlled-agent
+2026/10/13 13:09:09 [manager] reloaded 1 task(s) from PG
+    capability_cold_resume_test.go:122: shutdown/reopen left the interrupted intent unclaimable: intent=&{FindingID:0 FindingNodeID:0 TrafficCount:0 ID:3 Kind:intent Payload:[123 34 115 117 109 109 97 114 121 34 58 34 85 115 101 32 112 111 114 116 97 98 108 101 95 114 101 99 101 105 112 116 32 112 97 116 104 61 47 114 101 99 101 105 112 116 32 97 110 100 32 114 101 99 111 114 100 32 116 104 101 32 97 99 116 117 97 108 32 98 111 100 121 32 97 115 32 97 110 32 111 98 115 101 114 118 101 100 32 102 97 99 116 46 34 125] Priority:5 State:blocked Origin:planner Owner:work#1 BlockedReason: DeleteReason: Anchors:[] CreatedAt:2026-10-13 05:09:08.9275957 +0000 UTC SourceTaskID:0 Inherited:false} err=<nil>; explicit task resume must reclaim it
+--- FAIL: TestPortableRunningTaskColdReopenRequiresExplicitResume (2.21s)
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/shutdown
+    capability_cold_resume_test.go:195: recoverable task cancellation=false, want true for 后端进程收到 SIGINT 或 SIGTERM，正在重启、更新或关闭。所有运行中的 Agent 会被取消；重启后残留的 running 意图会重置为 open 并重新执行
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/pause
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/delete_rollback
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/goal_met
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/deadline_settlement_drain
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/planner_kill
+--- FAIL: TestShutdownCauseReturnsInterruptedWorkToFrontier (0.00s)
+    --- FAIL: TestShutdownCauseReturnsInterruptedWorkToFrontier/shutdown (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/pause (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/delete_rollback (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/goal_met (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/deadline_settlement_drain (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/planner_kill (0.00s)
+FAIL
+FAIL	github.com/Autumn-27/artex/server	3.957s
+FAIL

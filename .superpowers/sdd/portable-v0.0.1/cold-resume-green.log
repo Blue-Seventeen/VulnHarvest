@@ -1,0 +1,42 @@
+=== RUN   TestPortableRunningTaskColdReopenRequiresExplicitResume
+2026/10/13 13:09:47 [auth] 新 JWT key 已写入 C:\Users\cy\AppData\Local\Temp\TestPortableRunningTaskColdReopenRequiresExplicitResume1617511926\001\state\jwt.key
+2026/10/13 13:09:47 [tools] 已刷新 orchestration/platform 工具 schema 到代码默认(一次性)
+2026/10/13 13:09:47 [reporter] 已预置「报告撰写」agent + finding 触发器
+2026/10/13 13:09:47 [engine] no LLM provider configured — engine idle until set via /api/llm or env
+2026/10/13 13:09:47 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:09:47 [engine] LLM reapplied from active profile: openai / controlled-agent
+2026/10/13 13:09:47 [task] 新建任务 #1 «Cold resume acceptance» 目标: Read the local receipt and prove the goal using an observed fact.
+2026/10/13 13:09:47 [seed] task 1: 未能从 "Cold resume acceptance Read the local receipt and prove the goal using an observed fact." 解析出目标 host/IP，不创建站点（请手动配置 scope）
+2026/10/13 13:09:48 [deadline] task 1 首次运行,截止于 2026-10-13 13:10:48
+2026/10/13 13:09:48 [planner] task 1 规划中…(edge 触发)
+2026/10/13 13:09:48 [planner] task 1 规划完成
+2026/10/13 13:09:49 [worker work#1] task 1 领取意图 #3
+2026/10/13 13:09:49 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:09:49 [engine] LLM configured from DB: openai / controlled-agent
+2026/10/13 13:09:49 [manager] reloaded 1 task(s) from PG
+2026/10/13 13:09:50 [task] #1 已继续
+2026/10/13 13:09:50 [worker work#1] task 1 领取意图 #3
+2026/10/13 13:09:50 [deadline] task 1 首次运行,截止于 2026-10-13 13:10:48
+2026/10/13 13:09:50 [worker work#1] task 1 意图 #3 结束: done (写回 事实1 资产0 漏洞0)
+2026/10/13 13:09:51 [planner] task 1 规划中…(edge 触发)
+2026/10/13 13:09:51 [planner] task 1 判定目标达成: 所有 1 个目标均已 met（最后由 goal 2 触发）
+2026/10/13 13:09:51 [engine] built provider for LLM profile 1 (openai / controlled-agent)
+2026/10/13 13:09:51 [engine] LLM configured from DB: openai / controlled-agent
+2026/10/13 13:09:51 [manager] reloaded 1 task(s) from PG
+--- PASS: TestPortableRunningTaskColdReopenRequiresExplicitResume (3.90s)
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/shutdown
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/pause
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/delete_rollback
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/goal_met
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/deadline_settlement_drain
+=== RUN   TestShutdownCauseReturnsInterruptedWorkToFrontier/planner_kill
+--- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/shutdown (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/pause (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/delete_rollback (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/goal_met (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/deadline_settlement_drain (0.00s)
+    --- PASS: TestShutdownCauseReturnsInterruptedWorkToFrontier/planner_kill (0.00s)
+PASS
+ok  	github.com/Autumn-27/artex/server	5.942s
