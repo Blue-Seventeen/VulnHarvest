@@ -3,6 +3,7 @@ package toolrelay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -30,6 +32,59 @@ func fixture(t *testing.T) (string, string, map[string]Entry) {
 	}
 	entries["node"] = Entry{Executable: filepath.Join(base, "target 中文 space"), PrefixArgs: []string{"prefix", "中文"}}
 	return state, source, entries
+}
+
+func TestCanonicalRootRedirectErrorIncludesQuotedPaths(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target 中文 space %")
+	requested := filepath.Join(base, "requested 中文 space %")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, requested); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skipf("directory symlink privilege unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(requested); err != nil {
+			t.Error(err)
+		}
+	})
+	evaluated, err := filepath.EvalSymlinks(requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := CanonicalRoot(requested)
+	if root != nil {
+		root.Close()
+		t.Fatalf("redirected root returned an open handle: requested=%q evaluated=%q", requested, evaluated)
+	}
+	want := fmt.Sprintf("relay root redirected: requested=%q evaluated=%q", requested, evaluated)
+	if err == nil || err.Error() != want {
+		t.Fatalf("redirect diagnostic = %v, want %s", err, want)
+	}
+}
+
+func TestRootDiagnosticPathBoundAndEscaping(t *testing.T) {
+	for _, tc := range []struct{ name, path, want string }{
+		{"quoted-controls", "C:\\relay \"a\"\nline\r\t\x00", `"C:\\relay \"a\"\nline\r\t\x00"`},
+		{"at-limit", strings.Repeat("a", 1024), `"` + strings.Repeat("a", 1024) + `"`},
+		{"over-limit", strings.Repeat("a", 1025), `"` + strings.Repeat("a", 1024) + `...[truncated]"`},
+		{"escaped-over-limit", strings.Repeat("\x01", 1025), `"` + strings.Repeat(`\x01`, 1024) + `...[truncated]"`},
+		{"unicode-cut", strings.Repeat("界", 342), `"` + strings.Repeat("界", 341) + `\xe7...[truncated]"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rootDiagnosticPath(tc.path)
+			if got != tc.want {
+				t.Fatalf("quoted path = %s, want %s", got, tc.want)
+			}
+			if strings.ContainsAny(got, "\r\n\t\x00") || len(got) > 4*1024+len("...[truncated]")+2 {
+				t.Fatal("diagnostic path exceeds escaped single-line bound")
+			}
+		})
+	}
 }
 
 func TestRedirectedCacheAndChoiceRejected(t *testing.T) {

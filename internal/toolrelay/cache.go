@@ -54,9 +54,16 @@ func CanonicalRoot(path string) (*os.Root, error) {
 		return nil, err
 	}
 	if !samePath(real, path) {
-		return nil, fmt.Errorf("relay root redirected")
+		return nil, fmt.Errorf("relay root redirected: requested=%s evaluated=%s", rootDiagnosticPath(path), rootDiagnosticPath(real))
 	}
 	return os.OpenRoot(path)
+}
+func rootDiagnosticPath(path string) string {
+	// Bound before quoting; %q escapes controls and any partial UTF-8 suffix.
+	if len(path) > 1024 {
+		path = path[:1024] + "...[truncated]"
+	}
+	return fmt.Sprintf("%q", path)
 }
 func samePath(a, b string) bool {
 	if runtime.GOOS == "windows" {
