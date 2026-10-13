@@ -110,15 +110,22 @@ func (c *wrapClientConn) claimCloseLocked() ([]net.Conn, bool) {
 }
 
 func (c *wrapClientConn) finishClose(upstream []net.Conn) {
-	defer c.proxy.untrack(c)
 	close(c.closeChan)
-
-	// For a response-owned close, the server side callback is the authoritative
-	// event. Wait outside closeMu so reentrant addon callbacks and force shutdown
-	// remain safe; client-originated closes retain their historical ordering.
-	if c.connCtx.closeAfterResponse.Load() {
-		<-c.connCtx.serverCloseDone
+	if owner := c.connCtx.responseCloseOwner.Load(); owner != nil {
+		done := owner.disconnectDone()
+		// A server addon may synchronously close this client. Return the socket
+		// close now, retaining tracking until the ordered callbacks finish.
+		go func() {
+			<-done
+			c.notifyClose(upstream)
+		}()
+		return
 	}
+	c.notifyClose(upstream)
+}
+
+func (c *wrapClientConn) notifyClose(upstream []net.Conn) {
+	defer c.proxy.untrack(c)
 	for _, addon := range c.proxy.Addons {
 		addon.ClientDisconnected(c.connCtx.ClientConn)
 	}
@@ -179,9 +186,19 @@ type wrapServerConn struct {
 	proxy   *Proxy
 	connCtx *ConnContext
 
-	closeMu  sync.Mutex
-	closed   bool
-	closeErr error
+	closeMu      sync.Mutex
+	closed       bool
+	closeErr     error
+	callbackDone chan struct{}
+}
+
+func (c *wrapServerConn) disconnectDone() <-chan struct{} {
+	c.closeMu.Lock()
+	defer c.closeMu.Unlock()
+	if c.callbackDone == nil {
+		c.callbackDone = make(chan struct{})
+	}
+	return c.callbackDone
 }
 
 func (c *wrapServerConn) Close() error {
@@ -193,6 +210,9 @@ func (c *wrapServerConn) Close() error {
 	log.Debugln("in wrapServerConn close", c.connCtx.ClientConn.Conn.RemoteAddr())
 
 	c.closed = true
+	if c.callbackDone == nil {
+		c.callbackDone = make(chan struct{})
+	}
 	c.closeErr = c.Conn.Close()
 	c.closeMu.Unlock()
 	defer c.proxy.untrack(c)
@@ -200,7 +220,7 @@ func (c *wrapServerConn) Close() error {
 	for _, addon := range c.proxy.Addons {
 		addon.ServerDisconnected(c.connCtx)
 	}
-	c.connCtx.signalServerCloseDone()
+	close(c.callbackDone)
 	if c.proxy.isClosing() {
 		return c.closeErr
 	}

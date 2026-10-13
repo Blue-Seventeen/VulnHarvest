@@ -665,6 +665,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 	}
 
 	var proxyRes *http.Response
+	var responseOwner *wrapServerConn
 	if useSeparateClient {
 		proxyRes, err = a.client.Do(proxyReq)
 	} else {
@@ -682,6 +683,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
+		responseOwner, _ = f.ConnContext.ServerConn.Conn.(*wrapServerConn)
 		proxyRes, err = f.ConnContext.ServerConn.client.Do(proxyReq)
 	}
 	if err != nil {
@@ -694,6 +696,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 	}
 
 	if proxyRes.Close {
+		f.ConnContext.responseCloseOwner.Store(responseOwner)
 		f.ConnContext.closeAfterResponse.Store(true)
 	}
 

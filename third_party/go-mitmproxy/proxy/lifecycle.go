@@ -154,6 +154,10 @@ func (p *Proxy) stop(ctx context.Context) error {
 			}
 		}
 		entryErr := p.entry.server.Close()
+		if ln != nil && errors.Is(entryErr, net.ErrClosed) {
+			// The retained listener was already closed above to interrupt Accept.
+			entryErr = nil
+		}
 		attackerErr := p.attacker.server.Close()
 		for _, c := range conns {
 			if callbackConn(c) {

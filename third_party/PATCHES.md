@@ -89,7 +89,7 @@ SumDB check.
 
 `upstream-manifest.json` records every one of the 104 upstream files using raw
 byte size/SHA-256, the compressed zip SHA-256, Go h1 content checksum, and all
-changed/added/deleted files. Eleven upstream files are changed; three lifecycle
+changed/added/deleted files. Eleven upstream files are changed; four lifecycle
 files are added; 93 files remain byte-for-byte unchanged; no files are deleted.
 The narrowly scoped `-text` Git attributes preserve those bytes across Windows
 and other checkouts. `patches/go-mitmproxy-v1.9.2.patch` is the standalone
@@ -102,7 +102,10 @@ Changes:
 - `proxy/lifecycle.go` (added): one-start/closing gate; Serve owns non-nil
   listeners on success/failure/rejection; stop/join sockets, HTTP/CONNECT/h2
   handlers and addon disconnect callbacks; Close and Shutdown wait for real
-  completion. The caller owns and joins its own goroutine running Serve.
+  completion. Since stop explicitly closes the retained listener before the
+  HTTP server, its expected net.ErrClosed from closing that listener again is
+  ignored; other close errors remain intact. The caller owns and joins its own
+  goroutine running Serve.
 - `proxy/entry.go`: preserve wrapListener and ConnContext; track clients and
   connect upstream socket lifetimes without reading mutable ConnContext during
   Close. Closing sockets never invokes addons under the registry mutex.
@@ -112,6 +115,11 @@ Changes:
   any owned upstream, including when another keep-alive response is active.
   StateNew and hijacked CONNECT/WS connections are not treated as HTTP idle;
   their existing owners and force-stop Close remain responsible for closure.
+  Response closure waits only for the concrete upstream that supplied that
+  response. Physical client Close returns before this callback wait; the client
+  stays tracked until its ordered disconnect callbacks and upstream closure
+  finish. Independent-client responses have no server callback owner to wait
+  for. Cross-side ServerDisconnected calls to client.Conn.Close are supported.
 - `proxy/attacker.go`: close-wake listener without closing send channel; owned
   request contexts; h2 service+watcher joining; TLS worker cancellation/join;
   register outgoing callback owners, including first/lazy TLS capture. H2 uses
@@ -121,8 +129,8 @@ Changes:
   upstream socket, so Go 1.27 transport dials cannot wrap/close that same socket
   multiple times. ConfigureTransports initializes the cross-version adapter;
   ClientConn.RoundTrip multiplexes the requests without redialing the socket.
-- `proxy/connection.go`: atomic close-after-response flag used by close
-  callbacks; atomic internal TLS flag lives in wrapClientConn.
+- `proxy/connection.go`: atomic close-after-response flag and concrete response
+  owner used by close callbacks; atomic internal TLS flag lives in wrapClientConn.
 - `proxy/helper.go`: close both endpoints and wait for both copy workers,
   including the first-error path; only closing + expected cancellation/socket
   disconnection lowers lifecycle errors to debug. Running TLS/WS failures and
@@ -138,6 +146,13 @@ Changes:
   with multiple owned upstreams, concurrent idle/close transitions, reentrant
   wrapper callbacks and forced Shutdown that interrupts sockets before joining
   a blocked capture. All proxy CA fixtures use owned temporary directories.
+- `proxy/response_close_test.go` (added): real HTTP/HTTPS response-header
+  barriers reproduce synchronous cross-side close without waiting for the
+  callback itself; ordered callbacks stay joined by Proxy.Close. A real
+  UseSeparateClient closing response delivers its full payload, emits no owned
+  server callbacks, and joins the client disconnect callback before Close exits.
+  A real delayed-Accept listener deterministically exercises the owned listener's
+  repeated close, including the normal Serve and Close completion boundary.
 - `proxy/proxy_test.go`, `proxy/sse_hook_test.go`, `proxy/sse_realtime_test.go`,
   `proxy/sse_test.go` and `proxy/websocket_test.go`: isolate all 15 proxy CA
   constructors and the two direct CA constructors in `t.TempDir()`. The
@@ -150,9 +165,9 @@ Changes:
 
 Shutdown is deliberately stop-and-join, including live tunnels. It shares
 Close's force-stop boundary; an expired context is returned only after all
-owners exit. An addon must return and must not synchronously call Close from
-its own callback. There is no safe way to forcefully terminate arbitrary Go
-addon code. The traffic recorder's addons satisfy this owner contract.
+owners exit. An addon must return and must not synchronously call Proxy.Close
+or Proxy.Shutdown from its own callback. There is no safe way to terminate
+arbitrary Go addon code. The traffic recorder's addons satisfy this owner contract.
 
 Application integration is in `traffic/traffic.go`: Serve publishes the
 retained listener's actual address; rejected calls cannot overwrite it. Close

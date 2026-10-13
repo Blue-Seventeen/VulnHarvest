@@ -292,7 +292,19 @@
  			}
  		}
  	}
-@@ -606,7 +685,7 @@
+@@ -586,6 +665,7 @@
+ 	}
+ 
+ 	var proxyRes *http.Response
++	var responseOwner *wrapServerConn
+ 	if useSeparateClient {
+ 		proxyRes, err = a.client.Do(proxyReq)
+ 	} else {
+@@ -603,10 +683,11 @@
+ 				return
+ 			}
+ 		}
++		responseOwner, _ = f.ConnContext.ServerConn.Conn.(*wrapServerConn)
  		proxyRes, err = f.ConnContext.ServerConn.client.Do(proxyReq)
  	}
  	if err != nil {
@@ -301,23 +313,33 @@
  		for _, addon := range proxy.Addons {
  			addon.RequestError(f, err)
  		}
-@@ -615,7 +694,7 @@
+@@ -615,7 +696,8 @@
  	}
  
  	if proxyRes.Close {
 -		f.ConnContext.closeAfterResponse = true
++		f.ConnContext.responseCloseOwner.Store(responseOwner)
 +		f.ConnContext.closeAfterResponse.Store(true)
  	}
  
  	defer proxyRes.Body.Close()
 --- a/proxy/connection.go
 +++ b/proxy/connection.go
-@@ -82,7 +82,7 @@
+@@ -6,6 +6,7 @@
+ 	"encoding/json"
+ 	"net"
+ 	"net/http"
++	stdatomic "sync/atomic"
+ 
+ 	uuid "github.com/satori/go.uuid"
+ 	"go.uber.org/atomic"
+@@ -82,7 +83,8 @@
  	FlowCount  atomic.Uint32 `json:"-"`         // Number of HTTP requests made on the same connection
  
  	proxy              *Proxy
 -	closeAfterResponse bool                        // after http response, http server will close the connection
-+	closeAfterResponse atomic.Bool                 // after http response, http server will close the connection
++	closeAfterResponse atomic.Bool // after http response, http server will close the connection
++	responseCloseOwner stdatomic.Pointer[wrapServerConn]
  	dialFn             func(context.Context) error // when begin request, if there no ServerConn, use this func to dial
  }
  
@@ -377,7 +399,7 @@
  	}
  }
  
-@@ -70,28 +85,86 @@
+@@ -70,28 +85,99 @@
  	return c.r.Read(data)
  }
  
@@ -406,9 +428,22 @@
 +}
 +
 +func (c *wrapClientConn) finishClose(upstream []net.Conn) {
-+	defer c.proxy.untrack(c)
 +	close(c.closeChan)
++	if owner := c.connCtx.responseCloseOwner.Load(); owner != nil {
++		done := owner.disconnectDone()
++		// A server addon may synchronously close this client. Return the socket
++		// close now, retaining tracking until the ordered callbacks finish.
++		go func() {
++			<-done
++			c.notifyClose(upstream)
++		}()
++		return
++	}
++	c.notifyClose(upstream)
++}
 +
++func (c *wrapClientConn) notifyClose(upstream []net.Conn) {
++	defer c.proxy.untrack(c)
 +	for _, addon := range c.proxy.Addons {
 +		addon.ClientDisconnected(c.connCtx.ClientConn)
 +	}
@@ -481,8 +516,36 @@
  }
  
  // wrap tcpConn for remote server
-@@ -116,16 +189,21 @@
+@@ -100,9 +186,19 @@
+ 	proxy   *Proxy
+ 	connCtx *ConnContext
+ 
+-	closeMu  sync.Mutex
+-	closed   bool
+-	closeErr error
++	closeMu      sync.Mutex
++	closed       bool
++	closeErr     error
++	callbackDone chan struct{}
++}
++
++func (c *wrapServerConn) disconnectDone() <-chan struct{} {
++	c.closeMu.Lock()
++	defer c.closeMu.Unlock()
++	if c.callbackDone == nil {
++		c.callbackDone = make(chan struct{})
++	}
++	return c.callbackDone
+ }
+ 
+ func (c *wrapServerConn) Close() error {
+@@ -114,18 +210,27 @@
+ 	log.Debugln("in wrapServerConn close", c.connCtx.ClientConn.Conn.RemoteAddr())
+ 
  	c.closed = true
++	if c.callbackDone == nil {
++		c.callbackDone = make(chan struct{})
++	}
  	c.closeErr = c.Conn.Close()
  	c.closeMu.Unlock()
 +	defer c.proxy.untrack(c)
@@ -493,6 +556,7 @@
 -
 -	if !c.connCtx.ClientConn.Tls {
 -		c.connCtx.ClientConn.Conn.(*wrapClientConn).Conn.(*net.TCPConn).CloseRead()
++	close(c.callbackDone)
 +	if c.proxy.isClosing() {
 +		return c.closeErr
 +	}
@@ -507,7 +571,7 @@
  			c.connCtx.ClientConn.Conn.Close()
  		}
  	}
-@@ -141,6 +219,10 @@
+@@ -141,6 +246,10 @@
  func newEntry(proxy *Proxy) *entry {
  	e := &entry{proxy: proxy}
  	e.server = &http.Server{
@@ -518,7 +582,7 @@
  		Addr:    proxy.Opts.Addr,
  		Handler: e,
  		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-@@ -150,17 +232,8 @@
+@@ -150,17 +259,8 @@
  	return e
  }
  
@@ -538,7 +602,7 @@
  	pln := &wrapListener{
  		Listener: ln,
  		proxy:    e.proxy,
-@@ -178,6 +251,11 @@
+@@ -178,6 +278,11 @@
  
  func (e *entry) ServeHTTP(res http.ResponseWriter, req *http.Request) {
  	proxy := e.proxy
@@ -550,7 +614,7 @@
  
  	log := log.WithFields(log.Fields{
  		"in":   "Proxy.entry.ServeHTTP",
-@@ -335,11 +413,12 @@
+@@ -335,11 +440,12 @@
  	if err != nil {
  		cconn.Close()
  		conn.Close()
@@ -564,7 +628,7 @@
  		f.ConnContext.ClientConn.Tls = true
  		proxy.attacker.httpsTlsDial(req.Context(), cconn, conn)
  		return
-@@ -352,14 +431,14 @@
+@@ -352,14 +458,14 @@
  	if err != nil {
  		cconn.Close()
  		conn.Close()
@@ -581,7 +645,7 @@
  			cconn.Close()
  			conn.Close()
  		}
-@@ -380,18 +459,19 @@
+@@ -380,18 +486,19 @@
  
  	cconn, err := e.establishConnection(res, f)
  	if err != nil {
@@ -603,7 +667,7 @@
  		f.ConnContext.ClientConn.Tls = true
  		proxy.attacker.httpsLazyAttack(req.Context(), cconn, req)
  		return
-@@ -403,7 +483,7 @@
+@@ -403,7 +510,7 @@
  	}
  	if err != nil {
  		cconn.Close()
@@ -612,7 +676,7 @@
  		return
  	}
  
-@@ -411,12 +491,12 @@
+@@ -411,12 +518,12 @@
  		conn, err := proxy.attacker.httpsDial(req.Context(), req)
  		if err != nil {
  			cconn.Close()
@@ -627,7 +691,7 @@
  			cconn.Close()
  			conn.Close()
  		}
-@@ -426,7 +506,7 @@
+@@ -426,7 +533,7 @@
  	conn, err := proxy.attacker.httpsDial(req.Context(), req)
  	if err != nil {
  		cconn.Close()
@@ -1064,7 +1128,7 @@
 +}
 --- /dev/null
 +++ b/proxy/lifecycle.go
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,183 @@
 +package proxy
 +
 +import (
@@ -1221,6 +1285,10 @@
 +			}
 +		}
 +		entryErr := p.entry.server.Close()
++		if ln != nil && errors.Is(entryErr, net.ErrClosed) {
++			// The retained listener was already closed above to interrupt Accept.
++			entryErr = nil
++		}
 +		attackerErr := p.attacker.server.Close()
 +		for _, c := range conns {
 +			if callbackConn(c) {
@@ -2182,6 +2250,504 @@
  				t.Fatal("should get not trusted error, but got", err.Error())
  			}
  		})
+@@ -426,25 +430,45 @@
+ func TestProxyWhenServerNotKeepAlive(t *testing.T) {
+ 	server := &http.Server{}
+ 	server.SetKeepAlivesEnabled(false)
++	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
++	handleError(t, err)
+ 	helper := &testProxyHelper{
+ 		server:    server,
+-		proxyAddr: ":29081",
+-	}
++		proxyAddr: ":" + strconv.Itoa(proxyListener.Addr().(*net.TCPAddr).Port),
++	}
++	// Test cleanup below owns and joins this retained listener.
+ 	helper.init(t)
+ 	httpEndpoint := helper.httpEndpoint
+ 	httpsEndpoint := helper.httpsEndpoint
+-	testOrderAddonInstance := helper.testOrderAddonInstance
+ 	testProxy := helper.testProxy
+ 	getProxyClient := helper.getProxyClient
+-	defer helper.ln.Close()
+-	go helper.server.Serve(helper.ln)
+-	defer helper.tlsPlainLn.Close()
+-	go helper.server.Serve(helper.tlsLn)
+-	go testProxy.Start()
+-	time.Sleep(time.Millisecond * 10) // wait for test proxy startup
++	order := &connectionOrderAddon{events: make(map[string][]string), requests: make(map[string]string), changed: make(chan struct{}, 1)}
++	testProxy.AddAddon(order)
++	serveDone := make(chan error, 3)
++	go func() { serveDone <- helper.server.Serve(helper.ln) }()
++	go func() { serveDone <- helper.server.Serve(helper.tlsLn) }()
++	go func() { serveDone <- testProxy.Serve(proxyListener) }()
++	t.Cleanup(func() {
++		handleError(t, testProxy.Close())
++		handleError(t, helper.server.Close())
++		_ = helper.ln.Close()
++		_ = helper.tlsPlainLn.Close()
++		for i := 0; i < 3; i++ {
++			select {
++			case err := <-serveDone:
++				if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
++					t.Errorf("owned Serve: %v", err)
++				}
++			case <-time.After(5 * time.Second):
++				t.Error("owned Serve did not join")
++			}
++		}
++	})
+ 
+ 	t.Run("should not have eof error when server side DisableKeepAlives", func(t *testing.T) {
+ 		proxyClient := getProxyClient()
++		proxyClient.Timeout = 5 * time.Second
++		t.Cleanup(proxyClient.CloseIdleConnections)
+ 		t.Run("http", func(t *testing.T) {
+ 			for i := 0; i < 10; i++ {
+ 				testSendRequest(t, httpEndpoint, proxyClient, "ok")
+@@ -458,28 +482,90 @@
+ 	})
+ 
+ 	t.Run("should trigger disconnect functions when server DisableKeepAlives", func(t *testing.T) {
+-		proxyClient := getProxyClient()
+-
+ 		t.Run("http", func(t *testing.T) {
+-			time.Sleep(time.Millisecond * 10)
+-			testOrderAddonInstance.reset()
+-			testSendRequest(t, httpEndpoint, proxyClient, "ok")
+-			time.Sleep(time.Millisecond * 10)
+-			testOrderAddonInstance.contains(t, "ClientDisconnected")
+-			testOrderAddonInstance.contains(t, "ServerDisconnected")
+-			testOrderAddonInstance.before(t, "ServerDisconnected", "ClientDisconnected")
++			client := getProxyClient()
++			client.Timeout = 5 * time.Second
++			t.Cleanup(client.CloseIdleConnections)
++			testSendRequest(t, httpEndpoint+"order-http", client, "ok")
++			order.waitBefore(t, "/order-http", "ServerDisconnected", "ClientDisconnected")
+ 		})
+ 
+ 		t.Run("https", func(t *testing.T) {
+-			time.Sleep(time.Millisecond * 10)
+-			testOrderAddonInstance.reset()
+-			testSendRequest(t, httpsEndpoint, proxyClient, "ok")
+-			time.Sleep(time.Millisecond * 10)
+-			testOrderAddonInstance.contains(t, "ClientDisconnected")
+-			testOrderAddonInstance.contains(t, "ServerDisconnected")
+-			testOrderAddonInstance.before(t, "ServerDisconnected", "ClientDisconnected")
+-		})
+-	})
++			client := getProxyClient()
++			client.Timeout = 5 * time.Second
++			t.Cleanup(client.CloseIdleConnections)
++			testSendRequest(t, httpsEndpoint+"order-https", client, "ok")
++			order.waitBefore(t, "/order-https", "ServerDisconnected", "ClientDisconnected")
++		})
++	})
++}
++
++type connectionOrderAddon struct {
++	BaseAddon
++	mu       sync.Mutex
++	events   map[string][]string
++	requests map[string]string
++	changed  chan struct{}
++}
++
++func (a *connectionOrderAddon) append(id, event string) {
++	a.mu.Lock()
++	a.events[id] = append(a.events[id], event)
++	a.mu.Unlock()
++	select {
++	case a.changed <- struct{}{}:
++	default:
++	}
++}
++
++func (a *connectionOrderAddon) ClientConnected(c *ClientConn) {
++	a.append(c.Id.String(), "ClientConnected")
++}
++func (a *connectionOrderAddon) ClientDisconnected(c *ClientConn) {
++	a.append(c.Id.String(), "ClientDisconnected")
++}
++func (a *connectionOrderAddon) ServerConnected(c *ConnContext) {
++	a.append(c.ClientConn.Id.String(), "ServerConnected")
++}
++func (a *connectionOrderAddon) ServerDisconnected(c *ConnContext) {
++	a.append(c.ClientConn.Id.String(), "ServerDisconnected")
++}
++func (a *connectionOrderAddon) Request(f *Flow) {
++	a.mu.Lock()
++	a.requests[f.Request.URL.Path] = f.ConnContext.ClientConn.Id.String()
++	a.mu.Unlock()
++}
++
++func (a *connectionOrderAddon) waitBefore(t *testing.T, path, first, second string) {
++	t.Helper()
++	deadline := time.NewTimer(5 * time.Second)
++	defer deadline.Stop()
++	for {
++		a.mu.Lock()
++		id := a.requests[path]
++		events := append([]string(nil), a.events[id]...)
++		a.mu.Unlock()
++		firstAt, secondAt := -1, -1
++		for i, event := range events {
++			if event == first {
++				firstAt = i
++			}
++			if event == second {
++				secondAt = i
++			}
++		}
++		if firstAt >= 0 && secondAt >= 0 {
++			if firstAt >= secondAt {
++				t.Fatalf("connection=%s path=%s actual arrival=%v: expected %s before %s", id, path, events, first, second)
++			}
++			return
++		}
++		select {
++		case <-a.changed:
++		case <-deadline.C:
++			t.Fatalf("connection=%s path=%s incomplete arrival=%v", id, path, events)
++		}
++	}
+ }
+ 
+ func TestProxyWhenServerKeepAliveButCloseImmediately(t *testing.T) {
+--- /dev/null
++++ b/proxy/response_close_test.go
+@@ -0,0 +1,331 @@
++package proxy
++
++import (
++	"crypto/tls"
++	"crypto/x509"
++	"errors"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++type responseCloseAddon struct {
++	BaseAddon
++	separate      bool
++	contexts      chan *ConnContext
++	headers       chan struct{}
++	serverEntered chan struct{}
++	reentered     chan struct{}
++	serverRelease chan struct{}
++	clientEntered chan struct{}
++	clientRelease chan struct{}
++	servers       atomic.Int32
++	disconnects   atomic.Int32
++	mu            sync.Mutex
++	order         []string
++	headersOnce   sync.Once
++	serverOnce    sync.Once
++	clientOnce    sync.Once
++}
++
++func newResponseCloseAddon() *responseCloseAddon {
++	return &responseCloseAddon{contexts: make(chan *ConnContext, 1), headers: make(chan struct{}),
++		serverEntered: make(chan struct{}), reentered: make(chan struct{}), serverRelease: make(chan struct{}),
++		clientEntered: make(chan struct{}), clientRelease: make(chan struct{})}
++}
++
++func (a *responseCloseAddon) Requestheaders(f *Flow) {
++	if f.Request.Method != "CONNECT" {
++		f.UseSeparateClient = a.separate
++	}
++}
++
++func (a *responseCloseAddon) Responseheaders(f *Flow) {
++	if f.Request.Method != "CONNECT" {
++		a.contexts <- f.ConnContext
++		<-a.headers
++	}
++}
++
++func (a *responseCloseAddon) ServerConnected(*ConnContext) { a.servers.Add(1) }
++func (a *responseCloseAddon) record(event string) {
++	a.mu.Lock()
++	a.order = append(a.order, event)
++	a.mu.Unlock()
++}
++
++func (a *responseCloseAddon) ServerDisconnected(c *ConnContext) {
++	a.disconnects.Add(1)
++	close(a.serverEntered)
++	c.ClientConn.Conn.Close()
++	close(a.reentered)
++	<-a.serverRelease
++	a.record("server returned")
++}
++
++func (a *responseCloseAddon) ClientDisconnected(*ClientConn) {
++	a.record("client entered")
++	close(a.clientEntered)
++	<-a.clientRelease
++}
++
++func (a *responseCloseAddon) unblock() {
++	a.releaseHeaders()
++	a.releaseServer()
++	a.releaseClient()
++}
++
++func (a *responseCloseAddon) releaseHeaders() { a.headersOnce.Do(func() { close(a.headers) }) }
++func (a *responseCloseAddon) releaseServer()  { a.serverOnce.Do(func() { close(a.serverRelease) }) }
++func (a *responseCloseAddon) releaseClient()  { a.clientOnce.Do(func() { close(a.clientRelease) }) }
++
++// A failed replay against the old implementation must release its circular
++// wait before the fixture joins Proxy.Close. Fixed implementations lack it.
++func releaseLegacyResponseWait(c *ConnContext) {
++	if legacy, ok := any(c).(interface{ signalServerCloseDone() }); ok {
++		legacy.signalServerCloseDone()
++	}
++}
++
++func responseCloseClient(t *testing.T, p *Proxy, proxyURL string) *http.Client {
++	t.Helper()
++	pu, err := url.Parse(proxyURL)
++	if err != nil {
++		t.Fatal(err)
++	}
++	pool := x509.NewCertPool()
++	ca := p.GetCertificate()
++	pool.AddCert(&ca)
++	tr := &http.Transport{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: pool}}
++	t.Cleanup(tr.CloseIdleConnections)
++	return &http.Client{Transport: tr, Timeout: 5 * time.Second}
++}
++
++func assertResponseCloseBlocked(t *testing.T, ch <-chan struct{}, message string) {
++	t.Helper()
++	select {
++	case <-ch:
++		t.Error(message)
++	case <-time.After(30 * time.Millisecond):
++	}
++}
++
++func TestResponseCloseServerCallbackCanCloseClient(t *testing.T) {
++	for _, protocol := range []string{"http", "https"} {
++		t.Run(protocol, func(t *testing.T) {
++			bodyRelease := make(chan struct{})
++			var bodyOnce sync.Once
++			unblockBody := func() { bodyOnce.Do(func() { close(bodyRelease) }) }
++			up := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				w.Header().Set("Connection", "close")
++				w.Header().Set("Content-Length", "7")
++				w.WriteHeader(http.StatusOK)
++				w.(http.Flusher).Flush()
++				<-bodyRelease
++				io.WriteString(w, "payload")
++			}))
++			if protocol == "https" {
++				up.StartTLS()
++			} else {
++				up.Start()
++			}
++			t.Cleanup(up.Close)
++			p := lifecycleProxy(t)
++			a := newResponseCloseAddon()
++			p.AddAddon(a)
++			ln := loopback(t)
++			served := reservedServe(t, p, ln)
++			client := responseCloseClient(t, p, "http://"+ln.Addr().String())
++			requested := make(chan struct{})
++			go func() {
++				defer close(requested)
++				r, err := client.Get(strings.Replace(up.URL, "127.0.0.1", "localhost", 1))
++				if err == nil {
++					io.Copy(io.Discard, r.Body)
++					r.Body.Close()
++				}
++			}()
++			var c *ConnContext
++			var serverClosed chan struct{}
++			serveJoined := false
++			t.Cleanup(func() {
++				if c != nil {
++					releaseLegacyResponseWait(c)
++				}
++				unblockBody()
++				a.unblock()
++				p.Close()
++				awaitLifecycle(t, requested)
++				if serverClosed != nil {
++					awaitLifecycle(t, serverClosed)
++				}
++				if !serveJoined {
++					awaitServe(t, served)
++				}
++			})
++			select {
++			case c = <-a.contexts:
++			case <-time.After(5 * time.Second):
++				t.Fatal("response headers were not captured")
++			}
++			if !c.closeAfterResponse.Load() {
++				t.Fatal("fixture did not reach the response-close branch")
++			}
++			serverClosed = make(chan struct{})
++			go func() { c.ServerConn.Conn.Close(); close(serverClosed) }()
++			awaitLifecycle(t, a.serverEntered)
++			select {
++			case <-a.reentered:
++			case <-time.After(500 * time.Millisecond):
++				t.Error("ServerDisconnected synchronously closing the client waited for its own callback")
++				releaseLegacyResponseWait(c)
++				a.unblock()
++				unblockBody()
++				awaitLifecycle(t, a.reentered)
++				awaitLifecycle(t, serverClosed)
++				p.Close()
++				awaitLifecycle(t, requested)
++				awaitServe(t, served)
++				serveJoined = true
++				return
++			}
++			assertResponseCloseBlocked(t, a.clientEntered, "ClientDisconnected ran before ServerDisconnected returned")
++			closed := make(chan struct{})
++			go func() { p.Close(); close(closed) }()
++			assertResponseCloseBlocked(t, closed, "Proxy.Close returned while disconnect callbacks remained active")
++			unblockBody()
++			a.releaseHeaders()
++			a.releaseServer()
++			awaitLifecycle(t, a.clientEntered)
++			assertResponseCloseBlocked(t, closed, "Proxy.Close returned before ClientDisconnected completed")
++			a.releaseClient()
++			awaitLifecycle(t, closed)
++			awaitLifecycle(t, serverClosed)
++			awaitLifecycle(t, requested)
++			awaitServe(t, served)
++			serveJoined = true
++			a.mu.Lock()
++			defer a.mu.Unlock()
++			if fmt.Sprint(a.order) != "[server returned client entered]" {
++				t.Errorf("response disconnect callback order=%v", a.order)
++			}
++		})
++	}
++}
++
++func TestSeparateClientResponseCloseJoinsClientCallback(t *testing.T) {
++	up := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "separate payload") }))
++	up.Config.SetKeepAlivesEnabled(false)
++	up.Start()
++	t.Cleanup(up.Close)
++	p := lifecycleProxy(t)
++	a := newResponseCloseAddon()
++	a.separate = true
++	p.AddAddon(a)
++	c, br, served, _ := serveHTTPClose(t, p)
++	var connCtx *ConnContext
++	serveJoined := false
++	t.Cleanup(func() {
++		if connCtx != nil {
++			releaseLegacyResponseWait(connCtx)
++		}
++		a.unblock()
++		p.Close()
++		if !serveJoined {
++			awaitServe(t, served)
++		}
++	})
++	sendHTTPClose(t, c, up.URL)
++	select {
++	case connCtx = <-a.contexts:
++	case <-time.After(5 * time.Second):
++		t.Fatal("separate response headers were not captured")
++	}
++	if !connCtx.closeAfterResponse.Load() || connCtx.ServerConn != nil {
++		t.Fatal("fixture did not reach a closing response without a server callback owner")
++	}
++	a.releaseHeaders()
++	expectHTTPCloseBody(t, readHTTPClose(br), []byte("separate payload"))
++	closed := make(chan struct{})
++	go func() { p.Close(); close(closed) }()
++	select {
++	case <-a.clientEntered:
++	case <-time.After(500 * time.Millisecond):
++		t.Error("separate-client response delivered but ClientDisconnected waited for a nonexistent server owner")
++		releaseLegacyResponseWait(connCtx)
++		awaitLifecycle(t, a.clientEntered)
++	}
++	assertResponseCloseBlocked(t, closed, "Proxy.Close returned before ClientDisconnected completed")
++	a.releaseClient()
++	awaitLifecycle(t, closed)
++	awaitServe(t, served)
++	serveJoined = true
++	if a.servers.Load() != 0 || a.disconnects.Load() != 0 {
++		t.Errorf("separate transport unexpectedly emitted server callbacks: connected=%d disconnected=%d", a.servers.Load(), a.disconnects.Load())
++	}
++}
++
++type delayedClosedListener struct {
++	net.Listener
++	acceptEntered, acceptRelease, closedAgain chan struct{}
++	acceptOnce, releaseOnce, closeOnce        sync.Once
++}
++
++func (l *delayedClosedListener) Accept() (net.Conn, error) {
++	l.acceptOnce.Do(func() { close(l.acceptEntered) })
++	c, err := l.Listener.Accept()
++	if errors.Is(err, net.ErrClosed) {
++		<-l.acceptRelease
++	}
++	return c, err
++}
++
++func (l *delayedClosedListener) Close() error {
++	err := l.Listener.Close()
++	if errors.Is(err, net.ErrClosed) {
++		l.closeOnce.Do(func() { close(l.closedAgain) })
++	}
++	return err
++}
++
++func (l *delayedClosedListener) release() { l.releaseOnce.Do(func() { close(l.acceptRelease) }) }
++
++func TestCloseIgnoresAlreadyClosedOwnedListener(t *testing.T) {
++	p := lifecycleProxy(t)
++	ln := &delayedClosedListener{Listener: loopback(t), acceptEntered: make(chan struct{}),
++		acceptRelease: make(chan struct{}), closedAgain: make(chan struct{})}
++	served := reservedServe(t, p, ln)
++	serveJoined := false
++	t.Cleanup(func() {
++		ln.release()
++		ln.Close()
++		p.Close()
++		if !serveJoined {
++			awaitServe(t, served)
++		}
++	})
++	awaitLifecycle(t, ln.acceptEntered)
++	closed := make(chan error, 1)
++	go func() { closed <- p.Close() }()
++	// Keep the real listener in http.Server's registry through its second close.
++	awaitLifecycle(t, ln.closedAgain)
++	ln.release()
++	select {
++	case err := <-closed:
++		if err != nil {
++			t.Errorf("Close returned an expected duplicate-listener-close error: %v", err)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("Close did not join its owned work")
++	}
++	awaitServe(t, served)
++	serveJoined = true
++}
 --- a/proxy/sse_hook_test.go
 +++ b/proxy/sse_hook_test.go
 @@ -52,7 +52,8 @@
