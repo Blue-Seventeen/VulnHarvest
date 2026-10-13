@@ -54,7 +54,23 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          go run ./cmd/portablesmoke "dist/VulnHarvest-v0.0.1-${{ matrix.goos }}-${{ matrix.goarch }}.zip"
+          smoke_log="$RUNNER_TEMP/ci-native-smoke-${{ matrix.goos }}-${{ matrix.goarch }}.log"
+          smoke_code=0
+          go run ./cmd/portablesmoke "dist/VulnHarvest-v0.0.1-${{ matrix.goos }}-${{ matrix.goarch }}.zip" > "$smoke_log" 2>&1 || smoke_code=$?
+          cat "$smoke_log" || true
+          if [ "$smoke_code" -ne 0 ]; then
+            set +x
+            # Keep public check-run annotations bounded and escape workflow command data.
+            diagnostic=$(tail -n 60 "$smoke_log") || diagnostic="Unable to read native smoke log"
+            if [ "${#diagnostic}" -gt 12000 ]; then
+              diagnostic="${diagnostic: -12000}"
+            fi
+            diagnostic="${diagnostic//'%'/'%25'}"
+            diagnostic="${diagnostic//$'\r'/'%0D'}"
+            diagnostic="${diagnostic//$'\n'/'%0A'}"
+            printf '::error title=Native portable smoke::%s\n' "$diagnostic" || true
+          fi
+          exit "$smoke_code"
       - name: Task7 SQLite ordinary business suite
         shell: bash
         env:
