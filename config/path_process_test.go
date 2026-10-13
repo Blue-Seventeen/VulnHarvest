@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -74,9 +76,11 @@ func TestConfigPathActualProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"postgres-both", "postgres-cwd-only", "explicit-config", "portable-env-relative", "portable-file-relative", "portable-absolute", "postgres-relative", "inferred-file-mode"} {
+	for _, scenario := range []string{"postgres-both", "postgres-cwd-only", "explicit-config", "portable-env-relative", "portable-file-relative", "portable-absolute", "postgres-relative", "inferred-file-mode", "postgres-both-ancestor-symlink", "inferred-file-mode-ancestor-symlink"} {
 		t.Run(scenario, func(t *testing.T) {
-			base, cwd := t.TempDir(), t.TempDir()
+			aliasCWD := strings.HasSuffix(scenario, "-ancestor-symlink")
+			scenario = strings.TrimSuffix(scenario, "-ancestor-symlink")
+			base, cwd := t.TempDir(), configProcessCWD(t, aliasCWD)
 			child := filepath.Join(base, "config-fixture.exe")
 			if err := os.WriteFile(child, b, 0700); err != nil {
 				t.Fatal(err)
@@ -128,7 +132,22 @@ func TestConfigPathActualProcess(t *testing.T) {
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Errorf("cwd %d: %v: %s", i, err, out)
 				}
-				cwd = t.TempDir()
+				if aliasCWD && scenario == "postgres-both" {
+					// Both files exist: the exact oracle must still reject an executable-file expectation.
+					wrong := exec.Command(child, "-test.run=^TestConfigPathActualProcess$")
+					wrong.Dir, wrong.Env = cmd.Dir, append([]string(nil), cmd.Env...)
+					for j, entry := range wrong.Env {
+						if strings.HasPrefix(entry, "ARTEX_PATH_WANT_CONFIG=") {
+							wrong.Env[j] = "ARTEX_PATH_WANT_CONFIG=" + baseConfig
+						}
+					}
+					out, err := wrong.CombinedOutput()
+					if err == nil || !strings.Contains(string(out), fmt.Sprintf("Path=%q want %q", wantConfig, baseConfig)) {
+						t.Fatalf("cwd %d: executable-file oracle was not rejected: err=%v output=%s", i, err, out)
+					}
+					t.Logf("cwd %d: exact oracle rejected executable config %q", i, baseConfig)
+				}
+				cwd = configProcessCWD(t, aliasCWD)
 				if (mode == "postgres" || infer == "1") && override == "" {
 					wantConfig = filepath.Join(cwd, "config.json")
 				}
@@ -142,4 +161,37 @@ func TestConfigPathActualProcess(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Alias an ancestor, not the CWD itself, to reproduce macOS /var -> /private/var.
+func configProcessCWD(t *testing.T, alias bool) string {
+	t.Helper()
+	cwd := t.TempDir()
+	if alias {
+		if runtime.GOOS == "windows" {
+			t.Skip("ancestor symlink fixture requires Unix symlink semantics")
+		}
+		physicalParent, aliasParent := filepath.Join(cwd, "physical"), filepath.Join(cwd, "alias")
+		if err := os.MkdirAll(filepath.Join(physicalParent, "cwd"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(physicalParent, aliasParent); err != nil {
+			t.Fatal(err)
+		}
+		cwd = filepath.Join(aliasParent, "cwd")
+	}
+	// os.Getwd in the child can return a physical path even when TempDir uses an
+	// alias (macOS /var). Resolve the existing CWD once for cmd.Dir and its oracle;
+	// leave executable and explicit override paths under their original contracts.
+	physical, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias {
+		if physical == cwd {
+			t.Fatalf("ancestor symlink did not change CWD spelling: %q", cwd)
+		}
+		t.Logf("ancestor alias CWD=%q physical CWD=%q", cwd, physical)
+	}
+	return physical
 }
