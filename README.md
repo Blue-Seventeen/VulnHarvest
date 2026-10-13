@@ -26,7 +26,7 @@ VulnHarvest 是基于 LLM 的自主渗透测试控制台。界面、API 和 SQLi
 
 按需求自行提供对应平台/架构的 Python、Node/npm/npx、ripgrep、nmap、curl、shell、Chromium/Playwright 或 MCP 可执行文件；它们不随默认包发行。缺失只影响依赖的脚本、搜索、网络探测、浏览器或 MCP 能力，界面和不依赖这些工具的操作仍可用。Windows 不支持当前 SDK 的 PTY，普通命令与可用工具的非 PTY 执行可以使用。移动目录后重新检测，失效的旧绝对路径会回退到其它有效候选。
 
-Windows 的工具隔离 relay 使用可执行文件副本；启动和每次重检测会占用额外磁盘空间。本会话副本在正常关闭时清理，强退留下的旧 session 目前不会在下次启动时自动删除。请保留充足空间，并在搬迁前优先正常退出；具体开销随内嵌程序大小和重检测次数增长。
+Windows PowerShell 5.1 对过长的 PATH 目录存在命令发现限制。建议解压到较短的目录，例如 `C:\VulnHarvest`；中文和空格可用，但过深目录可能导致 shell 跳过已选中的工具。
 
 ## 配置模式和 PostgreSQL
 
@@ -56,7 +56,7 @@ go run ./cmd/portablebuild --target windows/amd64
 
 构建器每次重建最新生产 UI，强制 `NEXT_PUBLIC_MOCK=0`、同源 SSE，内嵌到二进制。五个 zip 和 SHA256SUMS 在 dist。文件白名单为目标可执行文件、portable 启动脚本、config.example、README、LICENSE、web/proxy 许可、第三方 notices、`portable/skills-manifest.txt` 列出的技能文件，以及匹配目标平台的小型 `runtime/bin/vulnharvest-tool-relay[.exe]`。不会复制本工作区 state/data、配置 Key、.superpowers 或开发依赖。
 
-跨平台编译只证明生成产物，不等于各平台已运行。GitHub Actions 在 Windows x64、Linux x64/arm64、macOS Intel/Apple Silicon 原生 runner 上打印真实架构，执行包内嵌 UI、启动/存储/锁/中文空格搬迁检查；Task 7 普通 SQLite business harness 接入后执行全套普通业务测试。未运行的环境不得声称通过。工作流只上传验证产物，不创建 tag/Release，也不推送 Docker 镜像。
+跨平台编译只证明生成产物，不等于各平台已运行。GitHub Actions 在 Windows x64、Linux x64/arm64、macOS Intel/Apple Silicon 原生 runner 上打印真实架构，执行包内嵌 UI、启动/存储/锁/中文空格搬迁检查、完整普通 SQLite 业务测试及嵌套 SDK 检查。实际结果和覆盖限制记录在 `implementation/verification.md`。工作流只上传验证产物，不创建 tag/Release，也不推送 Docker 镜像。
 
 ## 手动升级和许可
 
