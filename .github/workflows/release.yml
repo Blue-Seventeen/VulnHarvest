@@ -81,22 +81,68 @@ jobs:
           printf '{}' > "$ARTEX_CONFIG"
           export ARTEX_PG_DSN='' TASK2_PG_DSN='' ARTEX_ASSET_TEST_PG_DSN='' ARTEX_TASK_TEST_PG_DSN='' ARTEX_FINDING_TEST_PG_DSN='' ARTEX_ARCHIVE_TEST_PG_DSN=''
           export ARTEX_LLM_PROVIDER='' ANTHROPIC_API_KEY='' OPENAI_API_KEY='' ARTEX_REVIEW_LIVE_CONFIG=''
-          if go test -p 1 -count=1 -timeout=20m ./...; then
+          suite_log="$RUNNER_TEMP/ci-business-sqlite-${{ matrix.goos }}-${{ matrix.goarch }}.log"
+          if go test -p 1 -count=1 -timeout=20m ./... > "$suite_log" 2>&1; then
+            cat "$suite_log" || true
             printf '\nSQLite ordinary full suite: **PASS**\n\n`ARTEX_TEST_BACKEND=sqlite go test -p 1 -count=1 -timeout=20m ./...`\n' >> "$GITHUB_STEP_SUMMARY"
           else
             code=$?
+            cat "$suite_log" || true
             printf '\nSQLite ordinary full suite: **FAIL (exit %s)**\n\n`ARTEX_TEST_BACKEND=sqlite go test -p 1 -count=1 -timeout=20m ./...`\n' "$code" >> "$GITHUB_STEP_SUMMARY"
+            set +x
+            # Preserve early failure blocks (6 preceding/3 following lines), then the final section.
+            failures=$(awk '
+              function emit(i) { if (i > last && count < 60) { print substr(lines[i%7], 1, 1000); last=i; count++ } }
+              { lines[NR%7]=$0 }
+              /(^|[[:space:]])--- FAIL:|^FAIL([[:space:]]|$)|^panic:|^fatal error:|^# |:[0-9]+(:[0-9]+)?:/ {
+                for (i=NR-6; i<=NR; i++) if (i>0) emit(i)
+                through=NR+3
+              }
+              NR<=through { emit(NR) }
+            ' "$suite_log") || failures="Unable to read SQLite failure blocks"
+            failures="${failures:0:8000}"
+            diagnostic=$(tail -n 60 "$suite_log") || diagnostic="Unable to read SQLite log tail"
+            if [ "${#diagnostic}" -gt 4000 ]; then diagnostic="${diagnostic: -4000}"; fi
+            for section in "$failures" "$diagnostic"; do
+              section="${section//'%'/'%25'}"
+              section="${section//$'\r'/'%0D'}"
+              section="${section//$'\n'/'%0A'}"
+              printf '::error title=SQLite ordinary full suite::%s\n' "$section" || true
+            done
             exit "$code"
           fi
       - name: Task7 scoped nested SDK tests
         shell: bash
         run: |
           set -euxo pipefail
-          if bash portable/task7-nested-tests.sh; then
+          suite_log="$RUNNER_TEMP/ci-business-nested-${{ matrix.goos }}-${{ matrix.goarch }}.log"
+          if bash portable/task7-nested-tests.sh > "$suite_log" 2>&1; then
+            cat "$suite_log" || true
             printf '\nNested SDK gate: **PASS** (patched norma tool/mcp scope; full proxy package). See commands in `portable/task7-nested-tests.sh`.\n' >> "$GITHUB_STEP_SUMMARY"
           else
             code=$?
+            cat "$suite_log" || true
             printf '\nNested SDK gate: **FAIL (exit %s)** (patched norma tool/mcp scope; full proxy package).\n' "$code" >> "$GITHUB_STEP_SUMMARY"
+            set +x
+            # Preserve early failure blocks (6 preceding/3 following lines), then the final section.
+            failures=$(awk '
+              function emit(i) { if (i > last && count < 60) { print substr(lines[i%7], 1, 1000); last=i; count++ } }
+              { lines[NR%7]=$0 }
+              /(^|[[:space:]])--- FAIL:|^FAIL([[:space:]]|$)|^panic:|^fatal error:|^# |:[0-9]+(:[0-9]+)?:/ {
+                for (i=NR-6; i<=NR; i++) if (i>0) emit(i)
+                through=NR+3
+              }
+              NR<=through { emit(NR) }
+            ' "$suite_log") || failures="Unable to read nested failure blocks"
+            failures="${failures:0:8000}"
+            diagnostic=$(tail -n 60 "$suite_log") || diagnostic="Unable to read nested log tail"
+            if [ "${#diagnostic}" -gt 4000 ]; then diagnostic="${diagnostic: -4000}"; fi
+            for section in "$failures" "$diagnostic"; do
+              section="${section//'%'/'%25'}"
+              section="${section//$'\r'/'%0D'}"
+              section="${section//$'\n'/'%0A'}"
+              printf '::error title=Nested SDK gate::%s\n' "$section" || true
+            done
             exit "$code"
           fi
       - uses: actions/upload-artifact@v4
