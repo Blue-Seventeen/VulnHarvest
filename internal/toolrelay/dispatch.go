@@ -52,14 +52,21 @@ func Selection(exe, path, name string) (Entry, error) {
 		return Entry{}, err
 	}
 	defer root.Close()
-	// Captured selection is the first PATH component, always in this same root.
+	// Shells may prepend their own directory. Only one contiguous choice/helper
+	// pair in this helper's root identifies the captured selection.
 	parts := filepath.SplitList(path)
-	if len(parts) < 2 {
-		return Entry{}, fmt.Errorf("missing captured choice")
+	choiceHash := ""
+	for i := 0; i+1 < len(parts); i++ {
+		hash := filepath.Base(parts[i])
+		if !validHash(hash) || !samePath(parts[i], filepath.Join(parent, "choices", hash)) || !samePath(parts[i+1], helperDir) {
+			continue
+		}
+		if choiceHash != "" {
+			return Entry{}, fmt.Errorf("ambiguous captured choice")
+		}
+		choiceHash = hash
 	}
-	choiceDir := parts[0]
-	choiceHash := filepath.Base(choiceDir)
-	if !validHash(choiceHash) || !samePath(choiceDir, filepath.Join(parent, "choices", choiceHash)) || !samePath(parts[1], helperDir) {
+	if choiceHash == "" {
 		return Entry{}, fmt.Errorf("choice outside relay root")
 	}
 	for _, dir := range []string{"cache", "choices", filepath.Join("cache", helperHash), filepath.Join("choices", choiceHash)} {

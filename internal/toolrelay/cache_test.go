@@ -190,3 +190,43 @@ func TestConstructionFailurePreservesPublishedChoice(t *testing.T) {
 		t.Fatal("failure damaged prior snapshot", e)
 	}
 }
+
+func TestSelectionPreservesCapturedPairAfterShellPATHPrefix(t *testing.T) {
+	state, source, entries := fixture(t)
+	path, err := Prepare(context.Background(), state, source, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := filepath.SplitList(path)
+	alias := filepath.Join(dirs[1], AliasName("node"))
+	shellDir := filepath.Join(filepath.Dir(state), "shell 中文 space")
+	selected, err := Selection(alias, shellDir+string(os.PathListSeparator)+path, "node")
+	if err != nil || selected.Executable != entries["node"].Executable {
+		t.Fatalf("shell PATH prefix changed captured selection: %+v %v", selected, err)
+	}
+	entries["node"] = Entry{Executable: filepath.Join(filepath.Dir(state), "another-target")}
+	second, err := Prepare(context.Background(), state, source, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignState, foreignSource, foreignEntries := fixture(t)
+	foreign, err := Prepare(context.Background(), foreignState, foreignSource, foreignEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ name, path string }{
+		{"split-pair", strings.Join([]string{dirs[0], shellDir, dirs[1]}, string(os.PathListSeparator))},
+		{"foreign-choice-root", strings.Join([]string{filepath.Join(shellDir, "choices", filepath.Base(dirs[0])), dirs[1]}, string(os.PathListSeparator))},
+		{"foreign-root-only", foreign},
+		{"ambiguous-pairs", path + string(os.PathListSeparator) + path},
+		{"multiple-own-choices", path + string(os.PathListSeparator) + second},
+		{"no-choice", shellDir + string(os.PathListSeparator) + dirs[1]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Selection(alias, tc.path, "node"); err == nil {
+				t.Fatal("uncaptured or ambiguous selection accepted")
+			}
+		})
+	}
+}
